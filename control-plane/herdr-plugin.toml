@@ -1,0 +1,18 @@
+id = "agent-brain.control-plane"
+name = "Agent Brain Control Plane"
+version = "0.2.0"
+min_herdr_version = "0.7.0"
+description = "Live agent hierarchy, model and effort, tokens, cost, budget, and provider quota"
+platforms = ["linux", "macos", "windows"]
+
+[[panes]]
+id = "status"
+title = "Agent Brain status"
+placement = "tab"
+command = ["node", "brain.js", "status"]
+
+[[panes]]
+id = "quota"
+title = "Provider quota"
+placement = "tab"
+command = ["npx", "-y", "quota-axi", "--tui"]

@@ -1,0 +1,43 @@
+{
+  "skill_name": "delivery-status",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "What works right now, what is blocked, and what is next on this project? Give me a truthful status",
+        "top_k": 3
+      },
+      {
+        "prompt": "Delivery looks stuck and an agent keeps repeating the same failing command, diagnose the current state",
+        "top_k": 3
+      },
+      {
+        "prompt": "Refresh the delivery status for this milestone and account for model, token, and cost usage per agent, labeled by freshness",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "Add Prometheus metrics and traces to the checkout service",
+        "owner": "observability-and-instrumentation"
+      },
+      {
+        "prompt": "Escalate my stuck ticket to the EM with a recommended default",
+        "owner": "escalation"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "The PM asks: is milestone 2 of the notifications service usable yet, and why is ENG-57 not moving?",
+      "expected_output": "A delivery status report with a VERIFIED NOW commit, what works and does not, ENG-57 diagnosed as stuck with owner and next action, agent states reconciled, usage classified",
+      "expectations": [
+        "Every fact carries a freshness label",
+        "The report runs the milestone verification rather than relaying an old claim",
+        "ENG-57 gets an owner, a next action, and an escalation if a decision is needed",
+        "Usage numbers are sourced or marked UNKNOWN"
+      ]
+    }
+  ]
+}

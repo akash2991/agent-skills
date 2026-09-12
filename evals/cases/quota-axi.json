@@ -1,0 +1,43 @@
+{
+  "skill_name": "quota-axi",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Check how much subscription quota is left across Claude, Codex, and Kimi before I route this task",
+        "top_k": 3
+      },
+      {
+        "prompt": "Which provider has the most usable runway right now, and is any of them about to hit its weekly limit",
+        "top_k": 3
+      },
+      {
+        "prompt": "This run failed in a way that looks like a rate or quota wall, read the provider quota and pace",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "How much of its token budget has this agent's team spent",
+        "owner": "budget-management"
+      },
+      {
+        "prompt": "Choose the model and thinking effort for this ticket",
+        "owner": "model-routing"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "Before I hand this T3 migration to an engineer, tell me whether we have provider headroom for it.",
+      "expected_output": "Current quota read per provider scope with percent remaining, pace, runway and spend priority, each with its read time, plus a statement of which scopes can carry a T3 task to completion and which cannot",
+      "expectations": [
+        "Reads live quota rather than assuming headroom",
+        "Compares runway against the size of the task, not just percent remaining",
+        "Reports any non-nominal provider state or its remedy instead of treating it as healthy",
+        "Leaves the routing decision to the EM rather than picking the provider itself"
+      ]
+    }
+  ]
+}

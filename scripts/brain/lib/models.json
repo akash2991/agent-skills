@@ -1,0 +1,9 @@
+{
+  "$comment": "Model catalog: the models the organization may route to and the effort levels each one accepts. Persona `allowed` pairs are validated against this. Add a model here before using it in a persona.",
+  "models": {
+    "claude-fable-5-1":          { "class": "large",  "efforts": ["low", "medium", "high", "max"], "note": "planning and coding default" },
+    "claude-opus-5":             { "class": "large",  "efforts": ["low", "medium", "high", "max"], "note": "coordination, review, verification default" },
+    "claude-sonnet-5":           { "class": "medium", "efforts": ["low", "medium", "high"],        "note": "well-specified T1 implementation" },
+    "claude-haiku-4-5-20251001": { "class": "small",  "efforts": ["low", "medium"],                "note": "mechanical T0 work" }
+  }
+}

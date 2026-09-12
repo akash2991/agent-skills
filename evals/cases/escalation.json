@@ -1,0 +1,43 @@
+{
+  "skill_name": "escalation",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "A staff engineer is stuck on an ambiguity, escalate the ticket one level up to the EM with a recommended default",
+        "top_k": 3
+      },
+      {
+        "prompt": "I cannot resolve this blocker on my ticket, reassign it up the org ladder with an escalation block",
+        "top_k": 3
+      },
+      {
+        "prompt": "A ticket assigned to me carries an open escalation from a staff engineer, how do I answer or escalate again",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "Break this spec into ordered tasks",
+        "owner": "planning-and-task-breakdown"
+      },
+      {
+        "prompt": "Write unit tests before the implementation",
+        "owner": "test-driven-development"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "I'm implementing ENG-42 and the PRD doesn't say whether deleted accounts keep their order history. I can't decide this myself.",
+      "expected_output": "An escalation block posted as a ticket comment, the ticket reassigned to the EM, a recommended reversible default, and the registry row set to BLOCKED or WAITING",
+      "expectations": [
+        "Checks the ticket, PRD, design, and DECISIONS.md before escalating",
+        "Escalates one level up (to the EM), not straight to the CEO or user",
+        "Includes options, a recommendation, and a default if unanswered",
+        "Does not silently pick an answer that changes product behavior"
+      ]
+    }
+  ]
+}

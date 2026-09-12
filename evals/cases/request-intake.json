@@ -1,0 +1,43 @@
+{
+  "skill_name": "request-intake",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "I have a feature request for the CEO: add saved carts. Decide whether we can start it or park it",
+        "top_k": 3
+      },
+      {
+        "prompt": "An EM is asking for a security audit that is not in any milestone, admit it or park it with a priority",
+        "top_k": 3
+      },
+      {
+        "prompt": "A milestone just closed, re-run the parked queue and admit whatever is now affordable",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "My ticket is blocked on an ambiguity, escalate it to my EM",
+        "owner": "escalation"
+      },
+      {
+        "prompt": "Slice the approved design into sprints for this service",
+        "owner": "milestone-planning"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "Add offline mode to the mobile app. Also, while you are at it, audit the payment code.",
+      "expected_output": "Two tickets, each classified with a priority and an explicit decision; capacity checked against budget, provider quota, and running work before admitting either; anything not affordable parked with the condition that unblocks it and the cost of waiting",
+      "expectations": [
+        "Both requests become tickets before any decision",
+        "Budget, quota, and currently running work are all checked",
+        "Anything not admitted is parked with a priority and an unblocking condition, not refused",
+        "No specialist is invoked directly for the audit"
+      ]
+    }
+  ]
+}

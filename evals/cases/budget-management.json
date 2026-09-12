@@ -1,0 +1,43 @@
+{
+  "skill_name": "budget-management",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Allocate the company token budget to the PMs and EM teams and record it in the budget ledger",
+        "top_k": 3
+      },
+      {
+        "prompt": "My agent has exhausted its token budget allocation, stop and raise a budget ask to my grantor",
+        "top_k": 3
+      },
+      {
+        "prompt": "The EM team is at 85 percent of its input token budget, decide the budget asks and re-allocate within the team",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "Which model and thinking effort should this task run on",
+        "owner": "model-routing"
+      },
+      {
+        "prompt": "Refresh the delivery status and label facts by freshness",
+        "owner": "delivery-status"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "staff-ENG-42-1 reports 100% of its allocation spent with the refund endpoint half done. What happens?",
+      "expected_output": "The agent stops at a safe point, marks BLOCKED with blocker type budget, posts a budget-ask block with figures, reassigns to the EM; the EM grants from its remainder or escalates to the CEO; the CEO asks the user only if the company reserve cannot cover it",
+      "expectations": [
+        "The agent does not continue past the allocation",
+        "The ask carries spent, allocated, requested figures and what stops if denied",
+        "The ask goes to the grantor and bubbles up the chain, user last",
+        "Ledger rows and budget.changed events are recorded"
+      ]
+    }
+  ]
+}

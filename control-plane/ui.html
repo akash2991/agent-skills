@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Brain control plane</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e8ee; --dim: #98a0b3;
+    --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #58a6ff; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f7f9; --panel: #fff; --line: #e2e5ea; --text: #1a1d23; --dim: #5b6474; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--mono); }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  .dim { color: var(--dim); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; padding: 12px 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  section > h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
+  .wide { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  th { color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); }
+  .RUNNING, .OK, .success { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .WARN, .WAITING, .PLANNED, .PENDING, .NO_USAGE_RECORDED { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+  .BLOCKED, .FAILED, .EXHAUSTED, .error { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  .COMPLETED, .UNKNOWN { color: var(--dim); }
+  input, select, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; }
+  input:focus, select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  input[type=number] { width: 8ch; text-align: right; }
+  .model { width: 20ch; } .effort { width: 8ch; } .op { width: 100%; min-width: 18ch; }
+  button { cursor: pointer; }
+  button.go { border-color: color-mix(in srgb, var(--accent) 50%, transparent); color: var(--accent); }
+  .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; min-width: 60px; }
+  .bar > i { display: block; height: 100%; background: var(--ok); }
+  .bar.warn > i { background: var(--warn); } .bar.bad > i { background: var(--bad); }
+  .tree td:first-child { font-family: var(--mono); }
+  .note { color: var(--dim); padding: 6px; }
+  #toast { position: fixed; right: 14px; bottom: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; opacity: 0; transition: opacity .2s; max-width: 60ch; white-space: pre-wrap; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Brain control plane</h1>
+  <span id="sessions" class="dim"></span>
+  <span id="totals" class="dim"></span>
+  <span class="dim" style="margin-left:auto">
+    <label><input type="checkbox" id="live" checked> live</label>
+    <span id="checked"></span>
+  </span>
+</header>
+
+<div class="grid">
+  <section class="wide"><h2>Agents</h2><div class="scroll"><table class="tree">
+    <thead><tr><th>agent</th><th>status</th><th>role</th><th>ticket</th><th>model</th><th>effort</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th><th class="num">hb</th><th>operation</th><th></th></tr></thead>
+    <tbody id="agents"></tbody></table></div></section>
+
+  <section><h2>Budgets</h2><div class="scroll"><table>
+    <thead><tr><th>holder</th><th>status</th><th class="num">in spent</th><th>alloc in</th><th class="num">out spent</th><th>alloc out</th><th>use</th><th></th></tr></thead>
+    <tbody id="budgets"></tbody></table></div>
+    <div id="asks"></div>
+  </section>
+
+  <section><h2>Provider quota (quota-axi)</h2><div class="scroll"><table>
+    <thead><tr><th>provider</th><th>scope</th><th class="num">left</th><th class="num">priority</th><th>runway</th><th>pace</th></tr></thead>
+    <tbody id="quota"></tbody></table></div>
+  </section>
+
+  <section><h2>Spend by model</h2><div class="scroll"><table>
+    <thead><tr><th>model</th><th class="num">calls</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th></tr></thead>
+    <tbody id="models"></tbody></table></div>
+  </section>
+
+  <section><h2>Context: skills and documents loaded</h2><div class="scroll"><table>
+    <thead><tr><th>kind</th><th>name</th><th class="num">loads</th><th class="num">tokens</th></tr></thead>
+    <tbody id="artifacts"></tbody></table></div>
+  </section>
+
+  <section><h2>Tool calls</h2><div class="scroll"><table>
+    <thead><tr><th>tool</th><th>outcome</th><th class="num">n</th></tr></thead>
+    <tbody id="tools"></tbody></table></div>
+  </section>
+
+  <section><h2>Attention</h2><div id="attention"></div></section>
+
+  <section class="wide"><h2>Recent changes</h2><div class="scroll"><table>
+    <thead><tr><th>at</th><th>actor</th><th>entity</th><th>field</th><th>from</th><th>to</th><th>reason</th></tr></thead>
+    <tbody id="changes"></tbody></table></div>
+  </section>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const UNKNOWN = 'UNKNOWN';
+const n = v => (typeof v === 'number' ? v.toLocaleString('en-US') : (v ?? UNKNOWN));
+const money = v => (typeof v === 'number' ? '$' + v.toFixed(4) : UNKNOWN);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let editing = false;
+document.addEventListener('focusin', e => { if (e.target.matches('input,select')) editing = true; });
+document.addEventListener('focusout', () => { editing = false; });
+
+function toast(message, kind) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'show ' + (kind || '');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { el.className = ''; }, 4000);
+}
+
+async function post(url, body) {
+  const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'actor=ui', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {})
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast((data.error || res.statusText) + (data.parent ? '\nparent holds ' + n(data.parent.input_tokens) + 'in/' + n(data.parent.output_tokens) + 'out' : ''), 'error'); return null; }
+  toast('saved', 'success');
+  refresh();
+  return data;
+}
+
+function percentBar(percent) {
+  if (typeof percent !== 'number') return '<span class="dim">' + UNKNOWN + '</span>';
+  const cls = percent >= 100 ? 'bad' : percent >= 80 ? 'warn' : '';
+  return '<div class="bar ' + cls + '" title="' + percent + '%"><i style="width:' + Math.min(100, percent) + '%"></i></div>';
+}
+
+function agentRows(nodes, depth, out) {
+  for (const a of nodes) {
+    const spend = a.spend || {};
+    out.push('<tr>'
+      + '<td>' + '&nbsp;'.repeat(depth * 2) + (depth ? '└ ' : '') + esc(a.agent_id) + '</td>'
+      + '<td><select data-agent="' + esc(a.agent_id) + '" data-field="status" class="pill ' + esc(a.status) + '">'
+        + ['RUNNING', 'WAITING', 'BLOCKED', 'PLANNED', 'COMPLETED', 'FAILED', 'UNKNOWN'].map(s => '<option' + (s === a.status ? ' selected' : '') + '>' + s + '</option>').join('') + '</select></td>'
+      + '<td class="dim">' + esc(a.role) + '</td>'
+      + '<td>' + esc(a.ticket || '-') + '</td>'
+      + '<td><input class="model" data-agent="' + esc(a.agent_id) + '" data-field="model" value="' + esc(a.model || '') + '" placeholder="' + UNKNOWN + '"></td>'
+      + '<td><input class="effort" data-agent="' + esc(a.agent_id) + '" data-field="effort" value="' + esc(a.effort || '') + '" placeholder="' + UNKNOWN + '"></td>'
+      + '<td class="num">' + n(spend.input_tokens) + '</td><td class="num">' + n(spend.output_tokens) + '</td>'
+      + '<td class="num">' + money(spend.cost_usd) + '</td>'
+      + '<td class="num ' + (a.heartbeat_age_minutes > 20 ? 'BLOCKED' : '') + '">' + (a.heartbeat_age_minutes ?? '?') + 'm</td>'
+      + '<td><input class="op" data-agent="' + esc(a.agent_id) + '" data-field="operation" value="' + esc(a.current_operation || '') + '"></td>'
+      + '<td>' + (a.blocker ? '<span class="pill BLOCKED">' + esc(a.blocker) + '</span>' : '') + '</td>'
+      + '</tr>');
+    if (a.children && a.children.length) agentRows(a.children, depth + 1, out);
+  }
+  return out;
+}
+
+function render(s) {
+  $('checked').textContent = new Date(s.checked_at).toLocaleTimeString();
+  $('sessions').innerHTML = s.sessions.length
+    ? s.sessions.map(x => '<span class="pill RUNNING">' + esc(x.role) + '</span> ' + esc(x.id) + ' ' + esc(x.harness) + ' ' + esc(x.model || UNKNOWN) + '/' + esc(x.effort || UNKNOWN)
+        + ' <button data-release="' + esc(x.id) + '">release</button>').join(' &nbsp; ')
+    : '<span class="pill WARN">no live session</span>';
+  const c = s.config, t = s.totals;
+  $('totals').innerHTML = 'company ' + n(Number(c.company_input_tokens)) + 'in / ' + n(Number(c.company_output_tokens)) + 'out'
+    + ' &nbsp;·&nbsp; spent ' + n(t.input_tokens) + 'in / ' + n(t.output_tokens) + 'out'
+    + ' &nbsp;·&nbsp; cost ' + money(t.cost_usd) + ' &nbsp;·&nbsp; ' + n(t.usage_events) + ' usage events';
+
+  $('agents').innerHTML = s.tree.length ? agentRows(s.tree, 0, []).join('') : '<tr><td colspan="12" class="note">No agents registered.</td></tr>';
+
+  $('budgets').innerHTML = s.budgets.map(b => '<tr>'
+    + '<td>' + esc(b.holder) + '<div class="dim">' + esc(b.role || b.scope || '') + '</div></td>'
+    + '<td><span class="pill ' + esc(b.status) + '">' + esc(b.status) + '</span>' + (b.over_allocated ? ' <span class="pill EXHAUSTED">over</span>' : '') + '</td>'
+    + '<td class="num">' + n(b.spent.input_tokens) + '</td>'
+    + '<td><input type="number" data-holder="' + esc(b.holder) + '" data-granted-by="' + esc(b.granted_by) + '" data-field="input_tokens" value="' + (b.allocated.input_tokens === UNKNOWN ? '' : b.allocated.input_tokens) + '"></td>'
+    + '<td class="num">' + n(b.spent.output_tokens) + '</td>'
+    + '<td><input type="number" data-holder="' + esc(b.holder) + '" data-granted-by="' + esc(b.granted_by) + '" data-field="output_tokens" value="' + (b.allocated.output_tokens === UNKNOWN ? '' : b.allocated.output_tokens) + '"></td>'
+    + '<td>' + percentBar(typeof b.percent.input === 'number' ? b.percent.input : undefined) + '</td>'
+    + '<td class="dim">' + esc(b.granted_by) + '</td></tr>').join('') || '<tr><td colspan="8" class="note">No allocations.</td></tr>';
+
+  $('asks').innerHTML = s.open_budget_requests.length
+    ? '<table><thead><tr><th>ask</th><th>from → to</th><th class="num">in</th><th class="num">out</th><th>reason</th><th></th></tr></thead><tbody>'
+      + s.open_budget_requests.map(r => '<tr><td>' + esc(r.id) + '</td><td>' + esc(r.from_holder) + ' → ' + esc(r.to_holder) + '</td>'
+        + '<td class="num">' + n(r.input_tokens) + '</td><td class="num">' + n(r.output_tokens) + '</td><td class="dim">' + esc(r.reason || '') + '</td>'
+        + '<td><button class="go" data-decide="' + esc(r.id) + '" data-status="GRANTED">grant</button> '
+        + '<button data-decide="' + esc(r.id) + '" data-status="DENIED">deny</button></td></tr>').join('') + '</tbody></table>'
+    : '';
+
+  $('models').innerHTML = s.by_model.map(m => '<tr><td>' + esc(m.model) + '</td><td class="num">' + n(m.calls) + '</td>'
+    + '<td class="num">' + n(m.input_tokens) + '</td><td class="num">' + n(m.output_tokens) + '</td><td class="num">' + money(m.cost_usd) + '</td></tr>').join('')
+    || '<tr><td colspan="5" class="note">No model usage events yet, so tokens and cost are ' + UNKNOWN + '.</td></tr>';
+
+  $('artifacts').innerHTML = s.artifacts.map(a => '<tr><td class="dim">' + esc(a.kind) + '</td><td>' + esc(a.name) + '</td>'
+    + '<td class="num">' + n(a.loads) + '</td><td class="num">' + n(a.tokens) + '</td></tr>').join('')
+    || '<tr><td colspan="4" class="note">No skill or document load events yet.</td></tr>';
+
+  $('tools').innerHTML = s.tools.map(t2 => '<tr><td>' + esc(t2.name) + '</td><td><span class="pill ' + esc(t2.outcome) + '">' + esc(t2.outcome) + '</span></td><td class="num">' + n(t2.n) + '</td></tr>').join('')
+    || '<tr><td colspan="3" class="note">No tool call events yet.</td></tr>';
+
+  const attention = [];
+  for (const a of s.stale) attention.push('<div><span class="pill WARN">stale</span> ' + esc(a.agent_id) + ' heartbeat ' + (a.heartbeat_age_minutes ?? '?') + ' min ago</div>');
+  for (const a of s.blocked) attention.push('<div><span class="pill BLOCKED">blocked</span> ' + esc(a.agent_id) + ' ' + esc(a.blocker || '(no blocker recorded)') + '</div>');
+  for (const c2 of s.path_conflicts) attention.push('<div><span class="pill BLOCKED">path</span> ' + esc(c2.path) + ' ← ' + esc(c2.agents.join(', ')) + '</div>');
+  for (const b of s.budgets.filter(x => x.status === 'WARN' || x.status === 'EXHAUSTED')) attention.push('<div><span class="pill ' + esc(b.status) + '">budget</span> ' + esc(b.holder) + ' ' + b.percent.input + '% in</div>');
+  $('attention').innerHTML = attention.join('') || '<div class="note">Nothing needs attention.</div>';
+
+  $('changes').innerHTML = s.changes.map(c3 => '<tr><td class="dim">' + esc(new Date(c3.at).toLocaleTimeString()) + '</td><td>' + esc(c3.actor) + '</td>'
+    + '<td class="dim">' + esc(c3.entity) + ':' + esc(c3.entity_id) + '</td><td>' + esc(c3.field) + '</td>'
+    + '<td class="dim">' + esc(c3.old_value ?? '') + '</td><td>' + esc(c3.new_value ?? '') + '</td><td class="dim">' + esc(c3.reason ?? '') + '</td></tr>').join('')
+    || '<tr><td colspan="7" class="note">No changes recorded.</td></tr>';
+}
+
+function renderQuota(q) {
+  if (!q || !q.available) {
+    $('quota').innerHTML = '<tr><td colspan="6" class="note">' + esc((q && q.reason) || 'quota ' + UNKNOWN) + '</td></tr>';
+    return;
+  }
+  $('quota').innerHTML = q.scopes.map(s => '<tr><td>' + esc(s.provider) + (s.stale ? ' <span class="pill WARN">stale</span>' : '') + '</td>'
+    + '<td class="dim">' + esc(s.scope) + '</td><td class="num">' + (typeof s.percent_remaining === 'number' ? s.percent_remaining + '%' : UNKNOWN) + '</td>'
+    + '<td class="num">' + n(s.spend_priority) + '</td><td class="dim">' + esc(s.runway_status || UNKNOWN) + '</td>'
+    + '<td class="dim">' + esc(s.pace_status || UNKNOWN) + '</td></tr>').join('') || '<tr><td colspan="6" class="note">No scopes reported.</td></tr>';
+}
+
+document.addEventListener('change', e => {
+  const el = e.target;
+  if (el.dataset.agent) return void post('/api/agents/' + encodeURIComponent(el.dataset.agent), { [el.dataset.field]: el.value });
+  if (el.dataset.holder) {
+    const row = {}; row[el.dataset.field] = el.value === '' ? null : Number(el.value);
+    return void post('/api/budget/allocate', { holder: el.dataset.holder, granted_by: el.dataset.grantedBy, ...currentAllocation(el), ...row });
+  }
+});
+function currentAllocation(el) {
+  const inputs = document.querySelectorAll('[data-holder="' + el.dataset.holder + '"]');
+  const out = {};
+  for (const i of inputs) out[i.dataset.field] = i.value === '' ? null : Number(i.value);
+  return out;
+}
+document.addEventListener('click', e => {
+  const b = e.target;
+  if (b.dataset.release) return void post('/api/sessions/' + encodeURIComponent(b.dataset.release) + '/release');
+  if (b.dataset.decide) return void post('/api/budget/decide', { id: b.dataset.decide, status: b.dataset.status });
+});
+
+async function refresh() {
+  if (editing) return;
+  try {
+    const s = await (await fetch('/api/state')).json();
+    render(s);
+  } catch (error) { toast('state fetch failed: ' + error.message, 'error'); }
+}
+async function refreshQuota() {
+  try { renderQuota(await (await fetch('/api/quota')).json()); } catch { renderQuota(null); }
+}
+refresh(); refreshQuota();
+setInterval(() => { if ($('live').checked) refresh(); }, 3000);
+setInterval(() => { if ($('live').checked) refreshQuota(); }, 60000);
+</script>
+</body>
+</html>

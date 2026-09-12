@@ -1,0 +1,52 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # node:sqlite, which the control plane uses, needs Node 22.5 or newer.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Validate skill anatomy
+        run: node scripts/validate-skills.js
+
+      - name: Validate reference links
+        run: node scripts/validate-reference-links.js
+
+      - name: Validate artifact paths
+        run: node scripts/validate-artifact-paths.js
+
+      - name: Validate the brain sources
+        run: npm run validate
+
+      - name: Skill trigger and routing evals
+        run: node scripts/run-evals.js --min-rank1 80
+
+      - name: Unit tests
+        run: |
+          node --test scripts/brain/control-plane-test.js
+          node --test scripts/lib/skill-lint-test.js
+          node --test scripts/run-evals-test.js
+          node --test scripts/validate-reference-links-test.js
+          node --test scripts/validate-artifact-paths-test.js
+
+      - name: Build every target
+        run: npm run select && npm run build
+
+      - name: Inject into a scratch repository and exercise the control plane
+        run: |
+          mkdir -p /tmp/target
+          node scripts/brain/inject.js /tmp/target --targets claude-code
+          cd /tmp/target
+          node .agent-brain/control-plane/brain.js context --role ceo --harness ci --model ci-model --effort high
+          node .agent-brain/control-plane/brain.js status
+          node .agent-brain/control-plane/brain.js budget

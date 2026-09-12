@@ -2,21 +2,23 @@
 
 Reference catalog of agent orchestration patterns this repo endorses, plus anti-patterns to avoid. Read this before adding a new slash command that coordinates multiple personas, or before introducing a new persona that "wraps" existing ones.
 
-The governing rule: **the user (or a slash command) is the orchestrator. Personas do not invoke other personas.** Skills are mandatory hops inside a persona's workflow.
+The governing rule in this repository: **the CEO session is the only orchestrator. Nothing is invoked directly, and personas do not invoke other personas.** Every request reaches the CEO, which admits it with a budget and an owner or parks it as a prioritized ticket (`request-intake`), because budget, org-level priority, and how much runs in parallel cannot be judged from inside a single task. Skills are mandatory hops inside a persona's workflow.
+
+The patterns below are the shapes the CEO may compose. Pattern 1 is kept for what it teaches about cost, but in this organization even a single-perspective request arrives through the CEO rather than straight from the user.
 
 ---
 
 ## Endorsed patterns
 
-### 1. Direct invocation (no orchestration)
+### 1. Single persona, single perspective
 
-Single persona, single perspective, single artifact. The default and the cheapest option.
+One persona, one perspective, one artifact. The cheapest shape, and the one to compare everything else against.
 
 ```
-user → code-reviewer → report → user
+user → CEO (admits, allocates) → code-reviewer → report → CEO → user
 ```
 
-**Use when:** the work is one perspective on one artifact and you can describe it in one sentence.
+**Use when:** the work is one perspective on one artifact and you can describe it in one sentence. The CEO hop is not ceremony: it is where the budget is allocated and the request is ranked against what is already running.
 
 **Examples:**
 - "Review this PR" → `code-reviewer`
@@ -27,21 +29,19 @@ user → code-reviewer → report → user
 
 ---
 
-### 2. Single-persona slash command
+### 2. The session entry command
 
-A slash command that wraps one persona with the project's skills. Saves the user from re-explaining the workflow every time.
+One command, `/brain`, claims a role for the session and loads the organization. It is the only user-facing command, because a command that starts a specialist directly would bypass the CEO's budget and priority decisions.
 
 ```
-/review → code-reviewer (with code-review-and-quality skill) → report
+/brain → claims the role in the control plane → loads ORG.md, the persona, current state → ready
 ```
 
-**Use when:** the same single-persona invocation happens repeatedly with the same setup.
+**Use when:** every session start.
 
-**Examples in this repo:** `/review`, `/test`, `/code-simplify`.
+**Cost:** one command run plus the state read.
 
-**Cost:** same as direct invocation. The slash command is just a saved prompt.
-
-**Anti-signal:** if the slash command's body is mostly "decide which persona to call," delete it and let the user call the persona directly.
+**Anti-signal:** a new command that starts a persona or a skill. That is the thing this organization deliberately does not have; route the request through the CEO instead.
 
 ---
 
@@ -50,9 +50,9 @@ A slash command that wraps one persona with the project's skills. Saves the user
 Multiple personas operate on the same input concurrently, each producing an independent report. A merge step (in the main agent's context) synthesizes them into a single decision.
 
 ```
-                    ┌─→ code-reviewer    ─┐
-/ship → fan out  ───┼─→ security-auditor ─┤→ merge → go/no-go + rollback
-                    └─→ test-engineer    ─┘
+                          ┌─→ backend-code-reviewer ─┐
+CEO → fan out (one change)┼─→ security-auditor       ─┤→ merge → go/no-go + rollback
+                          └─→ test-engineer          ─┘
 ```
 
 **Use when:**
@@ -61,7 +61,7 @@ Multiple personas operate on the same input concurrently, each producing an inde
 - The merge step is small enough to stay in the main context
 - Wall-clock latency matters
 
-**Examples in this repo:** `/ship`.
+**Example:** the CEO admitting a pre-merge gate fans out the discipline code reviewer, `security-auditor`, and `test-engineer` on one change, then merges their verdicts.
 
 **Cost:** N parallel sub-agent contexts + one merge turn. Higher than direct invocation, but faster wall-clock and produces better reports because each sub-agent stays focused on its single perspective.
 
@@ -75,21 +75,38 @@ If any answer is "no," fall back to direct invocation or a single-persona comman
 
 ---
 
-### 4. Sequential pipeline as user-driven slash commands
+### 4. Sequential lifecycle coordination
 
-The user runs slash commands in a defined order, carrying context (or commit history) between them. There is no orchestrator agent — the user IS the orchestrator.
+Dependent lifecycle phases run in a defined order, carrying durable artifacts and
+commit history between them. The user drives the sequence by default:
 
 ```
-user runs:  /spec  →  /plan  →  /build  →  /test  →  /review  →  /ship
+CEO: intake → spec → PRD → design → design review → milestones → sprints → build → review → QA → ship
 ```
 
-**Use when:** the workflow has dependencies (each step needs the previous step's output) and human judgment between steps adds value.
+When the user explicitly delegates an end-to-end multi-story outcome, the main
 
-**Examples in this repo:** the entire DEFINE → PLAN → BUILD → VERIFY → REVIEW → SHIP lifecycle.
+```
+user → main session as captain → focused persona/skill → durable artifact → next phase
+```
 
-**Cost:** one sub-agent context per step. Free for the orchestration layer because there is no orchestrator agent.
+The main session remains accountable and invokes each focused persona directly.
+It is not a persona, and no persona invokes the next persona.
 
-**Why not automate it:** an LLM "lifecycle orchestrator" would (a) lose nuance between steps because it has to summarize for hand-off, (b) skip the human checkpoints that catch wrong-direction work early, and (c) double the token cost via paraphrasing turns.
+**Use when:** the workflow has dependencies and either human judgment between
+steps adds value or the user has explicitly delegated lifecycle continuity.
+
+**Examples in this repo:** the entire DEFINE → PLAN → BUILD → VERIFY → REVIEW →
+SHIP lifecycle; the brain organization ([docs/brain.md](../docs/brain.md)) for
+delegated multi-story delivery, where the CEO session is the captain.
+
+**Cost:** user-driven sequencing has no extra orchestration context. Delegated
+captaincy adds main-session coordination and state-maintenance cost, justified when
+the user values continuity, visibility, and a single accountable interface.
+
+**Guardrails for delegated captaincy:** keep handoffs in project files, preserve
+human gates that affect product direction or authority, avoid paraphrasing-only
+persona hops, and use a single agent when delegation costs more than it saves.
 
 ---
 
@@ -120,7 +137,7 @@ This catalog is harness-agnostic, but most readers will run it on Claude Code. H
 
 ### Where personas live
 
-Plugin subagents go in `agents/` at the plugin root. This repo is a plugin (`.claude-plugin/plugin.json`), so `agents/code-reviewer.md`, `agents/security-auditor.md`, and `agents/test-engineer.md` are auto-discovered when the plugin is enabled. No path configuration needed.
+Personas are injected into the project as subagent files (`.claude/agents/` for Claude Code, and the equivalent for each other harness), so they are discovered without any path configuration. The CEO is never emitted as a subagent: it is the main session.
 
 ### Subagents vs. Agent Teams
 
@@ -134,7 +151,7 @@ Claude Code has two parallelism primitives. Pattern 3 (parallel fan-out with mer
 | Status | Stable | Experimental — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
 | Cost | Lower | Higher — each teammate is a separate Claude instance |
 
-**The personas in this repo work in both modes.** When spawned as subagents (e.g. by `/ship`), they report findings to the main session. When spawned as teammates (`Spawn a teammate using the security-auditor agent type…`), they can challenge each other's findings directly. The persona definition is the same; only the spawning context changes.
+**The personas work in both modes.** When spawned as subagents by the CEO session, they report findings back to it. When spawned as teammates (`Spawn a teammate using the security-auditor agent type…`), they can challenge each other's findings directly. The persona definition is the same; only the spawning context changes.
 
 One subtlety: the `skills` and `mcpServers` frontmatter fields in a persona are honored when it runs as a subagent but **ignored when it runs as a teammate** — teammates load skills and MCP servers from your project and user settings, the same as a regular session. If a persona depends on a specific skill or MCP server being loaded, configure it at the session level so it's available in both modes.
 
@@ -146,6 +163,13 @@ Two rules in this catalog aren't just convention — Claude Code enforces them:
 - **"No nested teams"** — teammates cannot spawn their own teams. Same anti-patterns blocked at the team level.
 
 This means you can adopt the patterns in this catalog without worrying about contributors accidentally building the anti-patterns. They'll just fail to load.
+
+### How the brain organization maps onto these primitives
+
+- The CEO session is the delegated captain (Pattern 4). Personas (PM, EM, PEs, engineers, reviewers, test engineer, auditors) are subagents or teammates; none invokes another.
+- The EM's model routing is a **decision**, not a router persona (Anti-pattern A): it has domain value (tier, budget, review path) and produces an assignment packet. Because subagents cannot spawn subagents, the CEO session **executes** that decision by spawning the persona with the packet's `model/effort` pair, verbatim. On a harness that allows nested spawning the EM would execute its own decision; in a single-session tool the session applies the pair before playing the role. The build renders the applicable mode into `ORG.md` and the `model-routing` skill.
+- Code review, security audit, and QA on one change are independent and fan out in parallel with a merge in the CEO session (Pattern 3); the merge gate itself is the discipline code reviewer's verdict.
+- Every hand-off is an assignment packet in the tracker, never a paraphrase (Anti-pattern C); orchestration depth stays at one (Anti-pattern D).
 
 ### Built-in subagents to know about
 
@@ -167,13 +191,13 @@ The fields that DO work in plugin agents are: `name`, `description`, `tools`, `d
 
 ### Spawning multiple subagents in parallel
 
-In Claude Code, parallel fan-out (Pattern 3) requires issuing **multiple Agent tool calls in a single assistant turn**. Sequential turns serialize execution. `/ship` calls this out explicitly. Any new orchestrator command should do the same.
+In Claude Code, parallel fan-out (Pattern 3) requires issuing **multiple Agent tool calls in a single assistant turn**. Sequential turns serialize execution, so a CEO fanning out a pre-merge gate must spawn all of the reviewers in one turn.
 
 ---
 
 ## Worked example: Agent Teams for competing-hypothesis debugging
 
-This example shows when to reach for **Agent Teams** instead of `/ship`'s subagent fan-out. The two patterns look similar from a distance — both spawn the same three personas — but the value comes from a different place.
+This example shows when to reach for **Agent Teams** instead of a subagent fan-out. The two patterns look similar from a distance — both spawn the same three personas — but the value comes from a different place.
 
 ### The scenario
 
@@ -186,19 +210,19 @@ Plausible root causes (mutually exclusive, all fit the symptoms):
 3. A missing index on a query that scales with cart size
 4. A flaky third-party API where the SDK retries silently before timing out
 
-A single agent will pick the first plausible theory and stop investigating. A `/ship`-style subagent fan-out would have each persona report independently — but their reports never meet, so nothing rules out the wrong theories.
+A single agent will pick the first plausible theory and stop investigating. A a subagent fan-out would have each persona report independently — but their reports never meet, so nothing rules out the wrong theories.
 
 This is exactly the case the Agent Teams docs describe: *"With multiple independent investigators actively trying to disprove each other, the theory that survives is much more likely to be the actual root cause."*
 
-### Why this is *not* a `/ship` job
+### Why this is not a fan-out job
 
-| | `/ship` (subagents) | Agent Teams |
+| | Fan-out (subagents) | Agent Teams |
 |--|--------------------|-------------|
 | Sub-agents see | The same diff, different lenses | A shared task list, each other's messages |
 | Output | Three independent reports → one merge | Adversarial debate → consensus root cause |
 | Right when | You want a verdict on a known artifact | You want to *find* the artifact among hypotheses |
 
-`/ship` is a verdict; Agent Teams is an investigation.
+A fan-out produces a verdict; Agent Teams produces an investigation.
 
 ### Setup (one-time, per-environment)
 
@@ -262,17 +286,17 @@ Always cleanup through the lead, not a teammate (per the docs: teammates lack fu
 
 ### Cost expectation
 
-Three Sonnet teammates running for ~10–15 minutes of investigation costs noticeably more than the same three personas spawned as subagents by `/ship`. The justification is *quality of conclusion* — for production debugging where the wrong fix is expensive, the extra tokens are a bargain. For a routine PR review, stick with `/ship`.
+Three teammates running for ten to fifteen minutes of investigation costs noticeably more than the same three personas spawned as subagents, and it comes out of a real allocation, so the CEO admits it deliberately. The justification is quality of conclusion: for production debugging where the wrong fix is expensive, the extra tokens are a bargain. For a routine review, use the fan-out.
 
 ### Anti-pattern in this scenario
 
-Do **not** rebuild this as a `/debug` slash command that fans out subagents. Subagents can't message each other — you'd lose the adversarial debate that makes the pattern work. If a workflow keeps coming up, document the trigger prompt above as a snippet rather than wrapping it in a slash command that misuses subagents.
+Do **not** rebuild this as a `/debug` slash command that fans out subagents. Subagents can't message each other — you'd lose the adversarial debate that makes the pattern work. If a workflow keeps coming up, record the trigger prompt in the CEO's intake notes rather than wrapping it in a command that misuses subagents.
 
 ### When *not* to use Agent Teams
 
-- Production-bound verdict on a known diff → use `/ship` (subagents).
+- Production-bound verdict on a known diff → a CEO-admitted fan-out of subagents.
 - One specialist perspective on one artifact → direct persona invocation.
-- Sequential lifecycle (spec → plan → build) → user-driven slash commands (Pattern 4).
+- Sequential lifecycle (spec → design → build) → the CEO session driving the phases (Pattern 4).
 - Read-heavy research with a small digest → built-in `Explore` subagent.
 
 Reach for Agent Teams only when teammates **need** to challenge each other to produce the right answer.
@@ -283,7 +307,7 @@ Reach for Agent Teams only when teammates **need** to challenge each other to pr
 
 ### A. Router persona ("meta-orchestrator")
 
-A persona whose job is to decide which other persona to call.
+A persona whose only job is to decide which other persona to call. Note the difference from the CEO: the CEO decides *whether work happens at all*, at what priority, and against which budget, which is a decision with consequences. A router that only forwards adds a hop and loses context.
 
 ```
 /work → router-persona → "this needs a review" → code-reviewer → router (paraphrases) → user
@@ -292,10 +316,10 @@ A persona whose job is to decide which other persona to call.
 **Why it fails:**
 - Pure routing layer with no domain value
 - Adds two paraphrasing hops → information loss + roughly 2× token cost
-- The user already knew they wanted a review; they could have called `/review` directly
+- The requester already knew they wanted a review; the CEO can route it to the reviewer in one hop
 - Replicates the work that slash commands and intent mapping in `AGENTS.md` already do
 
-**What to do instead:** add or refine slash commands. Document intent → command mapping in `AGENTS.md`.
+**What to do instead:** let the CEO route the request. Intent-to-skill mapping belongs in the skill descriptions, which is what makes them discoverable.
 
 ---
 
@@ -323,13 +347,13 @@ An agent that calls `/spec`, then `/plan`, then `/build`, etc. on the user's beh
 - Doubles token cost: orchestrator turn + sub-agent turn for every step
 - Removes user agency at exactly the points where judgment matters most
 
-**What to do instead:** keep the user as the orchestrator. Document the recommended sequence in `README.md` and let users invoke it.
+**What to do instead:** keep the CEO accountable for the sequence, with the human gates that affect product direction intact.
 
 ---
 
 ### D. Deep persona trees
 
-`/ship` calls a `pre-ship-coordinator` that calls a `quality-coordinator` that calls `code-reviewer`.
+The CEO calls a `pre-ship-coordinator` that calls a `quality-coordinator` that calls a code reviewer.
 
 **Why it fails:**
 - Each layer adds latency and tokens with no decision value

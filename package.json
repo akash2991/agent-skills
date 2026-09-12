@@ -1,0 +1,18 @@
+{
+  "name": "agent-brain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Injectable brain for agentic coding: an agent organization, curated skills, and per-tool transforms from one source of truth.",
+  "scripts": {
+    "validate": "node scripts/brain/validate.js",
+    "select": "node scripts/brain/select.js",
+    "build": "node scripts/brain/build.js",
+    "all": "node scripts/brain/validate.js && node scripts/brain/select.js && node scripts/brain/build.js",
+    "inject": "node scripts/brain/inject.js",
+    "import": "node scripts/brain/import.js",
+    "test:control-plane": "node --test scripts/brain/control-plane-test.js",
+    "lint:skills": "node scripts/validate-skills.js",
+    "evals": "node scripts/run-evals.js --min-rank1 80"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,43 @@
+{
+  "skill_name": "model-routing",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Assign a model class and thinking effort to this task based on its complexity tier and remaining milestone budget",
+        "top_k": 3
+      },
+      {
+        "prompt": "Which model and thinking effort should the EM route this ticket to given the budget",
+        "top_k": 3
+      },
+      {
+        "prompt": "Milestone spend crossed 80 percent, re-route the remaining tasks to cheaper model classes",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "Debug the crash on startup",
+        "owner": "debugging-and-error-recovery"
+      },
+      {
+        "prompt": "Write the PRD for the checkout feature",
+        "owner": "prd-writing"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "Route these three tasks for the payments service: rename a config key, add a refund endpoint with a new migration, and fix a flaky unit test. Milestone budget is at 85%.",
+      "expected_output": "A tier, model class, thinking effort, budget, and review path per task, recorded as assignment records, with the budget rule applied",
+      "expectations": [
+        "Classifies the migration/refund task as T3 with large model and max effort",
+        "Does not downgrade the T3 task despite 85% budget",
+        "Downgrades or defers only T0/T1 work and reports to the PM",
+        "Writes an assignment record for every task"
+      ]
+    }
+  ]
+}

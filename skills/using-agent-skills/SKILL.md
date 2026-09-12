@@ -1,6 +1,7 @@
 ---
 name: using-agent-skills
 description: Discovers and invokes agent skills. Use when starting a session or when you need to discover which skill applies to the current task. This is the meta-skill that governs how all other skills are discovered and invoked.
+category: process
 ---
 
 # Using Agent Skills
@@ -127,6 +128,8 @@ These are the subtle errors that look like productivity but create problems:
 8. Removing things you don't fully understand
 9. Building without a spec because "it's obvious"
 10. Skipping verification because "it looks right"
+11. Reporting cached project or agent state as current
+12. Hiding delegation, retry loops, model switching, usage, or cost from the user
 
 ## Skill Rules
 
@@ -137,6 +140,7 @@ These are the subtle errors that look like productivity but create problems:
 3. **Multiple skills can apply.** A feature implementation might involve `idea-refine` → `spec-driven-development` → `planning-and-task-breakdown` → `incremental-implementation` → `test-driven-development` → `code-review-and-quality` → `code-simplification` → `shipping-and-launch` in sequence.
 
 4. **When in doubt, start with a spec.** If the task is non-trivial and there's no spec, begin with `spec-driven-development`.
+
 
 ## Lifecycle Sequence
 
@@ -150,15 +154,15 @@ For a complete feature, the typical skill sequence is:
 5.  context-engineering         → Load the right context
 6.  source-driven-development   → Verify against official docs
 7.  incremental-implementation  → Build slice by slice
-8.  observability-and-instrumentation → Instrument as you build (runs parallel with 7-9, not after)
+8.  observability-and-instrumentation → Instrument only when required/in scope (parallel with build)
 9.  doubt-driven-development    → Cross-examine non-trivial decisions in-flight
 10. test-driven-development     → Prove each slice works
-11. code-review-and-quality     → Review before merge
-12. code-simplification         → Reduce unnecessary complexity while preserving behavior
-13. git-workflow-and-versioning → Clean commit history
-14. documentation-and-adrs      → Document decisions
-15. deprecation-and-migration   → Retire old systems and move users safely when needed
-16. shipping-and-launch         → Deploy safely
+12. code-review-and-quality     → Review before merge
+13. code-simplification         → Reduce unnecessary complexity while preserving behavior
+14. git-workflow-and-versioning → Clean commit history
+15. documentation-and-adrs      → Document decisions
+16. deprecation-and-migration   → Retire old systems and move users safely when needed
+17. shipping-and-launch         → Deploy safely
 ```
 
 Not every task needs every skill. A bug fix might only need: `debugging-and-error-recovery` → `test-driven-development` → `code-review-and-quality`.

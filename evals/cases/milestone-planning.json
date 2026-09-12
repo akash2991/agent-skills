@@ -1,0 +1,43 @@
+{
+  "skill_name": "milestone-planning",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Break the approved implementation plan for the payments service into milestones ordered by earliest usable outcome",
+        "top_k": 3
+      },
+      {
+        "prompt": "Create sprints, stories, and tasks in the tracker for this service with a foundation task first",
+        "top_k": 3
+      },
+      {
+        "prompt": "Slice this service's work into incremental delivery milestones with budgets and verification commands",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "Design the high-level architecture across services",
+        "owner": "hld"
+      },
+      {
+        "prompt": "Encode output so it is safe against XSS",
+        "owner": "security-and-hardening"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "The HLD for the notifications service is approved. Plan the delivery.",
+      "expected_output": "Milestones ordered by earliest usable outcome, a foundation task first, tasks with disjoint owned paths and verification commands, created in the tracker",
+      "expectations": [
+        "Milestone 1 delivers a usable outcome, not just infrastructure",
+        "Identifies a foundation task that blocks parallel tasks",
+        "No two concurrent tasks share an owned path",
+        "Every milestone has a budget and a verification command"
+      ]
+    }
+  ]
+}
