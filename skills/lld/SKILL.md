@@ -1,6 +1,6 @@
 ---
 name: lld
-description: Turns an approved HLD section into a low-level design for one service or module: folder structure, types and interfaces as code, data model and migrations, API contracts, state machines, error handling, and testing strategy. Use when a principal engineer needs to pin cross-service contracts in detail, or when a foundation staff engineer or EM designs a service's internals before implementation.
+description: Turns an approved HLD section into a low-level design for one service or module: folder structure, types and interfaces as code, data model and migrations, API contracts, state machines, error handling, and testing strategy. Use when a staff engineer designs or updates the internals of the service it owns, before or alongside implementation.
 category: design
 ---
 
@@ -19,7 +19,7 @@ The LLD is what an engineer implements from without asking questions. At the cro
 
 ## Process
 
-1. **Read** the approved HLD section, the domain model, the service `CONVENTIONS.md` (global first), and the existing code the module touches.
+1. **Read** the service's own `HLD.md` section, the domain model, the service `CONVENTIONS.md` (global first), and the existing code the module touches.
 2. **Folder structure**: list the files an engineer will create, feature-first (`<feature>/{api,application,domain,persistence,tests}`) per the global `CONVENTIONS.md`.
 3. **Types and interfaces as code**: enums, discriminated unions, DTOs, entities, error types, ports. Use the language of the service. If a concept cannot be expressed in the type system, say why.
 4. **Data model**: tables, columns, types, constraints, indexes; migration steps and rollback.

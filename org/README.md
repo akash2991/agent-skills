@@ -4,7 +4,7 @@ The always-on organization document is maintained as these ordered parts and emi
 
 | Part | Owns |
 |---|---|
-| `00-north-star.md` | Title, tool line, the north star |
+| `00-north-star.md` | Title, the north star, and who runs the organization |
 | `05-philosophy.md` | Core philosophy behind the conventions |
 | `10-where-things-live.md` | Path table |
 | `20-org-chart.md` | Org chart, persona rules, discipline split |

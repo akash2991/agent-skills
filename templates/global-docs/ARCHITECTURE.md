@@ -1,24 +1,14 @@
 # Architecture
 
-The highest-level map of this product. One page, kept short on purpose.
+The whole system in one page. Owned by the **principal engineers**, who are scoped project-wide.
 
-Its job is to let anyone, in any role, understand **what exists, what each part is for, and where a change belongs**, without reading code. The user and the PM should be able to plan from this page alone. Engineers start here and then go to the service documents for anything deeper.
+Its job is to let anyone, in any role, understand **what exists, what each part is for, and where a change belongs**, without reading code. The product manager plans from this page; an engineer starts here and then goes to their service's own documents for anything deeper.
 
-Owned by the principal engineers, kept current by the EM of each service for its own row. Updated when a service is added, removed, renamed, or changes responsibility, and at every milestone close.
+**Keep it really high level.** Services and the direction they depend in, not classes, folders, or function signatures. If a section starts explaining how a service works inside, that belongs in that service's `HLD.md`, and this page keeps only the sentence that says what it is for.
 
-## What this product is
+Updated when a service is added, removed, renamed, or changes responsibility, and reviewed at every milestone close.
 
-<Two or three sentences. What a user can do with it, and for whom. No technology.>
-
-## Services
-
-One row per service. If a row needs a paragraph, the paragraph belongs in that service's own documents, not here.
-
-| Service | Responsible for | Not responsible for | Owner (EM) | Docs |
-|---|---|---|---|---|
-| `<name>` | <the one thing it owns> | <the nearest thing people assume it owns> | <em> | `{{ORG_DIR}}/services/<name>/` |
-
-## How they fit together
+## Shape of the system
 
 ```mermaid
 flowchart LR
@@ -27,7 +17,15 @@ flowchart LR
   api --> db[(Store)]
 ```
 
-<Keep the diagram to services and the direction of dependence. No classes, no functions, no folder layout.>
+<Services and the direction of dependence. Nothing smaller than a service belongs in this diagram.>
+
+## Services
+
+One row per service. If a row wants a paragraph, the paragraph belongs in that service's documents.
+
+| Service | Responsible for | Not responsible for | Owner (EM) | Docs |
+|---|---|---|---|---|
+| `<name>` | <the one thing it owns> | <the nearest thing people assume it owns> | <em> | `{{ORG_DIR}}/services/<name>/` |
 
 ## Surfaces
 
@@ -37,9 +35,17 @@ flowchart LR
 | Mobile | | | |
 | Public API | | | |
 
+## Contracts between services
+
+Only the contracts that more than one service depends on. Everything else is internal.
+
+| Contract | Produced by | Consumed by | Defined in |
+|---|---|---|---|
+| <name> | <service> | <services> | <OpenAPI path, schema, or event contract> |
+
 ## Where a change belongs
 
-The routing table a PM or engineer uses to name an owner without asking an engineer.
+The routing table a product manager or engineer uses to name an owner without reading code.
 
 | If the change is about... | It belongs to |
 |---|---|
@@ -49,7 +55,7 @@ The routing table a PM or engineer uses to name an owner without asking an engin
 
 ## Cross-cutting decisions
 
-Only the ones that change how a feature is planned. The full list lives in `DECISIONS.md`.
+Only the ones that change how work is planned. The full list lives in `DECISIONS.md`.
 
 | Decision | Consequence for planning | Where it is recorded |
 |---|---|---|
@@ -57,4 +63,4 @@ Only the ones that change how a feature is planned. The full list lives in `DECI
 
 ## What is deliberately not here
 
-Folder structure, class and function design, coding conventions, test strategy, schema detail, and API contracts. Those live in each service's `LLD.md` and in `CONVENTIONS.md`, and putting them here would make this page something nobody reads.
+Folder structure, class and function design, coding conventions, test strategy, schema detail, and the internals of any single service. Those live in each service's `HLD.md` and `LLD.md` and in `CONVENTIONS.md`. Putting them here would make this page something nobody reads.

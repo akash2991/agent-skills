@@ -8,7 +8,9 @@ category: design
 
 ## Overview
 
-The HLD makes the organization able to execute in parallel without rework. It fixes boundaries, ownership, and the contracts between services; it deliberately does not fix internals, which belong to each service's EM and engineers.
+There are two altitudes and they have different owners. A principal engineer writes the **project** architecture in `{{ORG_DIR}}/docs/ARCHITECTURE.md`: which services exist, what each is for, the contracts between them, and where a change belongs. A staff engineer writes its **service** `HLD.md`: the modules inside one service, the contracts it exposes, and its data model. This skill serves both; keep to the altitude of the document you are writing.
+
+An HLD makes parallel work possible without rework. It fixes boundaries, ownership, and contracts; it deliberately does not fix internals, because the code is the detail.
 
 ## When to Use
 

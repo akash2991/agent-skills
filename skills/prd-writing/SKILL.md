@@ -19,7 +19,8 @@ The PRD is the contract between product and engineering. It states what must be 
 
 ## Process
 
-1. **Gather inputs**: the ticket, spec and decisions, the current product, existing services and their `HLD.md`, known constraints (budget, deadline, compliance).
+1. **Gather inputs**: the ticket, the project `{{ORG_DIR}}/docs/PRD.md` this feature must fit, `ARCHITECTURE.md` for which services it touches, spec and decisions, known constraints (deadline, compliance).
+1b. **Check it against the project PRD.** If the feature adds a capability, changes who the product is for, or crosses a line that page says the product will never cross, stop and say so: update `PRD.md` first, or the feature is wrong.
 2. **Define the outcome**: target user, the problem, the measurable outcome, and how it will be verified once shipped.
 3. **Cut the first usable increment**: what is the smallest version a user can use? Everything else goes to "Later" with a reason, classified as `POST-MVP`, `NICE-TO-HAVE`, `OPERATIONAL HARDENING`, `SCALE OPTIMIZATION`, or `UNKNOWN` (see scope discipline in `ORG.md`).
 3b. **Check requirement clarity.** For every story ask: what exactly happens, to which entity, in which state, what happens on failure or reload, which technology or interaction model is expected, and who decides? "Pin the notes to the geometry" is not a requirement until those are answered. Unanswered questions that materially affect implementation go to the user; do not let engineering choose an architecture around a guess.

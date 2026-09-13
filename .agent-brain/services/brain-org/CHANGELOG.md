@@ -4,6 +4,10 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-43 — north star changed to continuous delivery: every change small enough to merge, shippable on its own, leaving the repository releasable — org-staff-engineer
+- F-self-44 — scope made explicit and tied to document ownership. The product manager and principal engineers are project-wide and own `docs/PRD.md` and `docs/ARCHITECTURE.md`, both kept really high level. Engineering managers and staff engineers are scoped to one service, and the service `HLD.md` and `LLD.md` moved from the EM to its staff engineers, updated in the pull request that changes them. The EM now checks they are true before merging rather than writing them — org-staff-engineer
+- F-self-45 — a project-level `PRD.md` template added as the product's source of truth, and `ARCHITECTURE.md` rewritten around services, contracts between them, and where a change belongs — org-staff-engineer
+
 - F-self-38 — the CEO role removed. It filed tickets and reported state, both of which the product manager now does, and it gated nothing once coordination was gone. Archived as `deprecated/removed-coordination/persona-ceo.md` — org-staff-engineer
 - F-self-39 — there is no entry point. Any persona is invoked directly: a feature request goes to `/brain-pm`, which files the ticket and then asks which skill to run on it; a bug goes straight to `/brain-swe-*`, which gained `debugging-and-error-recovery` and `incremental-implementation` — org-staff-engineer
 
