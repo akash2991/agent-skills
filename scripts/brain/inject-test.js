@@ -25,19 +25,22 @@ test('injection is idempotent and leaves a project runnable', () => {
   const first = fs.readdirSync(path.join(repo, '.claude', 'skills')).length;
   inject(repo);
   assert.equal(fs.readdirSync(path.join(repo, '.claude', 'skills')).length, first);
-  assert.ok(fs.existsSync(path.join(repo, '.claude', 'commands', 'brain-init.md')),
-    'the entry command is namespaced brain-init so it cannot collide with another tool');
+  const commands = fs.readdirSync(path.join(repo, '.claude', 'commands'));
+  assert.ok(commands.includes('brain-ceo.md') && commands.includes('brain-em.md'),
+    'every role gets its own command, because the coordinator invokes roles directly');
+  assert.ok(commands.every(c => c.startsWith('brain-')),
+    'every command is namespaced brain- so it cannot collide with another tool');
 });
 
 test('a file the brain no longer produces is retired, not left behind', () => {
   const repo = scratch();
   inject(repo);
   // Pretend a previous version shipped a command that has since been renamed away.
-  const stale = path.join(repo, '.claude', 'commands', 'brain.md');
-  fs.writeFileSync(stale, 'an older name for the entry command');
+  const stale = path.join(repo, '.claude', 'commands', 'brain-init.md');
+  fs.writeFileSync(stale, 'a command from an older version of the brain');
   const summaryFile = path.join(repo, '.agent-brain', 'injected.json');
   const summary = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));
-  summary.targets['claude-code'].files.push('.claude/commands/brain.md');
+  summary.targets['claude-code'].files.push('.claude/commands/brain-init.md');
   fs.writeFileSync(summaryFile, JSON.stringify(summary));
 
   inject(repo);

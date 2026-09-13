@@ -1,6 +1,6 @@
 # Global Decisions
 
-Product and technical decisions that apply across services, plus answers to escalations, so no question is asked twice. Append only. Reference rows as `DECISIONS.md#D-<n>`.
+Product and technical decisions that apply across services, so no question is asked twice. Append only. Reference rows as `DECISIONS.md#D-<n>`.
 
 ## Non-overridable
 

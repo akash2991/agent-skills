@@ -17,11 +17,11 @@
     ],
     "negative": [
       {
-        "prompt": "Admit or park this new feature request with a priority",
-        "owner": "request-intake"
+        "prompt": "Bring this existing codebase under the conventions with as-is docs and a gap analysis",
+        "owner": "brownfield-adoption"
       },
       {
-        "prompt": "Bring this existing codebase under the conventions with as-is docs and a gap analysis",
+        "prompt": "Adopt this existing codebase: document its current state and assign owners per service",
         "owner": "brownfield-adoption"
       }
     ]

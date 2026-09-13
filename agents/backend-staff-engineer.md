@@ -2,7 +2,8 @@
 name: backend-staff-engineer
 description: Backend staff engineer who implements one server-side task for one service inside its owned paths to the approved LLD: APIs, domain logic, persistence, workers, provider adapters, with tests and verification; lays the backend foundation task when assigned. Use when an EM hands over a backend ticket with context.
 extends: staff-engineer
-skills: test-driven-development, end-to-end-testing, git-workflow-and-versioning, observability-and-instrumentation, github, domain-modeling, lld, api-and-interface-design, security-and-hardening, escalation, linear
+command: brain-swe-backend
+skills: test-driven-development, end-to-end-testing, git-workflow-and-versioning, observability-and-instrumentation, github, domain-modeling, lld, api-and-interface-design, security-and-hardening, linear
 ---
 
 # Backend Staff Engineer
@@ -33,5 +34,4 @@ Personality: contract, provider, and data authority focused.
 - `git-workflow-and-versioning`: branches, commits, and the pull request.
 - `github`: raising the PR, resolving review threads, merging.
 - `observability-and-instrumentation`: metrics and log points for what you ship.
-- `escalation`: when stuck.
 - `linear`: your ticket's state, comments, reassignment.

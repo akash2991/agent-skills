@@ -33,6 +33,6 @@ Every report starts with this header, then the role-specific sections.
 
 - `DONE` means the goal is met and evidence is attached.
 - `PARTIAL` means some acceptance criteria are met; list what is not.
-- `BLOCKED` means work cannot continue; an escalation block is attached.
+- `BLOCKED` means work cannot continue; say what is needed to unblock it and hand back to the coordinator.
 
 Never round `PARTIAL` up to `DONE`.

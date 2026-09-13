@@ -374,3 +374,27 @@ Not everything needs to go through  full the hierarchy
 let's say for a small implementation PM can directly bypass to the EM that they... my work is not required. And EM can directly give to the doctor staff engineer. So the hierarchy is, like, context dependent. It's not like every small team needs to go through the hierarchy
 
 each agent should be name spaced by the project name and the session ID so that in in the langfuse and in the UI screen ...where this agent got spawned and in which session.
+
+----- update 18 ---
+
+simplify everything. 
+ instead of having the fully automated flow, I will run it. I will be the coordinator, and I will run it manually. So every agent that I will invoke, so let's say I invoke the in EM agent. Right? So I should be asked what skill I want to invoke or if... no. And at what what model I want to invoke it with and that we're thinking of it.
+So I will invoke the... this is CEO, and I will tell him my requirements. He will, you know, submit my requirements to the to the linear, and and I will tell him what is going on in the project. He will give me summary. Right? He won't... if I give him request, which is outside of Francisco, so he should deny it. Let's say if I ask him to review a PR or things like that, right, he should just say that, hey. This is not my responsibility, and this is the agent you need to invoke, and that's it. No automation. Right? So now I will invoke, let's say, PM agent, and I will... with this kid, I will ask. And now then the agent should ask me that which ticket, uh, linear ticket it wants me, uh, it wants to work on. So I'll give him the ticket ID, let's say. Right? Or the sprint ID or whatever. Right? And then the PM will scope it and, um, create the PRD. Right? And the the PRD then, uh, again, it will be, uh, I am thinking that everything should be linked, but, yeah, cool. PRD. I'll then run that, and then I will book the the principal engineer. And the principal engineer should ask me that which PRD it wants me to work on. Right? So the the flow should be completely manual.
+
+say I involved the EM agent, right,  /EM. And I asked PM to create, you know, make sure the design docs are up to date it. So then EM can respond the specialists of agents to help it out so that his context is not rooted. And I mean, on the tool, I use the the native sub agent functionality provided by, you know, cloud recorders. So thats we dont need to take care abnout
+But in such cases, the agent, right, it should tell me that his task can cause context rot or context pollution. So it will be great if I can fire sub agents so do you allow sub agents, I guess, that should work. Right? So if I say yes, so then the prompt should be update to create sub agents 
+
+basically i will interact with highly scoped agent personas. they will have set of inputs, a goal and strucutred ouput.
+remove all automations. I'll wire them up later. 
+
+all escalations come to me. tear down escalation policy. Basically remove any and all coordination. As every step will be manual
+
+Add two more harnesses...pi and hermed
+
+at root 
+- create only agents.md
+- claude.md will link to it @Agents.md
+- since it will be ingested by everyone keep it really really short and org level
+- move everything else to instructions for specialised agents
+
+

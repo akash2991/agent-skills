@@ -38,7 +38,7 @@
 - <item> — <reason>
 
 ### Budget and agents
-- Company budget: <in>/<out> tokens spent of <in>/<out> (<n>% / <n>%), cost <x or UNKNOWN> (MEASURED | ESTIMATED | UNAVAILABLE); holders at WARN or EXHAUSTED: <list or none>; open budget asks: <B-ids or none>
+- Company budget: <in>/<out> tokens spent of <in>/<out> (<n>% / <n>%), cost <x or UNKNOWN> (MEASURED | ESTIMATED | UNAVAILABLE)
 - Active agents: <count> (see registry); model switches since last report: <none or list>
 - Observatory: <tree/runtime reconciliation time> · turns <n or UNKNOWN> · tool failures <n or UNKNOWN> · context hotspots <agents or UNKNOWN> · controls unavailable <agents or none>
 

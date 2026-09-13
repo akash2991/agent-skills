@@ -26,7 +26,7 @@ The PRD is the contract between product and engineering. It states what must be 
 4. **Write stories** in user terms. Each has acceptance criteria that a QA persona could verify without asking questions.
 5. **Map to services**: for each story, which services change and which EM owns each. Flag stories that need a cross-service contract.
 6. **State budget needs**: the feature's expected token budget (input/output) for design work and a per-service estimate, so the CEO can allocate to you and to each EM; the CEO holds and grants budgets (`budget-management`).
-7. **List risks, assumptions, and open questions.** Open questions that block design go up to the CEO via the `escalation` skill.
+7. **List risks, assumptions, and open questions.** Open questions that block design go up to the CEO via the the coordinator skill.
 8. **Publish**: put the PRD in the tracker project description and link it from every story. Post a `pm-report.md` to the CEO.
 
 ## PRD template

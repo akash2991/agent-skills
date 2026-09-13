@@ -4,6 +4,8 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-30 — one organization document per repository: every target's always-on content is `AGENTS.md`, and `CLAUDE.md`, `GEMINI.md`, the Cursor rule, and the Copilot instructions became short pointers to it — org-staff-engineer
+- F-self-31 — the build emits one command per persona from a single template instead of one entry command, so the coordinator can invoke a role directly — org-staff-engineer
 - F-self-24 — every shipped command must be named `brain-<something>`, enforced by the validator rather than by convention, because commands share a directory with the project's own and with other tools' — org-staff-engineer
 - F-self-25 — the build copied `control-plane/brain.db` into all twelve target trees, so injection would have written this repository's sessions, agents, budgets and events into every consuming project. Runtime state is excluded at build time and the validator fails if a database ever appears in a build again — org-staff-engineer
 - F-self-15 — Herdr removed. It manages terminal panes, and a subagent has no pane, so the hierarchy the organization cares about was never visible in it. Adapter, plugin manifest, CLI `control` group, server route, and the orphaned file-era test archived under `deprecated/removed-integrations/` — org-staff-engineer

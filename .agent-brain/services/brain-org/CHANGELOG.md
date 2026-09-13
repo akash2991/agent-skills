@@ -4,6 +4,10 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-26 — automation removed. The coordinator is a person: every role is invoked by its own `brain-*` command, confirms model and effort, asks for declared inputs, returns a structured output, and names what should run next without invoking it — org-staff-engineer
+- F-self-27 — escalation, request intake, and model routing deleted; assignment packets, orchestration patterns, cross-harness delegation, and hiring deleted with them. Every blocker goes straight to the coordinator. Archived under `deprecated/removed-coordination/` — org-staff-engineer
+- F-self-28 — the always-on organization cut from 255 lines to 77: north star, roster, how agents behave, where things live. The detail moved to references that a role loads when it needs them — org-staff-engineer
+- F-self-29 — personas gained required `## Inputs` and `## Output` sections, and `## Communication` became `## Handover` — org-staff-engineer
 - F-self-22 — context scope added as org part 45: what each role reads, what it reads on demand, and what it must not read, with a new global `ARCHITECTURE.md` as the one page the CEO and PM plan from — org-staff-engineer
 - F-self-23 — rule 3b: the chain is a default, not a toll booth. A step that adds nothing is skipped and the skip is recorded; intake, review, QA and escalation are never skipped — org-staff-engineer
 - F-self-14 — vendored the Langfuse skill from github.com/langfuse/skills verbatim, with a documented section-check exemption so it can be re-synced from upstream rather than forked — org-staff-engineer

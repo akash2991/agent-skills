@@ -67,7 +67,7 @@ The project flow exists to coordinate many roles across many services with a use
 
 Everything else stands and is not negotiable here:
 
-- **Intake.** Friction goes to the CEO and competes on priority against delivery (`request-intake`). Skipping the flow is not permission to skip the queue.
+- **Intake.** Friction goes to the CEO and competes on priority against delivery (the coordinator). Skipping the flow is not permission to skip the queue.
 - **Budgets.** Allocated and enforced the same way, with the same stop-and-ask at exhaustion.
 - **Specialists only.** The `org-*` personas do this work. A missing persona is a hiring request, not an improvised generalist.
 - **Code review.** By the reviewer the class table above names. Merge by blast radius applies unchanged.
@@ -96,7 +96,7 @@ A second occurrence raises the priority by itself. The same question asked twice
 
 ### 2. Let intake decide
 
-The friction goes to the CEO like any other request (`request-intake`). It competes on priority against product work, because improving the brain is not automatically more important than delivering. Recurring friction and anything that blocks work outrank a one-off annoyance.
+The friction goes to the CEO like any other request (the coordinator). It competes on priority against product work, because improving the brain is not automatically more important than delivering. Recurring friction and anything that blocks work outrank a one-off annoyance.
 
 ### 3. Classify the change, because that decides the review
 

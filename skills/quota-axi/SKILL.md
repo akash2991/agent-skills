@@ -12,7 +12,7 @@ category: tools
 
 It answers a different question from the budget ledger, and both matter. The ledger says what the organization *allocated* to an agent. quota-axi says what the *provider* will actually serve. A task can be inside its budget and still fail because the weekly window is spent.
 
-It reports figures and never routes. The routing decision stays with the engineering manager (`model-routing`).
+It reports figures and never routes. The routing decision stays with the engineering manager (the model and effort the coordinator chose).
 
 ## When to Use
 

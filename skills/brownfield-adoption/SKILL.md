@@ -31,7 +31,7 @@ An existing codebase is adopted in three passes: **know it** (inventory, owners,
 
 6. **Gap analysis** per service against the global `CONVENTIONS.md` and the `lld` principles, as a table: convention → current state → gap → blast radius → suggested tier. Typical rows: raw strings for closed sets, validation inside business logic, client-side validation, type-first folders, hand-written clients, missing OpenAPI, models shared across API and DB, untested constructors, missing metrics.
 7. **Client contracts.** For every API a client consumes, record whether an OpenAPI document exists and whether the client is generated. Missing OpenAPI is the first gap to close, because typed clients and backend-only validation depend on it.
-8. **Second PE review** of the gap analysis (design-review report). Gaps that need a product decision go to the CEO through `escalation`.
+8. **Second PE review** of the gap analysis (design-review report). Gaps that need a product decision go to the CEO through the coordinator.
 
 ### Pass 3: change it (PM, EMs, staff)
 

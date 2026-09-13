@@ -21,8 +21,8 @@
         "owner": "budget-management"
       },
       {
-        "prompt": "Choose the model and thinking effort for this ticket",
-        "owner": "model-routing"
+        "prompt": "How much of its allocated budget has this agent's subtree spent so far",
+        "owner": "budget-management"
       }
     ]
   },

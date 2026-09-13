@@ -1,4 +1,6 @@
-## Blast radius
+# Blast radius, merging, and review
+
+When a change may be merged by its author and when it needs a reviewer. Loaded by EMs, staff engineers, and code reviewers.
 
 A change is **small / low blast radius** and may be merged by its author when all of these hold:
 

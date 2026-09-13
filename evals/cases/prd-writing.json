@@ -17,12 +17,12 @@
     ],
     "negative": [
       {
-        "prompt": "Route this task to a model and thinking effort",
-        "owner": "model-routing"
-      },
-      {
         "prompt": "Fix the failing integration test",
         "owner": "debugging-and-error-recovery"
+      },
+      {
+        "prompt": "Interview me to pin down what this feature should actually do before anything is written",
+        "owner": "interview-me"
       }
     ]
   },

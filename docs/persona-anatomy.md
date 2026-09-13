@@ -7,6 +7,7 @@ Every member of the organization is a persona: one file in `agents/<name>.md`. P
 ```yaml
 ---
 name: staff-engineer                      # lowercase-hyphen; equals the file name
+command: brain-swe                        # the command that invokes this role; always brain-<something>
 description: <what the role does>. Use when <trigger>.   # third person, then "Use when"
 skills: test-driven-development, lld, escalation, linear   # the ONLY skills this persona may use
 ---
@@ -25,14 +26,16 @@ Every persona is a specialist: its `## Authorization` ends with a refusal of wor
 | `## Role` | One paragraph: who this is and what it owns. |
 | `## Responsibilities` | Bullet list of what the role is accountable for. |
 | `## Goals` | What "good" looks like for this role, as outcomes. |
-| `## Communication` | Reports to whom, receives from whom, which report template, which tracker actions. |
+| `## Handover` | How the role hands back to the coordinator, and how it names what should run next without invoking it. |
+| `## Inputs` | Exactly what the coordinator must supply before this role can start. The role asks for these and never guesses one. |
+| `## Output` | The structured result the role ends with, so the next role has something to take as input rather than a transcript to reread. |
 | `## Success Criteria` | Measurable checks the role is judged on. |
 | `## Tools` | Tool access: tracker, repository, shell, subagents, external services. |
 | `## Authorization` | Three lists: may do alone, must ask (and whom), never. |
 | `## Way of Working` | Numbered, repeatable process for a unit of work. |
 | `## Quality Non-negotiables` | Rules this role never trades away. |
 | `## Skills` | The skills from the frontmatter with one line on when each is used. |
-| `## Composition` | How this persona enters the work: invoke directly when, invoked via (which persona, command, or gate), and the rule that it never invokes another persona and returns its report to the invoker. |
+| `## Composition` | How this persona enters the work: which command reaches it, and the rule that it never invokes another persona and hands its output back to the coordinator. |
 | `## Red Flags` | Observable signs the persona is off-track. |
 
 ## Optional sections

@@ -1,4 +1,6 @@
-## Precedence
+# Precedence and authorization
+
+Which instruction wins when two conflict, and what any role may do alone, must ask about, or must never do. Loaded when a role is about to do something it is unsure it is allowed to do.
 
 When instructions conflict, apply them in this order, subject to platform safety and permission controls:
 

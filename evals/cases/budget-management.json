@@ -17,12 +17,12 @@
     ],
     "negative": [
       {
-        "prompt": "Which model and thinking effort should this task run on",
-        "owner": "model-routing"
-      },
-      {
         "prompt": "Refresh the delivery status and label facts by freshness",
         "owner": "delivery-status"
+      },
+      {
+        "prompt": "Which provider has the most headroom left on its plan before I start this run",
+        "owner": "quota-axi"
       }
     ]
   },

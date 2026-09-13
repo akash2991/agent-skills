@@ -30,7 +30,7 @@ The LLD is what an engineer implements from without asking questions. At the cro
 8b. **Observability**: the technical metrics each endpoint, job, and external call emits, and the log points at boundaries and state transitions; reference the product and business metrics the PRD names so the implementer emits all three.
 9. **Classes and interfaces**: list the interfaces, implementations, ports and adapters, repositories, services or use cases, and handlers the module needs, with dependency direction.
 10. **Patterns**: name each pattern used and the problem it solves; keep the implementation consistent with the name. Catalog: Strategy, Adapter, Repository, Unit of Work, State Machine, Builder, Factory/Registry, Policy, Command/Handler, Observer/Event. Never add a pattern to look sophisticated.
-11. **Write** the sections into the service `LLD.md`; link from the tasks that implement them. Open questions go through the `escalation` skill.
+11. **Write** the sections into the service `LLD.md`; link from the tasks that implement them. Open questions go through the the coordinator skill.
 
 ## Principles every LLD applies
 

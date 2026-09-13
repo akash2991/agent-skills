@@ -18,7 +18,7 @@ Budgets are counted in input tokens, output tokens, and cost, held in the contro
 - An agent's registry usage or the observatory shows its subtree at or past its allocation.
 - A budget ask arrives on a ticket assigned to you.
 - A run fails or degrades in a way that looks like a provider wall rather than an allocation.
-- NOT for choosing a model per task; that is `model-routing`, which must fit inside the allocation this skill sets.
+- NOT for choosing a model per task; that is the model and effort the coordinator chose, which must fit inside the allocation this skill sets.
 
 ## Two limits, both binding
 
@@ -36,7 +36,7 @@ Read quota before allocating a milestone and before admitting expensive work. Th
 
 - **Healthy quota is never permission to exceed an allocation.** A full weekly window does not grant tokens the organization did not allocate.
 - **A healthy allocation does not guarantee capacity.** A task inside budget still fails when the window is spent, so check runway against the reset clock before committing to a milestone.
-- **Quota changes a routing decision, not a budget decision.** When a provider is exhausted, the EM re-routes to one with room (`model-routing`). The allocation is unchanged, because spend is counted in tokens, not in which provider served them.
+- **Quota changes a routing decision, not a budget decision.** When a provider is exhausted, the EM re-routes to one with room (the model and effort the coordinator chose). The allocation is unchanged, because spend is counted in tokens, not in which provider served them.
 
 Quota figures are a burn-down against a reset clock. A figure is `VERIFIED NOW` only when just read, and `HISTORICAL` after that. When quota-axi is absent, every figure is `UNKNOWN`, never a full plan.
 

@@ -21,8 +21,8 @@
         "owner": "observability-and-instrumentation"
       },
       {
-        "prompt": "Escalate my stuck ticket to the EM with a recommended default",
-        "owner": "escalation"
+        "prompt": "Slice this approved design into milestones and sprints with a points capacity",
+        "owner": "milestone-planning"
       }
     ]
   },

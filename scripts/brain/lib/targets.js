@@ -1,7 +1,10 @@
 'use strict';
 // Per-tool layout. One source of truth (skills/, agents/, templates/) is transformed into these shapes.
 // Fields:
-//   alwaysOn         — file the tool loads on every session; written as a managed block
+//   alwaysOn         — file the tool loads on every session; written as a managed block. Every
+//                      target uses AGENTS.md, so a repository has one organization document.
+//   pointers         — harness-specific always-on files that only point at AGENTS.md, so a tool
+//                      that reads its own file still finds the organization without a second copy
 //   skillsDir        — where SKILL.md directories go (flat: <skillsDir>/<name>/SKILL.md)
 //   agentsDir        — where persona subagent files go, or null when the tool has no subagents
 //   agentFile        — file name for a persona subagent
@@ -28,7 +31,8 @@ const TARGETS = {
     commands: { dir: '.claude/commands', file: n => `${n}.md`, write: (name, description, body, hint) => `---\ndescription: ${description}\nargument-hint: ${hint}\n---\n\n${body}` },
     spawn: 'main-only',
     routingNote: 'Routing execution on Claude Code: subagents cannot spawn subagents, so the CEO session is the only spawner. The EM decides the routing (tier, `model/effort` pair, review path) in the assignment packet; the CEO session spawns the persona with exactly that `model` and `effort` and never substitutes its own choice. With Agent Teams the lead session is the spawner in the same way.',
-    alwaysOn: { path: 'CLAUDE.md', kind: 'md' },
+    alwaysOn: { path: 'AGENTS.md', kind: 'md' },
+    pointers: [{ path: 'CLAUDE.md', kind: 'md' }],
     skillsDir: '.claude/skills',
     agentsDir: '.claude/agents',
     agentFile: name => `${name}.md`,
@@ -71,7 +75,8 @@ const TARGETS = {
     commands: { dir: '.cursor/commands', file: n => `${n}.md`, write: (name, description, body) => `# ${description}\n\n${body}` },
     spawn: 'single-session',
     routingNote: "Routing execution on Cursor: one session plays every role. The EM's routing decision is recorded in the assignment packet; the session switches model or effort where the tool allows before playing the staff engineer, otherwise the intended pair is recorded for the operator to apply.",
-    alwaysOn: { path: '.cursor/rules/agent-brain.mdc', kind: 'mdc' },
+    alwaysOn: { path: 'AGENTS.md', kind: 'md' },
+    pointers: [{ path: '.cursor/rules/agent-brain.mdc', kind: 'mdc' }],
     skillsDir: '.cursor/skills',
     agentsDir: null,
     mcp: { file: '.cursor/mcp.json', key: 'mcpServers', envRef: v => `\${env:${v}}`, server: s => ({ url: s.url, ...(s.headers ? { headers: s.headers } : {}) }) },
@@ -82,7 +87,8 @@ const TARGETS = {
     commands: { dir: '.gemini/commands', file: n => `${n}.toml`, write: (name, description, body) => `description = ${JSON.stringify(description)}\n\nprompt = """\n${body}\n"""\n` },
     spawn: 'main-only',
     routingNote: 'Routing execution on Gemini CLI: subagents cannot spawn subagents, so the main session is the only spawner. The EM decides the routing in the assignment packet; the main session spawns the persona with that decision and never substitutes its own.',
-    alwaysOn: { path: 'GEMINI.md', kind: 'md' },
+    alwaysOn: { path: 'AGENTS.md', kind: 'md' },
+    pointers: [{ path: 'GEMINI.md', kind: 'md' }],
     skillsDir: '.gemini/skills',
     agentsDir: '.gemini/agents',
     agentFile: name => `${name}.md`,
@@ -108,7 +114,8 @@ const TARGETS = {
     commands: { dir: '.github/prompts', file: n => `${n}.prompt.md`, write: (name, description, body) => `---\ndescription: ${description}\n---\n\n${body}` },
     spawn: 'main-only',
     routingNote: "Routing execution on GitHub Copilot: the main chat invokes custom agents; the EM's routing decision in the assignment packet is applied by the main chat where the tool allows a model choice, otherwise recorded for the operator.",
-    alwaysOn: { path: '.github/copilot-instructions.md', kind: 'md' },
+    alwaysOn: { path: 'AGENTS.md', kind: 'md' },
+    pointers: [{ path: '.github/copilot-instructions.md', kind: 'md' }],
     skillsDir: '.github/skills',
     agentsDir: '.github/agents',
     agentFile: name => `${name}.agent.md`,

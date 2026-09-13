@@ -38,7 +38,7 @@
 - <path or contract outside owned paths that needs a change, or "none">
 
 ### Escalations
-- <Escalation block from the `escalation` skill, or "none">
+- <What is blocking you and what you need to unblock it, or "none">
 
 ### Commit
 - <sha or branch, or "not committed: reason">

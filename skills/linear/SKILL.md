@@ -1,6 +1,6 @@
 ---
 name: linear
-description: Operates Linear as the organization's project-management tool through the Linear MCP server: projects for features, milestones, cycles as sprints with sprint records and reviews, structured story, task, and bug issues, structured status updates on every state change, blocker definitions, labels, comments, and ticket reassignment for escalation. Use when any persona needs to create, update, read, query, or reassign tracker items, file a bug, post a status update, or link a registry ticket id to a Linear issue.
+description: Operates Linear as the organization's project-management tool through the Linear MCP server: projects for features, milestones, cycles as sprints with sprint records and reviews, structured story, task, and bug issues, structured status updates on every state change, blocker definitions, labels, and comments. Use when any persona needs to create, update, read, query, or reassign tracker items, file a bug, post a status update, or link a registry ticket id to a Linear issue.
 category: tools
 ---
 
@@ -8,13 +8,13 @@ category: tools
 
 ## Overview
 
-Linear is the implementation of the project-management interface in `{{ORG_DIR}}/references/project-management-interface.md`. Every milestone, sprint, task, blocker, escalation, and report lives there. This skill maps the org's concepts onto Linear objects and gives the exact operations. Swapping the tool means writing another skill against the same interface.
+Linear is the implementation of the project-management interface in `{{ORG_DIR}}/references/project-management-interface.md`. Every milestone, sprint, task, blocker, and report lives there. This skill maps the org's concepts onto Linear objects and gives the exact operations. Swapping the tool means writing another skill against the same interface.
 
 ## When to Use
 
 - Creating a feature project, milestone, cycle, story, or task.
-- Changing a ticket's state, assignee, labels, or relations, including reassigning a ticket to escalate.
-- Posting a report or escalation block as a comment.
+- Changing a ticket's state, assignee, labels, or relations.
+- Posting a report or a blocker as a comment.
 - Reading what is assigned to you or to your service.
 - NOT for tracking work anywhere else: no markdown TODO lists or chat threads as a substitute.
 - NOT for fabricating identifiers: if the MCP call fails, report the failure.
@@ -29,7 +29,7 @@ The build emits this server into each tool's repo-level MCP config (`.mcp.json`,
 2. **Pick the operation** from the interface table and map it with the concept table below.
 3. **Fill the description template** for issues; add labels; set project, milestone, cycle, and dependencies.
 4. **Write, then read back** the created or updated object and quote its identifier in your report and registry row.
-5. **Post a structured status update on every state change, reassignment, or re-pointing** (template below); when the new state is `Blocked`, the update contains the blocker block. Attach reports and escalation blocks verbatim.
+5. **Post a structured status update on every state change, reassignment, or re-pointing** (template below); when the new state is `Blocked`, the update contains the blocker block. Attach reports verbatim.
 6. **Query by structure.** Because every ticket uses its template and every change has a status update, answer "what was this ticket about" or "what changed" by reading the description and the status-update comments in order; never reconstruct history from chat.
 
 ## Concept mapping
@@ -46,7 +46,6 @@ The build emits this server into each tool's repo-level MCP config (`.mcp.json`,
 | Story state | Workflow state + label | `Backlog`, `Todo` (= Ready), `In Progress`, `In Review` (= PR raised, awaiting the code reviewer), `Approved` (create it, or label `review:approved`), `Merged` (= Engineer Verified; create it, or label `merged`), `QA` (= QA Verifying; create it if the team lacks it), `Done`, `Blocked`, `Canceled`; labels `qa:verified` and `user:verifying` mark the last two gates before `Done` |
 | Pull request | Issue attachment / link | Every task issue links its PR; the PR title starts with the issue id so Linear auto-links; review verdicts are mirrored as status updates |
 | Story points | Estimate | 1, 2, 3, 5, 8; split anything larger |
-| Escalation | Reassign issue to the role one level up + escalation comment + `Blocked` if blocking | Each persona lists issues assigned to it at the start of every work cycle |
 | Report | Comment on the issue | The uniform report for the role, verbatim |
 | Registry ticket | Issue identifier | e.g. `ENG-42`; `Agent:` line in the description holds the `agent_id` |
 | Labels | `role:*`, `tier:*`, `blast:*`, `service:*`, `foundation`, `bug`, `bug:<functional\|regression\|performance\|security\|data\|ux\|flaky-test\|environment>`, `severity:<blocker\|high\|medium\|low>` | Create missing labels once per team |
@@ -172,7 +171,7 @@ RCA required: yes | no (yes when it reached a milestone verification, review, or
 
 - [ ] The object exists in Linear and its identifier is quoted in the report and registry.
 - [ ] Every task has the description template filled, labels, project, milestone, and dependencies.
-- [ ] Every state change, reassignment, or re-pointing has a structured status update; `Blocked` updates carry the blocker block; reports and escalations are attached verbatim.
+- [ ] Every state change, reassignment, or re-pointing has a structured status update; `Blocked` updates carry the blocker block; reports are attached verbatim.
 - [ ] Every bug is a `bug` issue with the full template and labels.
 - [ ] Every cycle has a sprint record and, when closed, a sprint review.
 - [ ] No duplicate project, milestone, or issue was created.

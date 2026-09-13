@@ -62,13 +62,14 @@ for (const f of ['README.md', 'schema.sql', 'db.js', 'state.js', 'brain.js', 'em
 for (const f of ['global-docs/ARCHITECTURE.md', 'global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'global-docs/CHANGELOG.md',
   'service-docs/CONVENTIONS.md', 'service-docs/CHANGELOG.md', 'service-docs/HLD.md', 'service-docs/LLD.md',
   'service-docs/CURRENT_MILESTONE.md', 'service-docs/DECISIONS.md', 'service-docs/RCA.md',
-  'commands/brain-init.md']) {
+  'commands/_persona.md']) {
   if (!exists(path.join(TEMPLATES_DIR, f))) errors.push(`templates/${f} is missing`);
 }
 // Every command this organization ships is namespaced `brain-`. A command lands in a shared
 // directory next to whatever the project and its other tools already put there, so an unprefixed
 // name is a collision waiting to happen, and the loser is silently whichever one loads second.
-for (const f of fs.readdirSync(path.join(TEMPLATES_DIR, 'commands')).filter(n => n.endsWith('.md'))) {
+// A leading underscore marks a template the build expands, not a command that ships.
+for (const f of fs.readdirSync(path.join(TEMPLATES_DIR, 'commands')).filter(n => n.endsWith('.md') && !n.startsWith('_'))) {
   const name = f.replace(/\.md$/, '');
   if (!/^brain-[a-z0-9][a-z0-9-]*$/.test(name)) {
     errors.push(`templates/commands/${f}: a command must be named brain-<something> in lowercase kebab-case, so it cannot collide with a command from another tool`);

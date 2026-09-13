@@ -30,7 +30,7 @@ Favor quick, incremental delivery over a complete feature. The hierarchy is proj
 6. **Create them in the tracker**: milestone, sprints (cycles) with the sprint record, stories, tasks with labels and points; link the foundation task as `blocks` for its dependents. Follow the project-management interface.
 6b. **Close every sprint with a review**: delivered points, spilled-over points (carried to the next sprint, with the reason per ticket), estimation error (tickets whose actual effort or re-pointing differed from the estimate, with the cause), unplanned work pulled in, and the capacity for the next sprint. Post the sprint review as a structured comment on the cycle or milestone and copy it into `CURRENT_MILESTONE.md`. Spillover is re-pointed, not silently carried.
 7. **Update `CURRENT_MILESTONE.md`** and the service `HLD.md`/`LLD.md` with the sections the design defines.
-8. **Route** each task with the `model-routing` skill when it becomes ready.
+8. **Route** each task with the the model and effort the coordinator chose skill when it becomes ready.
 
 ## Milestone record
 

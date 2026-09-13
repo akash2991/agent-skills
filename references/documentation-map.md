@@ -1,4 +1,6 @@
-## Documentation
+# Documentation map
+
+Which document holds what, who owns it, and what overrides what. Loaded by EMs, principal engineers, and anyone writing a document.
 
 Global docs in `{{ORG_DIR}}/docs/`: `ARCHITECTURE.md`, `CONVENTIONS.md`, `DECISIONS.md`, `CHANGELOG.md`. Each has a **Non-overridable** and an **Overridable** section.
 
