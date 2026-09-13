@@ -5,7 +5,9 @@
 | This file | `{{ORG_DIR}}/ORG.md` |
 | Personas and skills | your tool's skills directory, below |
 | References, loaded when a role needs them | `{{ORG_DIR}}/references/` |
-| Global docs: architecture, conventions, decisions, changelog | `{{ORG_DIR}}/docs/` |
+| Global docs: product requirements, architecture, conventions, decisions, changelog | `{{ORG_DIR}}/docs/` |
+| A record of each time the user overrode the organization | `{{ORG_DIR}}/docs/USER-EXPLICIT.md` |
+| The work log every agent appends to when it finishes | `{{ORG_DIR}}/docs/WORK.md` |
 | Service docs, one folder per service | `{{ORG_DIR}}/services/<service>/` |
 | Report templates | `{{ORG_DIR}}/agents-reports/` |
 | Sessions, agents, recorded usage | `{{ORG_DIR}}/control-plane/` (`node {{ORG_DIR}}/control-plane/brain.js`) |

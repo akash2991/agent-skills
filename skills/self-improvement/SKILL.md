@@ -78,6 +78,28 @@ The brain's own stack is likewise allowed to differ from the stack it enforces (
 
 ## Process
 
+### 0. Read what the organization already told you
+
+Every repository the brain is injected into produces two records without anyone having to remember anything. There they are local bookkeeping: a correction that outlives the session, and a log of what was run. **Here they are the input to this loop.** Read both before inventing an improvement, because both are records of something that actually happened.
+
+`{{ORG_DIR}}/docs/USER-EXPLICIT.md` — one row every time the user had to override the brain. No entry binds anything; each is evidence that a default was wrong once.
+
+- **The same instruction appearing twice** is the strongest signal in the file. It has now cost the user twice, and it will keep costing until the default changes.
+- **What it overrode** is filled in on every row, so the artifact to fix is already identified: that convention, persona, or skill.
+- **A single entry** is usually situational. Do not promote it to a rule on one sighting; the file exists precisely so you can wait for the pattern.
+
+`{{ORG_DIR}}/docs/WORK.md` — one row per agent run.
+
+| Column | What a pattern in it means |
+|---|---|
+| Friction | the same words recurring is the highest-value fix available, because it costs on every run |
+| Skills used | a skill that never appears is wrongly described or unnecessary; two always appearing together are probably one skill |
+| Model, effort, tokens | expensive on hard work is fine; expensive on routine work means the routing advice in the persona is wrong |
+| Outcome | a role that keeps landing on `refused` is scoped wrong, or is being invoked for the wrong thing |
+| Duration | a step that is always slow is a candidate for a skill that does not exist yet |
+
+When a change here closes one of these, say which entry or row it came from. That is how you find out later whether it worked.
+
 ### 1. Capture the friction where it happened
 
 Do not fix it inline and move on, and do not work around it silently. File it with what you were doing when it bit:

@@ -59,7 +59,7 @@ for (const f of ['README.md', 'schema.sql', 'db.js', 'state.js', 'brain.js', 'em
   'server.js', 'ui.html', 'hook.js', 'event.schema.json', '.gitignore']) {
   if (!exists(path.join(CONTROL_PLANE_DIR, f))) errors.push(`control-plane/${f} is missing`);
 }
-for (const f of ['global-docs/ARCHITECTURE.md', 'global-docs/PRD.md', 'global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'global-docs/CHANGELOG.md',
+for (const f of ['global-docs/ARCHITECTURE.md', 'global-docs/PRD.md', 'global-docs/USER-EXPLICIT.md', 'global-docs/WORK.md', 'global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'global-docs/CHANGELOG.md',
   'service-docs/CONVENTIONS.md', 'service-docs/CHANGELOG.md', 'service-docs/HLD.md', 'service-docs/LLD.md',
   'service-docs/CURRENT_MILESTONE.md', 'service-docs/DECISIONS.md', 'service-docs/RCA.md',
   'commands/_persona.md']) {

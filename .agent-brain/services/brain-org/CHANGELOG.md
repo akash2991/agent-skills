@@ -4,6 +4,13 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-50 — an explicit user instruction is honoured for the session it is given in and recorded, and nothing more. The standing-instruction mechanism is gone: no entry binds a later session, and no agent reads the file to decide how to behave. Anything meant to apply from now on goes into `CONVENTIONS.md`, a persona, or a skill, where it is enforced and reviewable, rather than accumulating as rules nobody agreed to — org-staff-engineer
+
+- F-self-49 — `USER-EXPLICIT.md` and `WORK.md` ship to every repository as local bookkeeping only: a correction that outlives the session, and a record of what was run. How those records are read back to refine the brain moved into the self-only `self-improvement` skill, since a consuming repository has no brain to refine — org-staff-engineer
+
+- F-self-47 — the user's explicit instruction now formally overrides everything in the organization, with one obligation: the agent writes it into `docs/USER-EXPLICIT.md` before carrying on, saying whether it holds once or from now on. Standing entries bind every role and are read at the start of every run, so a correction survives the session that produced it — org-staff-engineer
+- F-self-48 — `docs/WORK.md` added: every agent appends one row when it finishes with role, command, ticket, the model and effort actually running, skills loaded, input and output tokens, duration, outcome, and what fought it. Unknown numbers are `UNKNOWN`, never zero. The self-improvement loop now reads both files first, because a restated override and a recurring friction are stronger signals than any improvement anyone can invent — org-staff-engineer
+
 - F-self-46 — 19 skills and personas had frontmatter a strict YAML parser rejects: a description containing `: ` is read as a nested mapping, so pi refused to load those skills entirely while Claude Code accepted them. Values are quoted now, the build fails on the pattern, and a test asserts the built output parses strictly — org-staff-engineer
 
 - F-self-43 — north star changed to continuous delivery: every change small enough to merge, shippable on its own, leaving the repository releasable — org-staff-engineer

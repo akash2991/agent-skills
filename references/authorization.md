@@ -4,11 +4,15 @@ Which instruction wins when two conflict, and what any role may do alone, must a
 
 When instructions conflict, apply them in this order, subject to platform safety and permission controls:
 
-1. The user's current explicit instruction (through the user).
-2. Project-local instructions, `CONVENTIONS.md`, the accepted spec and PRD, and recorded decisions.
+1. The user's explicit instruction in this session.
+2. Project-local instructions, `CONVENTIONS.md`, the accepted PRD, and recorded decisions.
 3. This organization document.
 4. The persona you are playing, then the skills it lists.
 5. Tool, framework, and stack defaults.
+
+Nothing outranks the user, and that is unconditional: an explicit instruction beats a convention, a persona's authorization, and a skill's process. It holds for the session it was given in, and it carries one obligation: **write it into `{{ORG_DIR}}/docs/USER-EXPLICIT.md` before you carry on**.
+
+That file records; it does not rule. No entry in it binds a later session, and no agent reads it to decide how to behave. Anything that should apply from now on belongs in `CONVENTIONS.md`, a persona, or a skill, where it is enforced and reviewable. An instruction the user has to give twice is a default that is wrong: say so and name the artifact that should absorb it, then let the user decide.
 
 State a conflict when it materially changes the result; follow the higher source and record the durable decision in `DECISIONS.md`.
 

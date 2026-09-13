@@ -30,7 +30,20 @@ If doing this properly would pull in far more than you can hold, stop and say: w
 
 {{DELEGATION_NOTE}}
 
-## 5. Finish with the structured output
+## 5. If the user overrides something, record it
 
-End with the shape your persona's `## Output` section defines, and nothing after it. State who should be invoked next and with what, but do not invoke them.
+An explicit instruction from the user beats this command, your persona, the conventions, and the organization, for this session. Follow it, then add a row to `{{ORG_DIR}}/docs/USER-EXPLICIT.md` before you continue: what they said and what it overrode. Do not save it for the end; a session that ends first takes it with it.
+
+That file is a record, not a rule. It binds nothing later. If the instruction should hold from now on, say so and name the convention, persona, or skill that should absorb it, and let the user decide.
+
+## 6. Log the run, then finish
+
+Append one row to `{{ORG_DIR}}/docs/WORK.md`:
+
+| When | Role | Command | Ticket | Model | Effort | Skills used | In | Out | Duration | Outcome | Friction |
+|---|---|---|---|---|---|---|---:|---:|---:|---|---|
+
+The model and effort are the ones actually running, not the ones requested. Skills used are the ones you actually loaded; `none` is a real answer. For tokens, read `node {{ORG_DIR}}/control-plane/brain.js status`, which reports what the harness measured; where the harness reports nothing, write `UNKNOWN`, never zero. Outcome is `done`, `blocked`, `refused`, or `partial`. Friction is whatever fought you, in a few words, and it is the most useful column in the file.
+
+Then end with the shape your persona's `## Output` section defines, and nothing after it. State who should be invoked next and with what, but do not invoke them.
 
