@@ -8,7 +8,7 @@ So each role reads what its decisions need, and nothing else. The rule is not "r
 
 | Role | Always reads | Reads when the task needs it | Does not read |
 |---|---|---|---|
-| CEO | `{{ORG_DIR}}/ORG.md`, its persona, `{{ORG_DIR}}/docs/ARCHITECTURE.md`, the tracker, the control plane | a PRD under review, `DECISIONS.md` | service `LLD.md`, `CONVENTIONS.md`, folder layout, code |
+| the user | `{{ORG_DIR}}/ORG.md`, its persona, `{{ORG_DIR}}/docs/ARCHITECTURE.md`, the tracker, the control plane | a PRD under review, `DECISIONS.md` | service `LLD.md`, `CONVENTIONS.md`, folder layout, code |
 | PM | `ORG.md`, its persona, `ARCHITECTURE.md`, the PRD it owns, the tracker | `DECISIONS.md` for anything it is about to re-decide | `LLD.md`, `CONVENTIONS.md`, coding practices, test strategy, code |
 | Principal engineer | `ORG.md`, its persona, `ARCHITECTURE.md`, the PRD, global `CONVENTIONS.md` and `DECISIONS.md`, the `LLD.md` of every service in scope | existing code at the boundaries it is redesigning | unrelated services, ticket-level history |
 | EM | `ORG.md`, its persona, `ARCHITECTURE.md`, its own service's docs in full, the approved design | the `LLD.md` of a service it integrates with | other services' internals, other EMs' tickets |
@@ -17,7 +17,7 @@ So each role reads what its decisions need, and nothing else. The rule is not "r
 | Test engineer | its persona, the story and its acceptance criteria, the service's `LLD.md` and test strategy | the contract under test | implementation internals it is meant to verify from outside |
 | Specialist (security, performance) | its persona, the change or surface under audit, the relevant contract | whatever the finding forces it to open | everything outside the audit |
 
-`ARCHITECTURE.md` is the shared page: one screen that says what exists, what each service is for, and where a change belongs, with no folder layout, class design, or coding conventions in it. That is what lets a CEO or PM name an owner without reading code, and it is why those details must stay out of it.
+`ARCHITECTURE.md` is the shared page: one screen that says what exists, what each service is for, and where a change belongs, with no folder layout, class design, or coding conventions in it. That is what lets the user or PM name an owner without reading code, and it is why those details must stay out of it.
 
 Three rules follow:
 

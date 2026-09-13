@@ -1,7 +1,6 @@
 ---
 name: observability-and-instrumentation
-description: Instruments product and agent workflows with structured logging, metrics, distributed tracing across services, alerting, and agent-work telemetry. Use when adding observability, following requests across services, shipping a production feature, or explaining runtime, context, tool, token, and cost behavior from evidence.
-category: coding
+description: Instruments code so production behavior is visible and diagnosable. Use when adding logging, metrics, tracing, or alerting. Use when shipping any feature that runs in production and you need evidence it works. Use when production issues are reported but you can't tell what happened from the available data.
 ---
 
 # Observability and Instrumentation
@@ -17,7 +16,6 @@ Code you can't observe is code you can't operate. Observability is the ability t
 - A production incident took too long to diagnose ("we couldn't tell what happened")
 - Setting up or reviewing alerting rules
 - Reviewing a PR that adds I/O, retries, queues, or cross-service calls
-- Instrumenting the agent organization itself: hierarchy, skills/documents used, context, turns, tools, model usage, cost, and controls
 
 **NOT for:**
 - Diagnosing a failure happening right now — use the `debugging-and-error-recovery` skill (observability is what makes that skill fast next time)
@@ -180,15 +178,6 @@ Instrumentation is code; it can be wrong. Before calling the work done, trigger 
 - Follow one request across services in the tracing UI → no broken spans
 - Fire each new alert once (lower the threshold temporarily) → confirm it reaches the right channel and the runbook link works
 
-### 8. Instrument Agent Brain work when applicable
-
-Product telemetry and agent-work telemetry answer different questions. When operating inside Agent Brain, follow `../../references/agent-observability.md` and emit the metadata events defined in `{{ORG_DIR}}/observability/event.schema.json`.
-
-- Bind the organization `agent_id` to its parent and live runtime reference.
-- Emit skill/document loads only when the artifact enters model context, with name/path, bytes, hash, tokens, and measurement class.
-- Emit one completion event per turn, model call, and tool call. Provider/runtime usage wins; missing usage is `UNKNOWN`, not zero.
-- Keep raw prompts, responses, reasoning, repository content, tool arguments/results, secrets, and PII out of events.
-
 ## Common Rationalizations
 
 | Rationalization | Reality |
@@ -200,8 +189,6 @@ Product telemetry and agent-work telemetry answer different questions. When oper
 | "Alert on everything important, we'll tune later" | A noisy pager trains people to ignore it. The tuning never happens; the missed real page does. |
 | "User ID as a metric label makes debugging easier" | It also makes your metrics backend fall over. High-cardinality lookups belong in logs and traces. |
 | "Tracing is overkill for our two services" | Two services already means cross-service latency questions logs can't answer. Auto-instrumentation makes the cost trivial. |
-| "The registry row is enough agent observability" | It shows reported current state, not which skills/docs entered context, how many turns/tools ran, or where tokens and cost went. |
-| "No usage event means zero cost" | Missing instrumentation proves only that the value is unavailable. Report `UNKNOWN`. |
 
 ## Red Flags
 
@@ -215,8 +202,6 @@ Product telemetry and agent-work telemetry answer different questions. When oper
 - Alerts on causes (CPU, memory) paging humans while user-facing error rate is unmonitored
 - Secrets, tokens, or full request bodies appearing in logs
 - "It works on my machine" as the only evidence a production feature is healthy
-- Agent dashboards that show a flat process list but lose PM and EM parentage
-- Prompt, reasoning, document, or tool payload bodies captured by default
 
 ## Verification
 
@@ -231,7 +216,5 @@ After instrumenting a feature, confirm:
 - [ ] A single request can be followed end-to-end in the tracing UI without broken spans
 - [ ] Every new alert is symptom-based, has a runbook link, and was test-fired once
 - [ ] An induced failure in staging was located via telemetry alone, without reading the source
-- [ ] For Agent Brain work, the hierarchy and runtime bindings are preserved and skill/document/turn/model/tool events appear in the local observatory
-- [ ] For Agent Brain work, missing token/cost/context fields display `UNKNOWN` and content capture remains off
 
 For the at-a-glance version of this list, including the pre-launch instrumentation gate, see `../../references/observability-checklist.md`.

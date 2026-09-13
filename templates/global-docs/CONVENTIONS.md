@@ -1,6 +1,6 @@
 # Global Conventions
 
-Applies to every service. Services may override entries under **Overridable** only, in their own `CONVENTIONS.md`, with a recorded reason. Entries under **Non-overridable** always win. Where a default says "ask", the choice is surfaced to the user through the CEO and recorded in `DECISIONS.md` before code depends on it.
+Applies to every service. Services may override entries under **Overridable** only, in their own `CONVENTIONS.md`, with a recorded reason. Entries under **Non-overridable** always win. Where a default says "ask", the choice is surfaced to the user through the user and recorded in `DECISIONS.md` before code depends on it.
 
 ## Non-overridable
 

@@ -2,7 +2,7 @@
 
 The highest-level map of this product. One page, kept short on purpose.
 
-Its job is to let anyone, in any role, understand **what exists, what each part is for, and where a change belongs**, without reading code. The CEO and the PM should be able to plan from this page alone. Engineers start here and then go to the service documents for anything deeper.
+Its job is to let anyone, in any role, understand **what exists, what each part is for, and where a change belongs**, without reading code. The user and the PM should be able to plan from this page alone. Engineers start here and then go to the service documents for anything deeper.
 
 Owned by the principal engineers, kept current by the EM of each service for its own row. Updated when a service is added, removed, renamed, or changes responsibility, and at every milestone close.
 
@@ -39,7 +39,7 @@ flowchart LR
 
 ## Where a change belongs
 
-The routing table a PM or CEO uses to name an owner without asking an engineer.
+The routing table a PM or engineer uses to name an owner without asking an engineer.
 
 | If the change is about... | It belongs to |
 |---|---|

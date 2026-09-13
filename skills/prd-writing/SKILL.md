@@ -1,6 +1,6 @@
 ---
 name: prd-writing
-description: Produces a detailed product requirements document for one feature: users, outcomes, scope, stories with testable acceptance criteria, affected services, budget, and deferred scope. Use when a product manager receives a feature from the CEO and before any design work starts.
+description: Produces a detailed product requirements document for one feature: users, outcomes, scope, stories with testable acceptance criteria, affected services, budget, and deferred scope. Use when a product manager receives a feature from the user and before any design work starts.
 category: process
 ---
 
@@ -12,22 +12,21 @@ The PRD is the contract between product and engineering. It states what must be 
 
 ## When to Use
 
-- The CEO assigned a feature and there is no PRD, or the existing one is stale.
+- A ticket exists and there is no PRD, or the existing one is stale.
 - Scope changed materially mid-feature.
 - NOT for a single bug or a task with clear acceptance criteria already in the tracker.
 - NOT for technical design: the PRD says what, not how.
 
 ## Process
 
-1. **Gather inputs**: the CEO's assignment, spec and decisions, the current product, existing services and their `HLD.md`, known constraints (budget, deadline, compliance).
+1. **Gather inputs**: the ticket, spec and decisions, the current product, existing services and their `HLD.md`, known constraints (budget, deadline, compliance).
 2. **Define the outcome**: target user, the problem, the measurable outcome, and how it will be verified once shipped.
 3. **Cut the first usable increment**: what is the smallest version a user can use? Everything else goes to "Later" with a reason, classified as `POST-MVP`, `NICE-TO-HAVE`, `OPERATIONAL HARDENING`, `SCALE OPTIMIZATION`, or `UNKNOWN` (see scope discipline in `ORG.md`).
-3b. **Check requirement clarity.** For every story ask: what exactly happens, to which entity, in which state, what happens on failure or reload, which technology or interaction model is expected, and who decides? "Pin the notes to the geometry" is not a requirement until those are answered. Unanswered questions that materially affect implementation go to the CEO; do not let engineering choose an architecture around a guess.
+3b. **Check requirement clarity.** For every story ask: what exactly happens, to which entity, in which state, what happens on failure or reload, which technology or interaction model is expected, and who decides? "Pin the notes to the geometry" is not a requirement until those are answered. Unanswered questions that materially affect implementation go to the user; do not let engineering choose an architecture around a guess.
 4. **Write stories** in user terms. Each has acceptance criteria that a QA persona could verify without asking questions.
 5. **Map to services**: for each story, which services change and which EM owns each. Flag stories that need a cross-service contract.
-6. **State budget needs**: the feature's expected token budget (input/output) for design work and a per-service estimate, so the CEO can allocate to you and to each EM; the CEO holds and grants budgets (`budget-management`).
-7. **List risks, assumptions, and open questions.** Open questions that block design go up to the CEO via the the coordinator skill.
-8. **Publish**: put the PRD in the tracker project description and link it from every story. Post a `pm-report.md` to the CEO.
+7. **List risks, assumptions, and open questions.** Open questions that block design are named in the output for the user to decide.
+8. **Publish**: put the PRD in the tracker project description and link it from every story. Post a `pm-report.md` to the user.
 
 ## PRD template
 
@@ -64,7 +63,6 @@ The PRD is the contract between product and engineering. It states what must be 
 - Compliance / data handling:
 
 ## Budget
-- Feature design (PM + PEs): <in>/<out> tokens · Per service team estimate: <service → in/out tokens> · Granted by CEO: <yes | pending>
 
 ## Risks and assumptions
 

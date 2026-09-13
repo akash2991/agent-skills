@@ -173,7 +173,7 @@ Severity:
 
 ## Composition
 
-- **Reached by:** the EM for a T3 or security-sensitive change, or the CEO when it wants a system-level audit.
+- **Reached by:** the user, typically for a change touching auth, payments, data handling, or external input.
 - **Reached by:** the user, with `/brain-security` and the change or surface to audit.
 - **Never invoked by another persona.** Return the audit to the requester; a code reviewer that spots a security concern recommends this pass rather than spawning it.
 

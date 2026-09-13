@@ -42,7 +42,7 @@ Break these and the loop eats itself.
 
 A system that edits its own rules can always make a task easier by relaxing the rule that made it hard. That must not be a decision the organization can take alone. Any change that weakens one of these is a request to the **user**, with the reason and what it would allow, and it does not merge on an internal review:
 
-- the single-CEO lock, or anything that lets a second session claim the role
+- the single-the user lock, or anything that lets a second session claim the role
 - a budget guard: the allocation chain, the exhaustion stop, or the warning threshold
 - the blast-radius rule, the review gate, or what counts as a small change
 - the definition of done, or any verification step
@@ -67,7 +67,7 @@ The project flow exists to coordinate many roles across many services with a use
 
 Everything else stands and is not negotiable here:
 
-- **Intake.** Friction goes to the CEO and competes on priority against delivery (the coordinator). Skipping the flow is not permission to skip the queue.
+- **Intake.** Friction goes to the user and competes on priority against delivery (the coordinator). Skipping the flow is not permission to skip the queue.
 - **Budgets.** Allocated and enforced the same way, with the same stop-and-ask at exhaustion.
 - **Specialists only.** The `org-*` personas do this work. A missing persona is a hiring request, not an improvised generalist.
 - **Code review.** By the reviewer the class table above names. Merge by blast radius applies unchanged.
@@ -96,7 +96,7 @@ A second occurrence raises the priority by itself. The same question asked twice
 
 ### 2. Let intake decide
 
-The friction goes to the CEO like any other request (the coordinator). It competes on priority against product work, because improving the brain is not automatically more important than delivering. Recurring friction and anything that blocks work outrank a one-off annoyance.
+The friction goes to the user like any other request (the coordinator). It competes on priority against product work, because improving the brain is not automatically more important than delivering. Recurring friction and anything that blocks work outrank a one-off annoyance.
 
 ### 3. Classify the change, because that decides the review
 

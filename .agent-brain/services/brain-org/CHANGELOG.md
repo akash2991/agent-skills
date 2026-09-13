@@ -4,6 +4,9 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-38 — the CEO role removed. It filed tickets and reported state, both of which the product manager now does, and it gated nothing once coordination was gone. Archived as `deprecated/removed-coordination/persona-ceo.md` — org-staff-engineer
+- F-self-39 — there is no entry point. Any persona is invoked directly: a feature request goes to `/brain-pm`, which files the ticket and then asks which skill to run on it; a bug goes straight to `/brain-swe-*`, which gained `debugging-and-error-recovery` and `incremental-implementation` — org-staff-engineer
+
 - F-self-35 — `## Handover` deleted. It repeated the `## Output` section and the org behaviour rules, so the same instruction was stated three times. A role now ends with its output, names what runs next, and stops — org-staff-engineer
 - F-self-36 — "the coordinator" replaced by "the user" everywhere. It was invented jargon for a role that is just the person invoking the agent, and it was defined in only one file — org-staff-engineer
 - F-self-37 — agent registration removed from every persona and from the command template. A role no longer runs a control-plane command before it can start work — org-staff-engineer

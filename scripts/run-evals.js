@@ -153,6 +153,7 @@ function rankSkills(prompt, corpus) {
 function loadSkills() {
   const skills = [];
   for (const dir of fs.readdirSync(SKILLS_DIR)) {
+    if (dir.endsWith('-original')) continue; // an upstream copy kept for comparison, never routed to
     const file = path.join(SKILLS_DIR, dir, 'SKILL.md');
     if (!fs.existsSync(file)) continue;
     const src = fs.readFileSync(file, 'utf8');

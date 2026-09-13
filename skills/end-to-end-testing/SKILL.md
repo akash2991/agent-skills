@@ -8,7 +8,7 @@ category: testing
 
 ## Overview
 
-Unit tests prove modules; end-to-end tests prove outcomes. Each milestone's usable outcome gets at least one end-to-end test that a reviewer, QA persona, or the CEO can run to confirm the claim.
+Unit tests prove modules; end-to-end tests prove outcomes. Each milestone's usable outcome gets at least one end-to-end test that a reviewer, QA persona, or the user can run to confirm the claim.
 
 ## When to Use
 

@@ -1,6 +1,6 @@
 ## Report
 - From: <agent_id> (product-manager, feature: <name>)
-- To: ceo
+- To: the user
 - Ticket: <feature id>
 - Status: DONE | PARTIAL | BLOCKED
 - Model / effort: <model> / <effort>
@@ -22,7 +22,7 @@
 ### What the user can do right now
 <verified statement, with how it was verified>
 
-### Blockers and decisions needed from the CEO
+### Blockers and decisions needed from the user
 - <Escalation block, or "none">
 
 ### Next

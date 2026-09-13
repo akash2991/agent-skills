@@ -353,8 +353,12 @@ test('the hook attributes usage to the agent bound to the session', () => {
   org(db);
   db.prepare("UPDATE agents SET session_id = 'sess-x' WHERE agent_id = 'staff-2'").run();
   assert.equal(hook.resolveAgent(db, 'sess-x'), 'staff-2');
-  // With no binding at all it falls back to the running CEO rather than dropping the usage.
-  assert.equal(hook.resolveAgent(db, 'sess-unknown'), 'ceo');
+  // With no binding and several agents running, it must not guess: usage goes to a synthetic agent
+  // named for the session rather than being charged to whichever row happened to be first.
+  assert.match(hook.resolveAgent(db, 'sess-unknown'), /^session-/);
+  // With exactly one agent running, that one is the only thing it can be.
+  db.prepare("UPDATE agents SET status = 'CLOSED' WHERE agent_id != 'staff-2'").run();
+  assert.equal(hook.resolveAgent(db, 'sess-other'), 'staff-2');
 });
 
 test('a malformed or missing transcript yields no events instead of throwing', () => {

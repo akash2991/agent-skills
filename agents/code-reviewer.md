@@ -100,7 +100,7 @@ Severity labels, shared with the `code-review-and-quality` skill: **Critical** b
 
 - **Reached by:** the EM at the merge gate for a reviewed-class change, using the discipline variant that matches it.
 - **Reached by:** the user, with your discipline's `/brain-review-*` command and a pull request.
-- **Never invoked by another persona.** Return the verdict to the author and the EM; if a deeper security or performance pass is warranted, recommend it and let the EM request it through the CEO.
+- **Never invoked by another persona.** Return the verdict to the author and the EM; if a deeper security or performance pass is warranted, recommend it in your output and let the user invoke it.
 
 ## Red Flags
 

@@ -41,7 +41,6 @@ for (const p of personas) {
     else if (!selectedNames.has(s)) errors.push(`agents/${p.name}.md: skill "${s}" is not selected in manifest.json`);
   }
 }
-if (!personas.some(p => p.name === 'ceo')) errors.push('manifest.json: persona "ceo" must be selected; the organization has exactly one CEO');
 for (const role of ['product-manager', 'engineering-manager']) if (!personas.some(p => p.name === role)) warnings.push(`persona "${role}" is not selected; org/ refers to it`);
 if (!personas.some(p => /principal-engineer$/.test(p.name))) warnings.push('no principal-engineer persona selected');
 if (!personas.some(p => /staff-engineer$/.test(p.name))) warnings.push('no staff-engineer persona selected');
@@ -51,7 +50,7 @@ for (const t of manifest.targets) if (!TARGETS[t]) errors.push(`manifest.json: u
 if (manifest.projectManagement && !selectedNames.has(manifest.projectManagement)) warnings.push(`manifest.json: projectManagement "${manifest.projectManagement}" is not a selected skill`);
 const orgParts = exists(ORG_DIR_SRC) ? fs.readdirSync(ORG_DIR_SRC).filter(f => /^\d+-.*\.md$/.test(f)) : [];
 if (!orgParts.length) errors.push('org/ has no numbered parts (NN-name.md)');
-for (const f of ['README.md', 'ceo-report.md', 'pm-report.md', 'em-report.md',
+for (const f of ['README.md', 'pm-report.md', 'em-report.md',
   'principal-engineer-design-report.md', 'design-review.md', 'staff-engineer-report.md', 'merge-review.md', 'qa-report.md']) {
   if (!exists(path.join(REPORTS_DIR, f))) errors.push(`agents-reports/${f} is missing`);
 }

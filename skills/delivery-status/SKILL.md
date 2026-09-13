@@ -1,6 +1,6 @@
 ---
 name: delivery-status
-description: Produces a truthful current-state report for a project, service, or milestone by reconciling the tracker, registry, git, and runtime, labeling every fact by freshness, detecting stuck work and agent loops, and accounting for model, token, and cost usage. Use when the CEO or an EM must report status, answer "what works right now", diagnose why delivery is stuck, or refresh state before resuming a long-running project.
+description: Produces a truthful current-state report for a project, service, or milestone by reconciling the tracker, registry, git, and runtime, labeling every fact by freshness, detecting stuck work and agent loops, and accounting for model, token, and cost usage. Use when the user or an EM must report status, answer "what works right now", diagnose why delivery is stuck, or refresh state before resuming a long-running project.
 category: process
 ---
 
@@ -8,7 +8,7 @@ category: process
 
 ## Overview
 
-Chat memory and old reports are not the current state. This skill rebuilds the truth from sources, labels each fact by how fresh it is, finds work that is stuck or invisible, and reports usage without inventing numbers. The CEO uses it for progress updates to the user; the EM uses it for milestone status and to keep a service unstuck.
+Chat memory and old reports are not the current state. This skill rebuilds the truth from sources, labels each fact by how fresh it is, finds work that is stuck or invisible, and reports usage without inventing numbers. The user uses it for progress updates to the user; the EM uses it for milestone status and to keep a service unstuck.
 
 ## When to Use
 
@@ -23,10 +23,10 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 
 2. **Label every fact**: `VERIFIED NOW` (checked in this refresh), `REPORTED` (claimed by an agent, not checked), `HISTORICAL` (true at a named time or commit), `PLANNED` (intended), `UNKNOWN` (no evidence). A previously verified fact becomes `HISTORICAL` until re-checked.
 3. **Reconcile the registry with reality**: an agent is `RUNNING`, `COMPLETED`, `BLOCKED`, `FAILED`, or `UNKNOWN`; never `NO AGENT` merely because its report has not arrived. Compare registry rows with their `runtime`/`runtime_ref` binding. Correct rows that disagree with the runtime; write `UNKNOWN` where the runtime cannot be inspected. Preserve both facts when useful: `REPORTED RUNNING; VERIFIED NOW idle` exposes drift instead of hiding it.
-4. **Detect stuck work**: a ticket `Blocked` with no next action; a dependency with no owner; a registry row with no heartbeat for longer than the sprint's cadence; an agent repeating the same command with the same failure; a story missing between plan and tracker. For each, name the evidence, owner, smallest next action, and escalation target; open an escalation with the the coordinator skill where a decision is needed.
+4. **Detect stuck work**: a ticket `Blocked` with no next action; a dependency with no owner; an agent repeating the same command with the same failure; a story missing between plan and tracker. For each, name the evidence, the owner, and the smallest next action, and say plainly which decisions the user has to make.
 5. **Check budgets**: run `node {{ORG_DIR}}/control-plane/brain.js budget`; list holders at `WARN` or `EXHAUSTED`, agents with spend but no allocation, and open budget asks.
 6. **Account for usage**: for each agent and the session, record model, turns, tool calls/failures, skill/document context contribution, total context/window, model input/output/cache tokens, elapsed time, and cost with a source and window. Classify each value `MEASURED`, `ESTIMATED` (with formula), `UNAVAILABLE`, or `UNKNOWN`. A missing event is not zero. Record every model switch. Surface an exhausted or near-exhausted limit instead of degrading silently. Use `{{ORG_DIR}}/references/agent-observability.md` for measurement and privacy rules.
-7. **Write the report** in the format below; the CEO folds it into `ceo-report.md`, the EM into `em-report.md`. Update `CURRENT_MILESTONE.md` and the registry with what changed.
+7. **Write the report** in the format below; the EM folds it into `em-report.md`. Update `CURRENT_MILESTONE.md` and the registry with what changed.
 
 ## Report format
 
@@ -36,7 +36,7 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 - What works right now: <usable flows, how verified>
 - What does not work: <known gaps>
 - In progress: <ticket — owner — current operation — last evidence>
-- Blocked: <ticket — blocker type — owner — next action — escalation>
+- Blocked: <ticket — blocker type — owner — next action — what the user must decide>
 - QA status: <verified / verifying / failed per story>
 - Sprint: <n — delivered / planned points, spillover, estimation error>
 - Open bugs: <count by severity>
@@ -71,7 +71,7 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 
 - [ ] Every fact in the report carries a freshness label and the commit is `VERIFIED NOW`.
 - [ ] The registry matches observed runtime state or says `UNKNOWN`.
-- [ ] Every stuck item has an owner, a next action, and an escalation where needed.
+- [ ] Every stuck item has an owner, a next action, and names any decision the user must make.
 - [ ] Usage values are classified with a source, or `UNKNOWN`/`UNAVAILABLE`.
 - [ ] The hierarchy, skill/document loads, turns, tool failures, context usage, and runtime bindings were checked in the observatory.
 - [ ] `CURRENT_MILESTONE.md` and the registry were updated.

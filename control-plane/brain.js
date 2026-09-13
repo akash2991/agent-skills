@@ -5,7 +5,7 @@
 // an agent loads at session start. Output is content-first and compact for agent consumption;
 // `--json` on any command returns the same data as JSON.
 //
-//   brain.js context   --role ceo --harness claude-code --model <id> --effort <level>
+//   brain.js context   --role <role> --harness claude-code --model <id> --effort <level>
 //   brain.js session   claim|release|heartbeat|list
 //   brain.js agent     register|heartbeat|set|list|tree|close
 //   brain.js quota     [--provider a,b]
@@ -50,7 +50,7 @@ function fromEnv(kind) {
 }
 
 function claimSession(db, args, actor) {
-  const role = flag(args, 'role') || 'ceo';
+  const role = flag(args, 'role') || 'session';
   const id = flag(args, 'id') || `${role}-${crypto.randomUUID().slice(0, 8)}`;
   const at = now();
   const harnessSession = flag(args, 'harness-session') || fromEnv('session');
@@ -206,7 +206,7 @@ function tracingLine(db) {
 }
 
 function contextCommand(db, args, actor) {
-  const role = flag(args, 'role') || 'ceo';
+  const role = flag(args, 'role') || 'session';
   const session = claimSession(db, args, actor).session;
   // Bind the agent row to the harness's session id when there is one. Runtime hooks only know that
   // id, so this is what makes captured usage land on the role instead of a synthetic agent.
@@ -284,7 +284,7 @@ async function main(args = process.argv.slice(2)) {
   const actor = flag(args, 'actor') || process.env.BRAIN_ACTOR || 'cli';
   if (!group || group === 'help' || group === '--help') {
     process.stdout.write(['brain.js <group> <action> [--flags]  ·  add --json to any command',
-      '  context  --role ceo --harness <h> --model <id> --effort <level>   claim the role and print the full state',
+      '  context  --role <role> --harness <h> --model <id> --effort <level>   claim a role and print the full state',
       '  session  claim|release|heartbeat|list',
       '  agent    register|heartbeat|set|close|list|tree',
       '  quota    [--provider claude,codex,...]', '  status', "  event    --event '<json>'", '  serve    [--port 4173]',

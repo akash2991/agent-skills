@@ -1,14 +1,13 @@
 # Project flow
 
-The order work moves in. **You drive it.** Nothing here starts by itself: you invoke each role, it does one step, and it tells you who to invoke next. Loaded by the CEO, PM, principal engineers, and EMs.
+The order work moves in. **You drive it.** Nothing here starts by itself: you invoke each role, it does one step, and it tells you who to invoke next. Loaded by the user, PM, principal engineers, and EMs.
 
 The loop is always **idea → spec → design → code → test → QA**, run per milestone and per sprint:
 
 ```text
-You invoke each step. Nothing starts itself.
+You invoke each step. Nothing starts itself, and no step is mandatory: a bug can go straight to an engineer.
 
-/brain-ceo             a requirement becomes tickets, or you get a status answer
-/brain-pm              a ticket becomes a PRD
+/brain-pm              a request becomes a ticket, then a refined idea, a spec, or a PRD
 /brain-pe-<discipline> a PRD becomes a design: domain model, interfaces, plan
 /brain-pe-<other>      a second principal engineer reviews the design
 /brain-em              an approved design becomes milestones, sprints, and ready tickets
@@ -21,7 +20,7 @@ You invoke each step. Nothing starts itself.
 
 Each role ends by naming which command should run next and with what. You decide whether it runs, and when. A step that adds nothing is skipped: that is your call, not the organization's.
 
-At every role boundary, the assignment packet preserves `agent_id`, parent, session, runtime binding, and trace lineage. Every role emits the metadata-only events required by "Agent work observability"; this is how the CEO sees the live hierarchy, context contribution, turns, tools, usage, and cost without relying on chat summaries.
+At every role boundary, the assignment packet preserves `agent_id`, parent, session, runtime binding, and trace lineage. Every role emits the metadata-only events required by "Agent work observability"; this is how the user sees the live hierarchy, context contribution, turns, tools, usage, and cost without relying on chat summaries.
 
 ## Progressive usability
 
@@ -29,7 +28,7 @@ Before broad implementation the EM asks: *can I run the application and demonstr
 
 ## Story states
 
-`Backlog → Ready → In Progress → In Review (PR raised) → Approved → Engineer Verified (merged) → QA Verifying → QA Verified → User Verifying → Done`, plus `Blocked` (with reason and next action). Changes requested on the PR move the ticket back to `In Progress`. Engineers move their own tickets and raise the PR; code reviewers move `In Review` to `Approved` or back; QA moves QA states; the EM closes milestones; the CEO owns prioritization and scope. Every move carries a structured status update and the PR link. Mapping to the tracker is in the `{{PM_TOOL}}` skill; the PR flow is in `{{ORG_DIR}}/references/pull-request.md`.
+`Backlog → Ready → In Progress → In Review (PR raised) → Approved → Engineer Verified (merged) → QA Verifying → QA Verified → User Verifying → Done`, plus `Blocked` (with reason and next action). Changes requested on the PR move the ticket back to `In Progress`. Engineers move their own tickets and raise the PR; code reviewers move `In Review` to `Approved` or back; QA moves QA states; the EM closes milestones; the user owns prioritization and scope. Every move carries a structured status update and the PR link. Mapping to the tracker is in the `{{PM_TOOL}}` skill; the PR flow is in `{{ORG_DIR}}/references/pull-request.md`.
 
 ## Scope discipline
 

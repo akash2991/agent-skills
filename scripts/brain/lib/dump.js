@@ -7,7 +7,10 @@ const { DUMP_DIR, DEFAULT_CATEGORY, listDirs, exists } = require('./fs-utils');
 const fm = require('./frontmatter');
 
 function indexDump() {
-  return listDirs(DUMP_DIR).map(name => {
+  // A `-original` directory is an upstream copy kept for side-by-side comparison, not a skill
+  // this organization ships. It is excluded everywhere so a reference copy cannot be selected,
+  // linted against our anatomy, or required to have an eval case.
+  return listDirs(DUMP_DIR).filter(name => !name.endsWith('-original')).map(name => {
     const dir = path.join(DUMP_DIR, name);
     const file = path.join(dir, 'SKILL.md');
     const entry = { name, dir, data: {}, category: DEFAULT_CATEGORY, problems: [] };

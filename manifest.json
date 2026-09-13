@@ -14,6 +14,7 @@
     "git-workflow-and-versioning",
     "github",
     "hld",
+    "idea-refine",
     "incremental-implementation",
     "interview-me",
     "langfuse",
@@ -30,7 +31,6 @@
     "test-driven-development"
   ],
   "personas": [
-    "ceo",
     "product-manager",
     "engineering-manager",
     "backend-principal-engineer",

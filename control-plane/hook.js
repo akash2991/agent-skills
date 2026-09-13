@@ -46,9 +46,10 @@ function resolveAgent(db, sessionId, { harness, cwd } = {}) {
       if (byRole) return byRole.agent_id;
     }
   }
-  // A live CEO is the usual owner of an unbound session: it is the main session by definition.
-  const ceo = db.prepare("SELECT agent_id FROM agents WHERE role = 'ceo' AND status = 'RUNNING'").get();
-  if (ceo) return ceo.agent_id;
+  // Otherwise the single running agent, if there is exactly one: an unbound session almost always
+  // belongs to it. With none or several, fall through rather than guess wrong.
+  const running = db.prepare("SELECT agent_id FROM agents WHERE status = 'RUNNING'").all();
+  if (running.length === 1) return running[0].agent_id;
   const id = `session-${String(sessionId || 'unknown').slice(0, 8)}`;
   db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, status, started_at, last_heartbeat, current_operation)
               VALUES(?, 'unregistered', NULL, ?, ?, 'RUNNING', ?, ?, 'observed by a runtime hook before registering')

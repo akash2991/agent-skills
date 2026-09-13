@@ -116,7 +116,7 @@ Test rules: test behavior, not implementation; one concept per test; independent
 ## Composition
 
 - **Reached by:** the EM at the QA gate, when a story is reported `DONE`, a bug needs a Prove-It test, or a module needs a coverage analysis.
-- **Never requested directly by the user.** Verification requests reach you through the CEO and the EM.
+- **Reached by:** the user, with `/brain-qa` and a story reported done.
 - **Never invoked by another persona.** Return the QA report, defects, or coverage analysis to the EM; never fix product code yourself.
 
 ## Red Flags

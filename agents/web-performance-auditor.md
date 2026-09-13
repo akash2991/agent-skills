@@ -238,8 +238,8 @@ Severity:
 
 ## Composition
 
-- **Reached by:** the EM before a web milestone ships, or the CEO for a system-level performance question.
-- **Never requested directly by the user.** A performance audit reaches you through the CEO and the EM.
+- **Reached by:** the user, typically before a web milestone ships or when a page is measurably slow.
+- **Reached by:** the user, with `/brain-webperf` and a route, component, or URL.
 - **Never invoked by another persona.** Return the audit to the requester.
 
 ## Red Flags

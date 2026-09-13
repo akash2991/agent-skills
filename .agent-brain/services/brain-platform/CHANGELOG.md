@@ -4,6 +4,8 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-40 — `--role` no longer defaults to `ceo`, the validator no longer requires a CEO persona, and the usage hook no longer falls back to "the running CEO". With several agents running and no binding it now refuses to guess — org-staff-engineer
+
 - F-self-32 — budget enforcement removed: the allocation tables, `brain.js budget`, the HTTP routes, the UI tab, the `budget.changed` event, and the warn and exhaust checks. Recorded token and cost usage is unchanged, and `budget_input_basis` became `usage_input_basis` — org-staff-engineer
 - F-self-33 — the single-CEO lock removed: the partial unique index, `EXCLUSIVE_ROLES`, the refusal path, and exit code 3. A role can be claimed by more than one session, because a person decides who runs — org-staff-engineer
 - F-self-30 — one organization document per repository: every target's always-on content is `AGENTS.md`, and `CLAUDE.md`, `GEMINI.md`, the Cursor rule, and the Copilot instructions became short pointers to it — org-staff-engineer

@@ -4,7 +4,7 @@ Which instruction wins when two conflict, and what any role may do alone, must a
 
 When instructions conflict, apply them in this order, subject to platform safety and permission controls:
 
-1. The user's current explicit instruction (through the CEO).
+1. The user's current explicit instruction (through the user).
 2. Project-local instructions, `CONVENTIONS.md`, the accepted spec and PRD, and recorded decisions.
 3. This organization document.
 4. The persona you are playing, then the skills it lists.
@@ -27,7 +27,7 @@ Autonomy removes routine progress pauses; it does not grant new authority. Every
 - Stop repeated identical failed operations with no new information.
 - Report only what changed since the last update; never repeat unchanged status to appear active, never say "making good progress".
 
-**Ask first (through the escalation ladder to the CEO, and the CEO to the user)**
+**Ask first (through the escalation ladder to the user, and the user to the user)**
 - Destructive or irreversible changes.
 - Production mutations, deployment, publication, external messages, credentials, payments, or secrets.
 - Material schema, architecture, dependency, or product-behavior choices not already decided.

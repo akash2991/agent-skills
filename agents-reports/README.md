@@ -4,8 +4,7 @@ Every agent submits its report in the format for its role. Same role, same forma
 
 | Role | Template | Sent to |
 |---|---|---|
-| CEO | `ceo-report.md` | User |
-| Product Manager | `pm-report.md` | CEO |
+| Product Manager | `pm-report.md` | the user |
 | Engineering Manager | `em-report.md` | PM |
 | Principal Engineer (design) | `principal-engineer-design-report.md` | EM |
 | Principal Engineer (reviewing a design) | `design-review.md` | EM and the authoring PE |

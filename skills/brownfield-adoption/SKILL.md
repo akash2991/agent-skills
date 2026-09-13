@@ -19,10 +19,10 @@ An existing codebase is adopted in three passes: **know it** (inventory, owners,
 
 ## Process
 
-### Pass 1: know it (CEO, then EMs)
+### Pass 1: know it (a principal engineer, then EMs)
 
-1. **Inventory services.** The CEO (with `delivery-status` for the repo facts) lists every deployable unit, package, and client app from the repository: entry points, build targets, Dockerfiles, CI jobs. Record the list in the global `DECISIONS.md` as the service map.
-2. **Assign owners.** One EM per service; one PM per product area that spans services. The CEO records assignments in the registry and creates one tracker project per service named `Adoption: <service>` with a milestone `As-is documented`.
+1. **Inventory services.** A principal engineer lists every deployable unit, package, and client app from the repository: entry points, build targets, Dockerfiles, CI jobs. Record the list in the global `DECISIONS.md` as the service map.
+2. **Name owners.** One engineering manager per service. This is a note for the user, who invokes them; no agent assigns work. Record the service map in the global `DECISIONS.md` and create one tracker project per service named `Adoption: <service>` with a milestone `As-is documented`.
 3. **Create service docs.** Each EM copies `templates/service-docs/` into `services/<name>/` and fills `CONVENTIONS.md` commands from what actually runs (never invented).
 4. **Document the current state, as-is.** Per service, the EM assigns a PE (backend for services, web or mobile for clients) to write the *current* `HLD.md`, `LLD.md`, and DB schema (`schema.ddb`) with the `hld` and `lld` skills, describing what the code does today, including the ugly parts, with `hld.drawio` and Mermaid sequences for the critical paths. A cross-service PE writes the overall as-is HLD in the global docs. Every unknown is written as `UNKNOWN`, never guessed.
 5. **Baseline verification.** Each EM records the commands that currently pass (tests, build, start) in `CURRENT_MILESTONE.md`; that is the floor no refactor may break.
@@ -31,7 +31,7 @@ An existing codebase is adopted in three passes: **know it** (inventory, owners,
 
 6. **Gap analysis** per service against the global `CONVENTIONS.md` and the `lld` principles, as a table: convention → current state → gap → blast radius → suggested tier. Typical rows: raw strings for closed sets, validation inside business logic, client-side validation, type-first folders, hand-written clients, missing OpenAPI, models shared across API and DB, untested constructors, missing metrics.
 7. **Client contracts.** For every API a client consumes, record whether an OpenAPI document exists and whether the client is generated. Missing OpenAPI is the first gap to close, because typed clients and backend-only validation depend on it.
-8. **Second PE review** of the gap analysis (design-review report). Gaps that need a product decision go to the CEO through the coordinator.
+8. **Second PE review** of the gap analysis (design-review report). Gaps that need a product decision are named in the output for the user to decide, or to take to `/brain-pm`.
 
 ### Pass 3: change it (PM, EMs, staff)
 

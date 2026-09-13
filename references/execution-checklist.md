@@ -59,7 +59,7 @@ The organization's standing gates, used by the EM at every phase and by staff en
 2. Engineer verification passed (tests, verification commands).
 3. Integration verification passed where the story crosses boundaries.
 4. QA independently verified against the acceptance criteria.
-5. The user can verify the flow; the CEO has been told it is ready.
+5. The user can verify the flow; the user has been told it is ready.
 6. The change is committed and the tracker and registry reflect it.
 
 Anything short of this is `PARTIAL` or `BLOCKED`. Never round up.

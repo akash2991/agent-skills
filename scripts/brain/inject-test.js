@@ -26,8 +26,9 @@ test('injection is idempotent and leaves a project runnable', () => {
   inject(repo);
   assert.equal(fs.readdirSync(path.join(repo, '.claude', 'skills')).length, first);
   const commands = fs.readdirSync(path.join(repo, '.claude', 'commands'));
-  assert.ok(commands.includes('brain-ceo.md') && commands.includes('brain-em.md'),
-    'every role gets its own command, because the coordinator invokes roles directly');
+  assert.ok(commands.includes('brain-pm.md') && commands.includes('brain-em.md') && commands.includes('brain-swe-backend.md'),
+    'every role gets its own command, because the user invokes roles directly');
+  assert.ok(!commands.includes('brain-ceo.md'), 'there is no entry-point role');
   assert.ok(commands.every(c => c.startsWith('brain-')),
     'every command is namespaced brain- so it cannot collide with another tool');
 });

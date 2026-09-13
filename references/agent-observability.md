@@ -4,7 +4,7 @@ This is the architecture decision for complete visibility into Agent Brain work.
 
 ## Decision
 
-Use a composed stack. Nothing off the shelf models the organization's own semantics (a CEO → PM → EM → engineer tree, and per-agent model and effort changeable at runtime), so that part is ours and everything else is borrowed.
+Use a composed stack. Nothing off the shelf models the organization's own semantics (the user → PM → EM → engineer tree, and per-agent model and effort changeable at runtime), so that part is ours and everything else is borrowed.
 
 1. **quota-axi for provider tokens, quota, and cost.** [quota-axi](https://github.com/kunchenguid/quota-axi) (MIT) reports percent remaining, reset time, burn pace, usable runway, and a comparative `spendPriority` per provider scope across Claude, Codex, Cursor, Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode, and Antigravity. It reads local credential stores and calls first-party endpoints, and it explicitly does not route. We shell out to it, so it is optional and its absence degrades to `UNKNOWN` rather than failing. This is the authoritative answer to "how much is left on the plan", which no amount of local instrumentation can infer.
 2. **A SQLite control plane for the organization semantics.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds harness sessions, the agent registry with parentage and current model and effort, metadata-only observability events, provider quota snapshots, and an audit trail of every mutation. The CLI and the local UI are two faces of the same store, so an edit in either is the same audited change.
@@ -71,7 +71,7 @@ One gap remains: a sidechain turn in a Claude Code transcript is attributed to t
 
 Langfuse supplies the mature telemetry views that would be wasteful to rebuild: trace trees, agent graphs, sessions, model generations, tool observations, dashboards, token/cost tracking, and self-hosting. Its core is MIT-licensed; enterprise governance features have separate licensing.
 
-Langfuse observes executions that send it traces. It has no concept of a CEO → PM → EM tree or of which role was playing at the time, which is why that stays in the control plane and is projected into Langfuse as span nesting and metadata.
+Langfuse observes executions that send it traces. It has no concept of the user → PM → EM tree or of which role was playing at the time, which is why that stays in the control plane and is projected into Langfuse as span nesting and metadata.
 
 ## Event and trace mapping
 
