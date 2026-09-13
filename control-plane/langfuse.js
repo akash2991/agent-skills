@@ -179,11 +179,25 @@ function eventIO(e) {
 
 // Every span carries the trace-level attributes. Langfuse aggregates across observations rather
 // than only the root, so an attribute set once on the root is not filterable on the children.
+// An agent observed by a hook before any role was claimed has the placeholder role `unregistered`.
+// Naming the trace after it produces a list where every entry reads "unregistered", which is the
+// same as having no names at all. Fall back to what is actually known: the harness and the session.
+const UNNAMED_ROLE = 'unregistered';
+function traceName(agent) {
+  if (agent.role && agent.role !== UNNAMED_ROLE) return agent.role;
+  const session = (agent.session_id || agent.agent_id || '').slice(0, 8);
+  return `${agent.harness || 'session'}${session ? ` ${session}` : ''}`;
+}
+
 function traceLevel(agent, environment) {
+  const named = agent.role && agent.role !== UNNAMED_ROLE;
   return [
-    ['langfuse.trace.name', `${agent.role} ${agent.agent_id}`],
+    ['langfuse.trace.name', traceName(agent)],
     ['langfuse.session.id', agent.session_id || agent.agent_id],
-    ['langfuse.user.id', agent.role],
+    // A role is a meaningful thing to filter and group by; the placeholder is not, and setting it
+    // would fill the users view with one entry called "unregistered".
+    ...(named ? [['langfuse.user.id', agent.role]] : []),
+    ['langfuse.trace.tags', JSON.stringify([agent.harness, named ? agent.role : 'no-role'].filter(Boolean))],
     ['langfuse.environment', environment],
     ['langfuse.trace.metadata.role', agent.role],
     ['langfuse.trace.metadata.agent_id', agent.agent_id],
@@ -203,9 +217,10 @@ function rootSpan(agent, environment) {
     // An agent reports to its parent, so its span nests under the parent's root span. This is what
     // draws the organization chart in Langfuse rather than a flat list of traces.
     ...(agent.parent && agent.parent !== 'user' ? { parentSpanId: spanIdFor(`agent:${agent.parent}`) } : {}),
-    // The role is the stable, low-cardinality identity of this run. The agent id varies per run and
-    // belongs in metadata, where it stays filterable without breaking every saved view.
-    name: agent.role,
+    // The role is the stable, low-cardinality identity of this run, and the agent id varies per run
+    // so it belongs in metadata. Where no role was ever claimed, name it for the harness session
+    // rather than for the placeholder, so the trace list is readable.
+    name: traceName(agent),
     kind: 1,
     startTimeUnixNano: nano(started),
     endTimeUnixNano: nano(ended),

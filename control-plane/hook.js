@@ -20,9 +20,13 @@ const { emitEvent } = require('./emit');
 
 const flag = (args, name) => { const i = args.indexOf(`--${name}`); return i === -1 ? undefined : args[i + 1]; };
 const has = (args, name) => args.includes(`--${name}`);
-// How many trailing transcript messages to consider when no cursor exists. Deterministic ids make a
-// wider window harmless, but a bounded read keeps the hook fast on a long transcript.
-const DEFAULT_WINDOW = 40;
+// The hook used to read only the last 40 messages, on the assumption that it fires every turn and
+// never falls behind. It does fall behind: in a real session 452 of 499 messages were never
+// recorded, so usage and cost were understated by an order of magnitude and nothing ever backfilled
+// them, because a skipped message is skipped forever. Ingestion is idempotent by construction, so
+// reading the whole transcript is safe and self-healing: whatever was missed is picked up on the
+// next firing. The cost is one indexed lookup per message, against a file the harness is already
+// keeping in the page cache.
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -116,7 +120,7 @@ function alreadyRecorded(db, eventId) {
 
 // Emits model.completed and turn.completed for every transcript message not yet recorded.
 function ingest(db, { transcript, sessionId, agentId, harness, all }) {
-  const messages = transcriptMessages(transcript, all ? null : DEFAULT_WINDOW);
+  const messages = transcriptMessages(transcript, null);
   let recorded = 0, skipped = 0, turns = 0;
   for (const [index, m] of messages.entries()) {
     const usageId = `msg:${m.uuid}`;
@@ -181,7 +185,7 @@ async function main(args = process.argv.slice(2)) {
 
     if (action === 'turn' || action === 'ingest') {
       const result = transcript
-        ? ingest(db, { transcript, sessionId, agentId, harness, all: has(args, 'all') })
+        ? ingest(db, { transcript, sessionId, agentId, harness })
         : { recorded: 0, skipped: 0, turns: 0, considered: 0, reason: 'no transcript path in the hook payload' };
       const exported = await autoExport(db, 'turn');
       return process.stdout.write(`${JSON.stringify({ ok: true, agent_id: agentId, ...result, ...(exported ? { exported } : {}) })}\n`);

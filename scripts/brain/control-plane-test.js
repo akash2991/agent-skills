@@ -256,6 +256,28 @@ test('the Langfuse export nests the organization tree and never carries content'
   db.close();
 });
 
+test('a trace is named for what is known, never for the unregistered placeholder', () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lfname-')), 'brain.db');
+  const db = database.open(dbFile);
+  // A hook observes a session before any role is claimed, which is the normal case now that agents
+  // do not register. Naming the trace after the placeholder makes every entry in Langfuse read
+  // "unregistered", which is indistinguishable from having no names.
+  db.prepare(`INSERT INTO agents(agent_id, role, session_id, harness, status, started_at, last_heartbeat)
+              VALUES('session-778cf7e2', 'unregistered', '778cf7e2-c6ae', 'claude-code', 'RUNNING', ?, ?)`)
+    .run('2026-09-14T10:00:00.000Z', '2026-09-14T10:05:00.000Z');
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'turn.completed', agent_id: 'session-778cf7e2',
+    session_id: '778cf7e2-c6ae', turn: { number: 1, outcome: 'success' } }, { db });
+
+  const spans = langfuse.buildPayload(db, langfuse.pending(db, {}), 'test').resourceSpans[0].scopeSpans[0].spans;
+  const root = spans.find(s => s.attributes.some(a => a.key === 'langfuse.observation.type' && a.value.stringValue === 'agent'));
+  assert.ok(!/unregistered/.test(root.name), `trace name must not be the placeholder, got "${root.name}"`);
+  assert.match(root.name, /claude-code/, 'fall back to the harness and session, which are known');
+  // userId is a filter dimension; filling it with the placeholder pollutes it for every session.
+  assert.ok(!root.attributes.some(a => a.key === 'langfuse.user.id'),
+    'no user id rather than a meaningless one');
+  db.close();
+});
+
 test('an exported event is not exported twice', async () => {
   const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lf2-')), 'brain.db');
   const db = database.open(dbFile);
@@ -359,6 +381,24 @@ test('the hook attributes usage to the agent bound to the session', () => {
   // With exactly one agent running, that one is the only thing it can be.
   db.prepare("UPDATE agents SET status = 'CLOSED' WHERE agent_id != 'staff-2'").run();
   assert.equal(hook.resolveAgent(db, 'sess-other'), 'staff-2');
+});
+
+test('a hook that fell behind catches up instead of losing the gap forever', () => {
+  const { db, dir } = fresh();
+  org(db);
+  // The hook used to read only the last 40 messages. A session that produced more than that between
+  // firings lost the difference permanently, because a skipped message is never revisited: a real
+  // session recorded 47 of 499. Ingestion must be self-healing, not window-bound.
+  const many = Array.from({ length: 120 }, (_, i) => ({ uuid: `m${i}`, input: 1, output: 10 }));
+  const file = transcript(dir, many);
+  const first = hook.ingest(db, { transcript: file, sessionId: 'sess-x', agentId: 'ceo' });
+  assert.equal(first.recorded, 120, 'every message in the transcript is recorded, however far back');
+
+  // And a second run adds nothing, so catching up never double-counts.
+  const second = hook.ingest(db, { transcript: file, sessionId: 'sess-x', agentId: 'ceo' });
+  assert.equal(second.recorded, 0);
+  assert.equal(second.skipped, 120);
+  assert.equal(db.prepare("SELECT SUM(output_tokens) s FROM events WHERE type = 'model.completed'").get().s, 1200);
 });
 
 test('a malformed or missing transcript yields no events instead of throwing', () => {
