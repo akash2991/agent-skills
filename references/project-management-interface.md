@@ -7,7 +7,7 @@ The organization needs these operations from a project-management tool. The curr
 | Operation | Who calls it | Meaning |
 |---|---|---|
 | Create project for a feature | CEO or PM | One container per feature, owned by a PM |
-| Create milestone | EM | A delivery step with one usable outcome and a budget |
+| Create milestone | EM | A delivery step with one usable outcome |
 | Create sprint | EM | A fixed-length time box under a milestone with a points capacity and a sprint record; closed with a sprint review (delivered, spilled over, estimation error, unplanned work) |
 | Create bug | Anyone | A ticket labeled `bug` with the structured bug template: type, severity, discovery, reproduction, expected/actual, evidence, affected story, fix owner |
 | Post status update | Owner | A structured comment on every state change, reassignment, or re-pointing: by, change, reason, evidence, next action, and the blocker block when the state is `Blocked` |

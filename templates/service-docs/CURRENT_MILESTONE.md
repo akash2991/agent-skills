@@ -2,7 +2,6 @@
 
 - Milestone: <name / tracker id>
 - Usable outcome: <what a user can do when this is done>
-- Budget: <allocated> · Spent: <amount or UNKNOWN>
 - Verification: `<command>`
 
 ## Sprints

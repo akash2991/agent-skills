@@ -11,13 +11,12 @@ const EVENT_TYPES = new Set([
   'agent.started', 'agent.status_changed', 'agent.completed',
   'skill.loaded', 'document.loaded',
   'turn.started', 'turn.completed', 'model.completed',
-  'tool.completed', 'control.completed', 'budget.changed'
-]);
+  'tool.completed', 'control.completed', ]);
 const TOP_LEVEL_FIELDS = new Set([
   'schema_version', 'event_id', 'timestamp', 'type', 'agent_id', 'parent_agent_id',
   'session_id', 'trace_id', 'span_id', 'parent_span_id', 'role', 'ticket', 'status',
   'model', 'effort', 'duration_ms', 'error_type', 'runtime', 'artifact', 'context',
-  'usage', 'turn', 'tool', 'control', 'budget'
+  'usage', 'turn', 'tool', 'control'
 ]);
 const NESTED_FIELDS = {
   runtime: new Set(['name', 'session_ref', 'agent_ref', 'state_source']),
@@ -27,9 +26,7 @@ const NESTED_FIELDS = {
   turn: new Set(['number', 'duration_ms', 'outcome']),
   tool: new Set(['name', 'outcome', 'duration_ms']),
   control: new Set(['action', 'target', 'outcome']),
-  budget: new Set(['action', 'holder', 'granted_by', 'request_id', 'input_tokens', 'output_tokens', 'cost_usd', 'percent_used'])
 };
-const BUDGET_ACTIONS = new Set(['allocate', 'request', 'grant', 'partial', 'deny', 'exhausted', 'warn']);
 const SOURCE_FIELDS = new Set(['kind', 'name', 'bytes', 'tokens', 'token_measurement']);
 const STATUS = new Set(['PLANNED', 'RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'UNKNOWN']);
 const MEASUREMENT = new Set(['exact', 'estimated', 'unknown']);
@@ -125,12 +122,6 @@ function validateEvent(event) {
     if (!CONTROL_ACTIONS.has(event.control.action)) throw new Error(`unsupported control action "${event.control.action}"`);
     if (!CONTROL_OUTCOMES.has(event.control.outcome)) throw new Error(`unsupported control outcome "${event.control.outcome}"`);
   }
-  if (event.budget) {
-    if (!event.budget.action || !event.budget.holder) throw new Error('budget.action and budget.holder are required');
-    if (!BUDGET_ACTIONS.has(event.budget.action)) throw new Error(`unsupported budget action "${event.budget.action}"`);
-    for (const key of ['input_tokens', 'output_tokens', 'percent_used']) nonNegativeNumber(event.budget[key], `budget.${key}`, true);
-    nonNegativeNumber(event.budget.cost_usd, 'budget.cost_usd');
-  }
   return event;
 }
 
@@ -184,10 +175,6 @@ const COLUMNS = {
   control_action: e => e.control?.action,
   control_target: e => e.control?.target,
   control_outcome: e => e.control?.outcome,
-  budget_action: e => e.budget?.action,
-  budget_holder: e => e.budget?.holder,
-  budget_granted_by: e => e.budget?.granted_by,
-  budget_request_id: e => e.budget?.request_id,
   raw: e => JSON.stringify(e)
 };
 const NAMES = Object.keys(COLUMNS);

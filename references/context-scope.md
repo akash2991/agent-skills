@@ -1,8 +1,8 @@
 # Context scope
 
-What each role reads and, more importantly, what it does not. Context is a budget. Loaded by every role before it starts pulling documents in.
+What each role reads and, more importantly, what it does not. Context is finite and every document you load competes with the one that matters. Loaded by every role before it starts pulling documents in.
 
-Context is a budget, not a courtesy. Everything an agent loads costs tokens, competes for attention, and pushes the thing that actually matters further from the decision. A PM reading coding conventions is not better informed; it is worse informed, because the relevant half is now diluted.
+Context is finite, and spending it is not a courtesy. Everything an agent loads costs tokens, competes for attention, and pushes the thing that actually matters further from the decision. A PM reading coding conventions is not better informed; it is worse informed, because the relevant half is now diluted.
 
 So each role reads what its decisions need, and nothing else. The rule is not "read less". It is **read what you decide with**.
 

@@ -4,10 +4,10 @@ This is the architecture decision for complete visibility into Agent Brain work.
 
 ## Decision
 
-Use a composed stack. Nothing off the shelf models the organization's own semantics (a CEO → PM → EM → engineer tree, a budget chain where a child's allocation cannot exceed its parent's, and per-agent model and effort changeable at runtime), so that part is ours and everything else is borrowed.
+Use a composed stack. Nothing off the shelf models the organization's own semantics (a CEO → PM → EM → engineer tree, and per-agent model and effort changeable at runtime), so that part is ours and everything else is borrowed.
 
 1. **quota-axi for provider tokens, quota, and cost.** [quota-axi](https://github.com/kunchenguid/quota-axi) (MIT) reports percent remaining, reset time, burn pace, usable runway, and a comparative `spendPriority` per provider scope across Claude, Codex, Cursor, Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode, and Antigravity. It reads local credential stores and calls first-party endpoints, and it explicitly does not route. We shell out to it, so it is optional and its absence degrades to `UNKNOWN` rather than failing. This is the authoritative answer to "how much is left on the plan", which no amount of local instrumentation can infer.
-2. **A SQLite control plane for the organization semantics.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds harness sessions with the single-CEO lock, the agent registry with parentage and current model and effort, metadata-only observability events, budget allocations and asks, and an audit trail of every mutation. The CLI and the local UI are two faces of the same store, so an edit in either is the same audited change.
+2. **A SQLite control plane for the organization semantics.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds harness sessions, the agent registry with parentage and current model and effort, metadata-only observability events, provider quota snapshots, and an audit trail of every mutation. The CLI and the local UI are two faces of the same store, so an edit in either is the same audited change.
 3. **No terminal control.** Controlling live agent terminals was tried with Herdr and removed; see "Terminal control, tried and dropped" below. Nothing replaces it, because the question it answered was not the one the organization needs answered.
 4. **OpenTelemetry GenAI as the interoperability baseline.** Standard agent, workflow, model, and tool concepts and the `gen_ai.usage.*` fields map onto our events; Agent Brain additions use an `agent_brain.*` namespace in exporters.
 5. **Langfuse as the trace UI, shipped and wired.** Self-hostable, accepts OpenTelemetry or custom instrumentation, and gives trace trees, agent graphs, sessions, and token and cost dashboards. This is where a human looks at what happened and what it cost; the local page only answers what is running right now.
@@ -54,10 +54,8 @@ One gap remains: a sidechain turn in a Claude Code transcript is attributed to t
 | Requirement | Owner | Notes |
 |---|---|---|
 | Provider quota, reset, pace, runway, spend priority | quota-axi | `brain.js quota`. The authoritative account-level figure; degrades to `UNKNOWN` when the CLI is absent. |
-| One live CEO across terminals | Control plane | A partial unique index on unreleased `role='ceo'` sessions. A stale heartbeat is reclaimable; a live one refuses with exit 3. |
-| Parent/child organization tree | Control plane `agents.parent` | Rolled up recursively for budgets and reproduced as span nesting in Langfuse. |
+| Parent/child organization tree | Control plane `agents.parent` | Reproduced as span nesting in Langfuse, so the organization renders as an agent graph. |
 | Current model and effort per agent | Control plane, mutable | Changed by `agent set` or the UI, audited in `changes`; also corrected from observed events. |
-| Budget allocation, roll-up, asks, guards | Control plane | Recursive subtree spend over `agents.parent`; allocations exceeding the grantor are refused. |
 | Skills and documents used, and their context cost | Control-plane events | Record name, path, bytes, hash, and token count with its measurement, never content. |
 | Context input and window | Host or provider hook → event | Exact only when the host exposes it. Otherwise `UNKNOWN`. |
 | Turns | Control-plane events | One `turn.completed` per agent turn. |
@@ -66,14 +64,14 @@ One gap remains: a sidechain turn in a Claude Code transcript is attributed to t
 | Local live view and runtime editing | Control plane UI (`brain.js serve`) | Zero dependencies, loopback only; every edit is an audited mutation. |
 | Trace timeline, graph, filtering, retention, cost dashboards | Langfuse | `brain.js export langfuse`, automatic per `langfuse_export`. The local database stays fully usable without it. |
 | Thinking effort and reasoning tokens | Harness → hook → event | Claude Code exposes `CLAUDE_EFFORT` and `output_tokens_details.thinking_tokens`; both are recorded rather than guessed. |
-| Binding captured usage to a role | `sessions.harness_session_id` | A hook only knows the harness's session id. Without the binding, usage lands on a synthetic agent and the role spends against an empty budget. |
+| Binding captured usage to a role | `sessions.harness_session_id` | A hook only knows the harness's session id. Without the binding, usage lands on a synthetic agent instead of the role that spent it. |
 | Hosted fleet dashboards | Mission Control | Optional mirror for agent tracking only; the tracker stays the source of truth for work. |
 
 ## Why Langfuse is the UI rather than the control plane
 
 Langfuse supplies the mature telemetry views that would be wasteful to rebuild: trace trees, agent graphs, sessions, model generations, tool observations, dashboards, token/cost tracking, and self-hosting. Its core is MIT-licensed; enterprise governance features have separate licensing.
 
-Langfuse observes executions that send it traces. It has no concept of a CEO → PM → EM tree, a budget chain where a child cannot exceed its parent, or a single-CEO lock across terminals, which is why those stay in the control plane and are projected into Langfuse as span nesting and metadata.
+Langfuse observes executions that send it traces. It has no concept of a CEO → PM → EM tree or of which role was playing at the time, which is why that stays in the control plane and is projected into Langfuse as span nesting and metadata.
 
 ## Event and trace mapping
 
@@ -84,7 +82,6 @@ Langfuse observes executions that send it traces. It has no concept of a CEO →
 | `model.completed` | Generation/model span with `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and cache-token fields. |
 | `tool.completed` | Execute-tool span/observation; bounded tool name, outcome, duration, and `error.type`. |
 | `skill.loaded` | Span event/observation with `agent_brain.artifact.kind=skill`, name/path/hash/bytes/tokens. |
-| `budget.changed` | Span event with `agent_brain.budget.action`, holder, grantor, request id, and the token figures. |
 | `document.loaded` | Span event/observation with `agent_brain.artifact.kind`, path/hash/bytes/tokens. |
 | `turn.completed` | Child span with `agent_brain.turn.number`, outcome, duration, and context/window measurements. |
 | `control.completed` | Span event with action, target, outcome, and actor identity when available. |

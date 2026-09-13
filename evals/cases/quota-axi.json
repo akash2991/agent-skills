@@ -17,12 +17,12 @@
     ],
     "negative": [
       {
-        "prompt": "How much of its token budget has this agent's team spent",
-        "owner": "budget-management"
+        "prompt": "Produce a truthful status report on what actually works right now in this project",
+        "owner": "delivery-status"
       },
       {
-        "prompt": "How much of its allocated budget has this agent's subtree spent so far",
-        "owner": "budget-management"
+        "prompt": "Slice this approved design into milestones and sprints with a points capacity",
+        "owner": "milestone-planning"
       }
     ]
   },

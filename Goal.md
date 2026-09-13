@@ -398,3 +398,6 @@ at root
 - move everything else to instructions for specialised agents
 
 
+remove model routing logic as welll..if havent already. 
+remove one ceo check. 
+remove budget/cost check.

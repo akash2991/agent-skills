@@ -17,14 +17,10 @@ const DEFAULT_DB = path.join(__dirname, 'brain.db');
 const SCHEMA = path.join(__dirname, 'schema.sql');
 const SCHEMA_VERSION = '1';
 
-// Company defaults, overridable with `brain.js config set`.
+// Defaults, overridable with `brain.js config set`.
 const DEFAULT_CONFIG = {
-  company_input_tokens: '100000',
-  company_output_tokens: '100000',
-  company_cost_usd: 'UNKNOWN',
-  warn_at_percent: '80',
   // See INPUT_BASIS below: fresh | new | billable.
-  budget_input_basis: 'new',
+  usage_input_basis: 'new',
   session_stale_minutes: '30',
   agent_stale_minutes: '20',
   // When captured events are shipped to Langfuse: off | session-end | turn. `turn` keeps the trace
@@ -55,9 +51,6 @@ function open(file = process.env.BRAIN_DB || DEFAULT_DB) {
   db.prepare('INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)').run('schema_version', SCHEMA_VERSION);
   const insertConfig = db.prepare('INSERT OR IGNORE INTO config(key, value, updated_at, updated_by) VALUES(?, ?, ?, ?)');
   for (const [key, value] of Object.entries(DEFAULT_CONFIG)) insertConfig.run(key, value, now, 'default');
-  db.prepare(`INSERT OR IGNORE INTO budget_allocations(holder, granted_by, input_tokens, output_tokens, cost_usd, scope, granted_at, note)
-              VALUES('ceo', 'user', ?, ?, NULL, 'company', ?, 'company budget; the CEO keeps a reserve for itself, PMs, EMs, and hires')`)
-    .run(Number(DEFAULT_CONFIG.company_input_tokens), Number(DEFAULT_CONFIG.company_output_tokens), now);
   db.file = file;
   return db;
 }
@@ -85,10 +78,10 @@ function minutesSince(iso, now = Date.now()) {
   return Number.isNaN(t) ? null : Math.round((now - t) / 60000);
 }
 
-// How `input_tokens` is counted against a budget. Prompt caching makes this a real choice rather
+// How `input_tokens` is counted when usage is reported. Prompt caching makes this a real choice rather
 // than a detail: in a measured Claude Code session, 40 assistant messages billed 80 fresh input
-// tokens, 767k cache writes, and 29M cache reads. Counting only fresh input makes a budget
-// unreachable; counting cache reads makes a small budget instantly exhausted. The basis is therefore
+// tokens, 767k cache writes, and 29M cache reads, so the three bases differ by orders of magnitude
+// and a single number would be misleading whichever one it used. The basis is therefore
 // explicit, configurable, and every component is reported alongside the total so nothing is hidden.
 //
 //   fresh    = input_tokens only                                   (what the provider saw as new)
@@ -102,7 +95,7 @@ const INPUT_BASIS = {
 
 // Subtree token spend per holder, following agents.parent, from model.completed usage events.
 function spend(db, holder, basis) {
-  const chosen = basis || config(db).budget_input_basis || 'new';
+  const chosen = basis || config(db).usage_input_basis || 'new';
   const expression = INPUT_BASIS[chosen] || INPUT_BASIS.new;
   const row = db.prepare(`
     WITH RECURSIVE subtree(agent_id) AS (

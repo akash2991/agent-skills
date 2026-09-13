@@ -4,6 +4,7 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-34 — the last model-routing, budget, and escalation language removed from personas, reports, references, and the tracker skill — org-staff-engineer
 - F-self-26 — automation removed. The coordinator is a person: every role is invoked by its own `brain-*` command, confirms model and effort, asks for declared inputs, returns a structured output, and names what should run next without invoking it — org-staff-engineer
 - F-self-27 — escalation, request intake, and model routing deleted; assignment packets, orchestration patterns, cross-harness delegation, and hiring deleted with them. Every blocker goes straight to the coordinator. Archived under `deprecated/removed-coordination/` — org-staff-engineer
 - F-self-28 — the always-on organization cut from 255 lines to 77: north star, roster, how agents behave, where things live. The detail moved to references that a role loads when it needs them — org-staff-engineer

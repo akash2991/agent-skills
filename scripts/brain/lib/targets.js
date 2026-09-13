@@ -18,7 +18,7 @@
 //   hooks            — repo-level config that wires automatic usage capture, or null when the
 //                      harness has no hook mechanism (then usage stays UNKNOWN until it does)
 //   spawn            — 'main-only' (only the main session can spawn personas), 'nested' (any persona can spawn), 'single-session' (no subagents)
-//   routingNote      — how the EM's routing decision is executed on this harness; rendered into ORG.md and the model-routing skill
+//   routingNote      — how the model and effort the coordinator chose are applied on this harness
 //   delegationNote   — appended to the always-on file
 
 // Subagent files carry no model: the spawner passes the model and effort the EM chose for the task,

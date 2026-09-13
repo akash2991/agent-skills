@@ -4,7 +4,6 @@
 - Ticket: <tracker id>
 - Status: DONE
 - Model / effort: <model> / <effort>
-- Budget: spent <in>/<out> of allocated <in>/<out> tokens (<n>% / <n>%), cost <x or UNKNOWN>; source: <observatory | runtime | UNKNOWN>
 
 ### Design under review
 - HLD/LLD: `<paths>`

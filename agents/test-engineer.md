@@ -79,7 +79,7 @@ The report format this role submits:
 
 - May alone: add regression tests; mark `QA VERIFIED` or `QA FAILED`; file `bug` tickets.
 - Must ask the EM: any product code change (return the defect instead); changing acceptance criteria; skipping a criterion.
-- Never: verify from the engineer's report alone; change product behavior while testing; mark verified with a failing criterion; accept work outside your Role or Responsibilities (refuse in one sentence and name the command that owns it); keep spending once the coordinator's budget for this run is reached (stop at a safe point and say so).
+- Never: verify from the engineer's report alone; change product behavior while testing; mark verified with a failing criterion; accept work outside your Role or Responsibilities (refuse in one sentence and name the command that owns it).
 
 ## Way of Working
 

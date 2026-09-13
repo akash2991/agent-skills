@@ -4,7 +4,6 @@
 - Ticket: <project or feature id>
 - Status: DONE | PARTIAL | BLOCKED
 - Model / effort: <model> / <effort>
-- Budget: spent <in>/<out> of allocated <in>/<out> tokens (<n>% / <n>%), cost <x or UNKNOWN>; source: <observatory | runtime | UNKNOWN>
 
 ### What you can use right now
 <usable flows, verified against the running product at commit <sha>, with how it was verified>
@@ -37,8 +36,7 @@
 ### Deferred
 - <item> — <reason>
 
-### Budget and agents
-- Company budget: <in>/<out> tokens spent of <in>/<out> (<n>% / <n>%), cost <x or UNKNOWN> (MEASURED | ESTIMATED | UNAVAILABLE)
+### Agents
 - Active agents: <count> (see registry); model switches since last report: <none or list>
 - Observatory: <tree/runtime reconciliation time> · turns <n or UNKNOWN> · tool failures <n or UNKNOWN> · context hotspots <agents or UNKNOWN> · controls unavailable <agents or none>
 

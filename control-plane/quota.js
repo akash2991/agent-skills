@@ -3,7 +3,7 @@
 // quota-axi is a standalone CLI, not a library: we shell out to it, so it is optional at runtime
 // and its absence degrades to UNKNOWN instead of failing. It reads local credential stores and
 // calls first-party provider endpoints; it reports figures and never routes. Routing decisions
-// stay with the EM (`model-routing`).
+// stay with the coordinator, who picks the model and effort when a role is invoked.
 const { spawnSync } = require('node:child_process');
 
 const PROVIDERS = ['claude', 'codex', 'cursor', 'copilot', 'grok', 'kimi', 'zai', 'agy', 'alibaba', 'opencode-go'];

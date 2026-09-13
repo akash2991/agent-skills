@@ -37,7 +37,7 @@ The build emits this server into each tool's repo-level MCP config (`.mcp.json`,
 | Org concept | Linear object | Notes |
 |---|---|---|
 | Feature | Project | One per feature; PM's `agent_id` in the description |
-| Milestone | Project milestone | Name = usable outcome; description carries `Budget:` and `Verify:` lines |
+| Milestone | Project milestone | Name = usable outcome; description carries the `Verify:` line |
 | Sprint | Cycle | Fixed length, points capacity; the sprint record is the cycle description, the sprint review is a comment on it at close |
 | Bug | Issue with label `bug` | Uses the bug template; `bug:<type>` and `severity:*` labels; linked to the story it affects |
 | Story | Issue (parent) | User-observable outcome; tasks are sub-issues |

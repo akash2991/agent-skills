@@ -69,7 +69,6 @@
 
 <nav class="tabs" id="tabs">
   <button type="button" data-tab="agents" aria-selected="false">Agents<span class="count" data-count="agents"></span></button>
-  <button type="button" data-tab="budgets" aria-selected="false">Budgets<span class="count" data-count="budgets"></span></button>
   <button type="button" data-tab="quota" aria-selected="false">Quota<span class="count" data-count="quota"></span></button>
   <button type="button" data-tab="models" aria-selected="false">Models<span class="count" data-count="models"></span></button>
   <button type="button" data-tab="context" aria-selected="false">Context<span class="count" data-count="context"></span></button>
@@ -82,12 +81,6 @@
 <section data-tab="agents" hidden><h2>Agents</h2><div class="scroll"><table class="tree">
     <thead><tr><th>agent</th><th>status</th><th>role</th><th>ticket</th><th>model</th><th>effort</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th><th class="num">hb</th><th>operation</th><th></th></tr></thead>
     <tbody id="agents"></tbody></table></div></section>
-
-<section data-tab="budgets" hidden><h2>Budgets</h2><div class="scroll"><table>
-    <thead><tr><th>holder</th><th>status</th><th class="num">in spent</th><th>alloc in</th><th class="num">out spent</th><th>alloc out</th><th>use</th><th></th></tr></thead>
-    <tbody id="budgets"></tbody></table></div>
-    <div id="asks"></div>
-  </section>
 
 <section data-tab="quota" hidden><h2>Provider quota (quota-axi)</h2><div class="scroll"><table>
     <thead><tr><th>provider</th><th>scope</th><th class="num">left</th><th class="num">priority</th><th>runway</th><th>pace</th></tr></thead>
@@ -190,23 +183,7 @@ function render(s) {
 
   $('agents').innerHTML = s.tree.length ? agentRows(s.tree, 0, []).join('') : '<tr><td colspan="12" class="note">No agents registered.</td></tr>';
 
-  $('budgets').innerHTML = s.budgets.map(b => '<tr>'
-    + '<td>' + esc(b.holder) + '<div class="dim">' + esc(b.role || b.scope || '') + '</div></td>'
-    + '<td><span class="pill ' + esc(b.status) + '">' + esc(b.status) + '</span>' + (b.over_allocated ? ' <span class="pill EXHAUSTED">over</span>' : '') + '</td>'
-    + '<td class="num">' + n(b.spent.input_tokens) + '</td>'
-    + '<td><input type="number" data-holder="' + esc(b.holder) + '" data-granted-by="' + esc(b.granted_by) + '" data-field="input_tokens" value="' + (b.allocated.input_tokens === UNKNOWN ? '' : b.allocated.input_tokens) + '"></td>'
-    + '<td class="num">' + n(b.spent.output_tokens) + '</td>'
-    + '<td><input type="number" data-holder="' + esc(b.holder) + '" data-granted-by="' + esc(b.granted_by) + '" data-field="output_tokens" value="' + (b.allocated.output_tokens === UNKNOWN ? '' : b.allocated.output_tokens) + '"></td>'
-    + '<td>' + percentBar(typeof b.percent.input === 'number' ? b.percent.input : undefined) + '</td>'
-    + '<td class="dim">' + esc(b.granted_by) + '</td></tr>').join('') || '<tr><td colspan="8" class="note">No allocations.</td></tr>';
 
-  $('asks').innerHTML = s.open_budget_requests.length
-    ? '<table><thead><tr><th>ask</th><th>from → to</th><th class="num">in</th><th class="num">out</th><th>reason</th><th></th></tr></thead><tbody>'
-      + s.open_budget_requests.map(r => '<tr><td>' + esc(r.id) + '</td><td>' + esc(r.from_holder) + ' → ' + esc(r.to_holder) + '</td>'
-        + '<td class="num">' + n(r.input_tokens) + '</td><td class="num">' + n(r.output_tokens) + '</td><td class="dim">' + esc(r.reason || '') + '</td>'
-        + '<td><button class="go" data-decide="' + esc(r.id) + '" data-status="GRANTED">grant</button> '
-        + '<button data-decide="' + esc(r.id) + '" data-status="DENIED">deny</button></td></tr>').join('') + '</tbody></table>'
-    : '';
 
   $('models').innerHTML = s.by_model.map(m => '<tr><td>' + esc(m.model) + '</td><td class="num">' + n(m.calls) + '</td>'
     + '<td class="num">' + n(m.input_tokens) + '</td><td class="num">' + n(m.output_tokens) + '</td><td class="num">' + money(m.cost_usd) + '</td></tr>').join('')
@@ -223,7 +200,6 @@ function render(s) {
   for (const a of s.stale) attention.push('<div><span class="pill WARN">stale</span> ' + esc(a.agent_id) + ' heartbeat ' + (a.heartbeat_age_minutes ?? '?') + ' min ago</div>');
   for (const a of s.blocked) attention.push('<div><span class="pill BLOCKED">blocked</span> ' + esc(a.agent_id) + ' ' + esc(a.blocker || '(no blocker recorded)') + '</div>');
   for (const c2 of s.path_conflicts) attention.push('<div><span class="pill BLOCKED">path</span> ' + esc(c2.path) + ' ← ' + esc(c2.agents.join(', ')) + '</div>');
-  for (const b of s.budgets.filter(x => x.status === 'WARN' || x.status === 'EXHAUSTED')) attention.push('<div><span class="pill ' + esc(b.status) + '">budget</span> ' + esc(b.holder) + ' ' + b.percent.input + '% in</div>');
   $('attention').innerHTML = attention.join('') || '<div class="note">Nothing needs attention.</div>';
 
   $('changes').innerHTML = s.changes.map(c3 => '<tr><td class="dim">' + esc(new Date(c3.at).toLocaleTimeString()) + '</td><td>' + esc(c3.actor) + '</td>'
@@ -247,21 +223,10 @@ function renderQuota(q) {
 document.addEventListener('change', e => {
   const el = e.target;
   if (el.dataset.agent) return void post('/api/agents/' + encodeURIComponent(el.dataset.agent), { [el.dataset.field]: el.value });
-  if (el.dataset.holder) {
-    const row = {}; row[el.dataset.field] = el.value === '' ? null : Number(el.value);
-    return void post('/api/budget/allocate', { holder: el.dataset.holder, granted_by: el.dataset.grantedBy, ...currentAllocation(el), ...row });
-  }
 });
-function currentAllocation(el) {
-  const inputs = document.querySelectorAll('[data-holder="' + el.dataset.holder + '"]');
-  const out = {};
-  for (const i of inputs) out[i.dataset.field] = i.value === '' ? null : Number(i.value);
-  return out;
-}
 document.addEventListener('click', e => {
   const b = e.target;
   if (b.dataset.release) return void post('/api/sessions/' + encodeURIComponent(b.dataset.release) + '/release');
-  if (b.dataset.decide) return void post('/api/budget/decide', { id: b.dataset.decide, status: b.dataset.status });
 });
 
 async function refresh() {
@@ -300,13 +265,12 @@ function setCount(name, n) {
 }
 function renderCounts(s) {
   setCount('agents', (s.tree || []).length);
-  setCount('budgets', (s.budgets || []).length);
   setCount('models', (s.by_model || []).length);
   setCount('context', (s.artifacts || []).length);
   setCount('tools', (s.tools || []).length);
   setCount('changes', (s.recent_changes || s.changes || []).length);
   const attention = (s.blocked || []).length + (s.stale || []).length
-    + (s.path_conflicts || []).length + (s.open_budget_requests || []).length;
+    + (s.path_conflicts || []).length;
   setCount('attention', attention || '');
 }
 

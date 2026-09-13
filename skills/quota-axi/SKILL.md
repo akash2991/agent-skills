@@ -1,6 +1,6 @@
 ---
 name: quota-axi
-description: Reads local LLM subscription quota across providers with the quota-axi CLI, reporting percent remaining, reset times, burn pace, usable runway, and a comparative spend priority per provider scope, so routing and budget decisions use real provider figures instead of guesses. Use when choosing a model or harness for a task, when a provider may be near its limit, when a run fails in a way that looks like a quota wall, or when reporting token and cost status.
+description: Reads local LLM subscription quota across providers with the quota-axi CLI, reporting percent remaining, reset times, burn pace, usable runway, and a comparative spend priority per provider scope, so the choice of model or harness uses real provider figures instead of guesses. Use when choosing a model or harness for a task, when a provider may be near its limit, when a run fails in a way that looks like a quota wall, or when reporting token and cost status.
 category: tools
 ---
 
@@ -10,7 +10,7 @@ category: tools
 
 [quota-axi](https://github.com/kunchenguid/quota-axi) (MIT) reports what each provider says is left on your plan: percent remaining per window, when it resets, whether you are burning faster than the reset clock, how much usable runway is left, and a comparative `spendPriority` across scopes. It reads local credential stores and calls first-party provider endpoints, so nothing goes through a third party.
 
-It answers a different question from the budget ledger, and both matter. The ledger says what the organization *allocated* to an agent. quota-axi says what the *provider* will actually serve. A task can be inside its budget and still fail because the weekly window is spent.
+It answers what the *provider* will actually serve, which nothing local can infer. A run can look perfectly healthy and still fail because the weekly window is spent.
 
 It reports figures and never routes. The routing decision stays with the engineering manager (the model and effort the coordinator chose).
 
@@ -18,10 +18,10 @@ It reports figures and never routes. The routing decision stays with the enginee
 
 - Before routing a task to a model or harness, to see which provider has room.
 - When a run fails, stalls, or degrades in a way that looks like a rate or quota wall.
-- When reporting token, cost, or usage status (`delivery-status`) or deciding a budget ask (`budget-management`).
+- When reporting token, cost, or usage status (`delivery-status`).
 - Before a long or expensive milestone, to check runway against the reset clock.
-- NOT for per-agent organizational spend: that is the control plane's budget roll-up.
-- NOT for authorization: a healthy quota is not permission to exceed a budget allocation.
+- NOT for what an agent has already spent: that is the control plane's recorded usage.
+- NOT for authorization: a healthy quota is not permission to start work the coordinator has not asked for.
 
 ## Process
 
@@ -61,7 +61,7 @@ Install it once (`npm i -g quota-axi`, Node 22.19+) to avoid an `npx` fetch on e
 
 | Rationalization | Reality |
 |---|---|
-| "Quota looks fine, so I can keep going past my budget." | Provider quota and organizational budget are independent. Both bind, and the budget binds first. |
+| "Quota looks fine, so this will work." | Quota is a burn-down against a reset clock. A figure is current only when just read, and `HISTORICAL` a minute later. |
 | "No quota data, so assume it is fine." | Unknown is not healthy. Report `UNKNOWN` and decide with that stated. |
 | "quota-axi picked the provider." | It publishes figures and one comparative signal. The EM routes; the tool does not. |
 | "The percentage I read an hour ago still holds." | It is a burn-down against a reset clock. Re-read it before a decision that depends on it. |

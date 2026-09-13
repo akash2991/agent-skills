@@ -21,10 +21,6 @@
         "owner": "quota-axi"
       },
       {
-        "prompt": "How many tokens has this agent's team spent against its allocation",
-        "owner": "budget-management"
-      },
-      {
         "prompt": "Add metrics and logs to the checkout service so we can see it working in production",
         "owner": "observability-and-instrumentation"
       }

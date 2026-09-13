@@ -75,7 +75,7 @@ function lint(p) {
   else if (!/\buse (this )?when\b/i.test(d.description)) problems.push('description has no "Use when" trigger');
   // Model and effort are runtime decisions recorded in the control plane, never persona frontmatter:
   // any agent may run any model at any effort, chosen per task by the EM from complexity, budget, and
-  // provider quota (`model-routing`). Reject the old keys so a per-persona allowlist cannot creep back.
+  // the coordinator when the role is invoked. Reject the old keys so a per-persona allowlist cannot creep back.
   for (const key of ['model', 'effort', 'allowed', 'allowed-models', 'allowed-efforts']) {
     if (p.data[key] !== undefined) problems.push(`frontmatter must not set \`${key}\`: model and effort are chosen per task and recorded in the control plane, not fixed on the persona`);
   }

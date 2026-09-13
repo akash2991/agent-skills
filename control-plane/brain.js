@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 // Agent Brain control plane CLI. One command surface over the SQLite control plane: sessions
-// (with the single-CEO lock), the agent registry, budgets, provider quota, and the combined status
+// the agent registry, observability events, provider quota, and the combined status
 // an agent loads at session start. Output is content-first and compact for agent consumption;
 // `--json` on any command returns the same data as JSON.
 //
 //   brain.js context   --role ceo --harness claude-code --model <id> --effort <level>
 //   brain.js session   claim|release|heartbeat|list
 //   brain.js agent     register|heartbeat|set|list|tree|close
-//   brain.js budget    show|allocate|ask|decide
 //   brain.js quota     [--provider a,b]
 //   brain.js status
 //   brain.js event     --event '<json>'
@@ -37,11 +36,9 @@ const out = (args, data, human) => process.stdout.write(has(args, 'json') ? `${J
 // become a second one. The schema enforces it with a partial unique index; this function gives the
 // refusal a useful message. Every other role may run many sessions concurrently. A session whose
 // heartbeat is older than session_stale_minutes is reclaimable rather than blocking forever.
-const EXCLUSIVE_ROLES = new Set(['ceo']);
-
 // What the harness tells us about itself. A claimed role must be bound to the harness's own session
 // identifier, because that is the only id a runtime hook reports; without the binding, captured
-// usage is attributed to a synthetic agent and the role's budget stays empty while it spends.
+// usage is attributed to a synthetic agent instead of the role that actually spent it.
 // Flags always win, so a harness that exposes nothing can still be bound explicitly.
 const HARNESS_ENV = {
   session: ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CODEX_SESSION_ID', 'BRAIN_HARNESS_SESSION'],
@@ -55,21 +52,6 @@ function fromEnv(kind) {
 function claimSession(db, args, actor) {
   const role = flag(args, 'role') || 'ceo';
   const id = flag(args, 'id') || `${role}-${crypto.randomUUID().slice(0, 8)}`;
-  const cfg = database.config(db);
-  const stale = Number(cfg.session_stale_minutes || 30);
-  const held = EXCLUSIVE_ROLES.has(role)
-    ? db.prepare('SELECT * FROM sessions WHERE role = ? AND released_at IS NULL').get(role)
-    : undefined;
-  let reclaimed = null;
-  if (held) {
-    const age = database.minutesSince(held.last_heartbeat);
-    if (age !== null && age <= stale) {
-      return { ok: false, reason: 'role_taken', role, holder: held, age_minutes: age, stale_after_minutes: stale };
-    }
-    db.prepare('UPDATE sessions SET released_at = ? WHERE id = ?').run(now(), held.id);
-    database.record(db, actor, 'session', held.id, 'released_at', null, now(), `stale for ${age === null ? 'unknown' : age} min, reclaimed by ${id}`);
-    reclaimed = { id: held.id, age_minutes: age };
-  }
   const at = now();
   const harnessSession = flag(args, 'harness-session') || fromEnv('session');
   const effort = flag(args, 'effort') || fromEnv('effort');
@@ -78,20 +60,14 @@ function claimSession(db, args, actor) {
     .run(id, role, flag(args, 'harness') || UNKNOWN, flag(args, 'model') || null, effort || null,
          int(flag(args, 'pid')) ?? process.ppid, flag(args, 'cwd') || process.cwd(), at, at, harnessSession || null);
   database.record(db, actor, 'session', id, 'claimed', null, role, flag(args, 'harness') || null);
-  return { ok: true, session: db.prepare('SELECT * FROM sessions WHERE id = ?').get(id), reclaimed };
+  return { ok: true, session: db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) };
 }
 
 function sessionCommand(db, args, actor) {
   const action = args[1];
   if (action === 'claim') {
-    const result = claimSession(db, args, actor);
-    if (!result.ok) {
-      out(args, result, `REFUSED role=${result.role} already held by session ${result.holder.id} (${result.holder.harness}, heartbeat ${result.age_minutes} min ago; reclaimable after ${result.stale_after_minutes} min).\nThis session must not act as ${result.role}. Ask the holder to run: brain.js session release --id ${result.holder.id}`);
-      process.exitCode = 3;
-      return;
-    }
-    const s = result.session;
-    out(args, result, `session ${s.id} claimed role=${s.role} harness=${s.harness} model=${s.model || UNKNOWN}/${s.effort || UNKNOWN}${result.reclaimed ? `\nreclaimed stale session ${result.reclaimed.id}` : ''}`);
+    const s = claimSession(db, args, actor).session;
+    out(args, { ok: true, session: s }, `session ${s.id} claimed role=${s.role} harness=${s.harness} model=${s.model || UNKNOWN}/${s.effort || UNKNOWN}`);
     return;
   }
   if (action === 'release') {
@@ -135,11 +111,8 @@ function agentCommand(db, args, actor) {
            flag(args, 'status') || 'RUNNING', flag(args, 'paths') || null, flag(args, 'operation') || null, at, at);
     database.record(db, actor, 'agent', id, 'registered', null, flag(args, 'role'), flag(args, 'ticket') || null);
     const conflicts = state.pathConflicts(db).filter(c => c.agents.includes(id));
-    const budget = state.budgetFor(db, id);
-    out(args, { ok: true, agent: db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id), path_conflicts: conflicts, budget }, [
+    out(args, { ok: true, agent: db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id), path_conflicts: conflicts }, [
       `registered ${id} role=${flag(args, 'role')} parent=${flag(args, 'parent') || UNKNOWN} ticket=${flag(args, 'ticket') || '-'}`,
-      budget ? `budget ${budget.holder}: ${budget.spent.input_tokens}/${budget.allocated.input_tokens} in, ${budget.spent.output_tokens}/${budget.allocated.output_tokens} out (${budget.status})`
-             : 'BUDGET: no allocation covers this agent. Ask your grantor before starting.',
       ...conflicts.map(c => `PATH CONFLICT ${c.path} also owned by ${c.agents.filter(a => a !== id).join(', ')}`)
     ].join('\n'));
     return;
@@ -159,10 +132,8 @@ function agentCommand(db, args, actor) {
       applied.push(`${column}=${value}`);
     }
     db.prepare('UPDATE agents SET last_heartbeat = ? WHERE agent_id = ?').run(now(), id);
-    const budget = state.budgetFor(db, id);
-    const warn = budget && budget.status !== 'OK' && budget.status !== 'NO_USAGE_RECORDED' ? `\nBUDGET ${budget.status}: ${budget.percent.input}% in / ${budget.percent.output}% out of allocation ${budget.holder}. ${budget.status === 'EXHAUSTED' ? 'Stop at a safe point, set status=BLOCKED --blocker budget, and raise a budget ask.' : 'Finish the current step and report.'}` : '';
-    out(args, { ok: true, applied, agent: db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id), budget },
-      `${id} ${applied.length ? applied.join(' ') : 'heartbeat'} at ${now()}${warn}`);
+    out(args, { ok: true, applied, agent: db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id) },
+      `${id} ${applied.length ? applied.join(' ') : 'heartbeat'} at ${now()}`);
     return;
   }
   if (action === 'close') {
@@ -185,93 +156,6 @@ function agentCommand(db, args, actor) {
 
 
 
-
-function budgetCommand(db, args, actor) {
-  const action = args[1] || 'show';
-  if (action === 'allocate') {
-    const holder = need(flag(args, 'holder'), 'holder');
-    const grantedBy = need(flag(args, 'granted-by'), 'granted-by');
-    const parent = state.budgetRows(db).find(r => r.holder === grantedBy);
-    const input = int(flag(args, 'input')), output = int(flag(args, 'output'));
-    if (parent) {
-      const siblings = db.prepare('SELECT COALESCE(SUM(input_tokens),0) i, COALESCE(SUM(output_tokens),0) o FROM budget_allocations WHERE granted_by = ? AND holder != ?').get(grantedBy, holder);
-      const overIn = parent.allocated.input_tokens !== UNKNOWN && siblings.i + (input || 0) > parent.allocated.input_tokens;
-      const overOut = parent.allocated.output_tokens !== UNKNOWN && siblings.o + (output || 0) > parent.allocated.output_tokens;
-      if ((overIn || overOut) && !has(args, 'force')) {
-        out(args, { ok: false, reason: 'exceeds_parent', parent: parent.allocated, siblings },
-          `REFUSED: ${grantedBy} would allocate more than it holds (children ${siblings.i + (input || 0)}in/${siblings.o + (output || 0)}out vs allocation ${parent.allocated.input_tokens}in/${parent.allocated.output_tokens}out). Raise ${grantedBy}'s allocation first, or pass --force with a recorded reason.`);
-        process.exitCode = 4; return;
-      }
-    }
-    const before = db.prepare('SELECT * FROM budget_allocations WHERE holder = ?').get(holder);
-    db.prepare(`INSERT INTO budget_allocations(holder, granted_by, input_tokens, output_tokens, cost_usd, scope, granted_at, note)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(holder) DO UPDATE SET granted_by=excluded.granted_by, input_tokens=excluded.input_tokens,
-                  output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd, scope=excluded.scope,
-                  granted_at=excluded.granted_at, note=excluded.note`)
-      .run(holder, grantedBy, input, output, flag(args, 'cost') ? Number(flag(args, 'cost')) : null, flag(args, 'scope') || null, now(), flag(args, 'note') || null);
-    database.record(db, actor, 'budget', holder, 'allocation',
-      before ? `${before.input_tokens}/${before.output_tokens}` : null, `${input}/${output}`, flag(args, 'reason') || null);
-    emitEvent({ schema_version: '1.0', type: 'budget.changed', agent_id: actor, session_id: flag(args, 'session') || actor,
-      budget: { action: 'allocate', holder, granted_by: grantedBy, input_tokens: input ?? undefined, output_tokens: output ?? undefined } }, { db });
-    out(args, { ok: true, holder, allocated: { input, output } }, `allocated ${holder}: ${input}in/${output}out granted_by=${grantedBy}`);
-    return;
-  }
-  if (action === 'ask') {
-    const from = need(flag(args, 'from'), 'from');
-    const to = need(flag(args, 'to'), 'to');
-    const id = flag(args, 'id') || `B-${crypto.randomUUID().slice(0, 6)}`;
-    db.prepare(`INSERT INTO budget_requests(id, from_holder, to_holder, input_tokens, output_tokens, cost_usd, reason, status, created_at)
-                VALUES(?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`)
-      .run(id, from, to, int(flag(args, 'input')), int(flag(args, 'output')), flag(args, 'cost') ? Number(flag(args, 'cost')) : null, flag(args, 'reason') || null, now());
-    emitEvent({ schema_version: '1.0', type: 'budget.changed', agent_id: from, session_id: flag(args, 'session') || from,
-      budget: { action: 'request', holder: from, granted_by: to, request_id: id, input_tokens: int(flag(args, 'input')) ?? undefined, output_tokens: int(flag(args, 'output')) ?? undefined } }, { db });
-    out(args, { ok: true, id }, `budget ask ${id}: ${from} → ${to} for ${flag(args, 'input')}in/${flag(args, 'output')}out\nSet your row BLOCKED with blocker=budget until it is decided: brain.js agent set --agent-id ${from} --status BLOCKED --blocker ${id}`);
-    return;
-  }
-  if (action === 'decide') {
-    const id = need(flag(args, 'id'), 'id');
-    const status = need(flag(args, 'status'), 'status').toUpperCase();
-    if (!REQUEST_STATUS.has(status)) throw new Error(`status must be one of ${[...REQUEST_STATUS].join('|')}`);
-    const req = db.prepare('SELECT * FROM budget_requests WHERE id = ?').get(id);
-    if (!req) { out(args, { ok: false, reason: 'unknown_request' }, `unknown budget request ${id}`); process.exitCode = 1; return; }
-    db.prepare('UPDATE budget_requests SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?').run(status, actor, now(), id);
-    database.record(db, actor, 'budget_request', id, 'status', req.status, status, flag(args, 'reason') || null);
-    emitEvent({ schema_version: '1.0', type: 'budget.changed', agent_id: actor, session_id: flag(args, 'session') || actor,
-      budget: { action: status === 'GRANTED' ? 'grant' : status === 'PARTIAL' ? 'partial' : status === 'DENIED' ? 'deny' : 'request', holder: req.from_holder, granted_by: req.to_holder, request_id: id } }, { db });
-    let note = '';
-    if (status === 'GRANTED' || status === 'PARTIAL') {
-      const current = db.prepare('SELECT * FROM budget_allocations WHERE holder = ?').get(req.from_holder);
-      const addIn = int(flag(args, 'input')) ?? req.input_tokens ?? 0;
-      const addOut = int(flag(args, 'output')) ?? req.output_tokens ?? 0;
-      if (current) {
-        db.prepare('UPDATE budget_allocations SET input_tokens = ?, output_tokens = ?, granted_at = ? WHERE holder = ?')
-          .run((current.input_tokens || 0) + addIn, (current.output_tokens || 0) + addOut, now(), req.from_holder);
-        note = `\nallocation ${req.from_holder} raised by ${addIn}in/${addOut}out`;
-      } else {
-        db.prepare('INSERT INTO budget_allocations(holder, granted_by, input_tokens, output_tokens, scope, granted_at) VALUES(?, ?, ?, ?, ?, ?)')
-          .run(req.from_holder, req.to_holder, addIn, addOut, flag(args, 'scope') || null, now());
-        note = `\nallocation ${req.from_holder} created with ${addIn}in/${addOut}out`;
-      }
-      database.record(db, actor, 'budget', req.from_holder, 'allocation', current ? `${current.input_tokens}/${current.output_tokens}` : null, `+${addIn}/+${addOut}`, `request ${id}`);
-    }
-    out(args, { ok: true, id, status }, `budget ask ${id} ${status} by ${actor}${note}`);
-    return;
-  }
-  const rows = state.budgetRows(db);
-  const cfg = database.config(db);
-  const requests = db.prepare("SELECT * FROM budget_requests WHERE status IN ('PENDING','ESCALATED') ORDER BY created_at").all();
-  const unbudgeted = db.prepare("SELECT DISTINCT agent_id FROM events WHERE type = 'model.completed'").all()
-    .map(r => r.agent_id).filter(id => !state.budgetFor(db, id));
-  const human = [
-    `company ${cfg.company_input_tokens}in/${cfg.company_output_tokens}out cost=${cfg.company_cost_usd} warn_at=${cfg.warn_at_percent}% input_basis=${cfg.budget_input_basis || 'new'}`,
-    ...rows.map(r => `${r.status.padEnd(18)} ${r.holder.padEnd(22)} ${String(r.spent.input_tokens).padStart(9)}/${String(r.allocated.input_tokens).padEnd(9)}in ${String(r.spent.output_tokens).padStart(8)}/${String(r.allocated.output_tokens).padEnd(8)}out granted_by=${r.granted_by}${r.over_allocated ? ' OVER-ALLOCATED' : ''}`),
-    ...rows.filter(r => r.spent.cache_read_tokens).map(r => `${''.padEnd(18)} ${r.holder.padEnd(22)} components: fresh ${r.spent.fresh_input_tokens} + cache-write ${r.spent.cache_write_tokens} + cache-read ${r.spent.cache_read_tokens} (basis: ${r.spent.input_basis})`),
-    ...(unbudgeted.length ? [`unbudgeted agents with spend: ${unbudgeted.join(', ')}`] : []),
-    ...(requests.length ? ['open asks:', ...requests.map(r => `  ${r.id} ${r.from_holder} → ${r.to_holder} ${r.input_tokens}in/${r.output_tokens}out [${r.status}] ${r.reason || ''}`)] : [])
-  ].join('\n');
-  out(args, { company: cfg, holders: rows, open_requests: requests, unbudgeted_agents_with_spend: unbudgeted }, human);
-}
 
 // ─── quota, status, context ──────────────────────────────────────────────────
 function quotaCommand(db, args) {
@@ -323,17 +207,7 @@ function tracingLine(db) {
 
 function contextCommand(db, args, actor) {
   const role = flag(args, 'role') || 'ceo';
-  const claim = claimSession(db, args, actor);
-  if (!claim.ok) {
-    out(args, { ok: false, ...claim }, [
-      `REFUSED: role=${role} is already held by session ${claim.holder.id} (${claim.holder.harness}, heartbeat ${claim.age_minutes} min ago).`,
-      `Do not act as ${role} in this session. Either work as a different role, or have the holder run:`,
-      `  node ${path.relative(process.cwd(), __filename)} session release --id ${claim.holder.id}`
-    ].join('\n'));
-    process.exitCode = 3;
-    return;
-  }
-  const session = claim.session;
+  const session = claimSession(db, args, actor).session;
   // Bind the agent row to the harness's session id when there is one. Runtime hooks only know that
   // id, so this is what makes captured usage land on the role instead of a synthetic agent.
   const bindTo = session.harness_session_id || session.id;
@@ -349,8 +223,8 @@ function contextCommand(db, args, actor) {
     model: session.model || undefined, effort: session.effort || undefined }, { db });
   const snapshot = state.statusData(db);
   // A fresh database knows nothing about the account it will spend against. Seeding it with a real
-  // reading means the first budget decision is made against what the providers will actually serve,
-  // not against a default that happens to be in the code.
+  // reading means routing decisions are made against what the providers will actually serve, not
+  // against a guess.
   const seeding = !quota.isSeeded(db);
   const q = quota.read({});
   const seeded = quota.snapshot(db, q);
@@ -358,13 +232,12 @@ function contextCommand(db, args, actor) {
   const data = { ok: true, session, role, state: snapshot, quota: q, quota_seeded: seeding ? seeded : 0 };
   out(args, data, [
     `You are the ${role}. Session ${session.id} on ${session.harness}; your model is ${session.model || UNKNOWN} at ${session.effort || UNKNOWN} effort, recorded as the ${role}'s current values.`,
-    `You hold the ${role} lock: no other session may act as ${role} until this one is released.`,
     ...(session.harness_session_id
       ? [`Usage capture is bound to harness session ${session.harness_session_id}: tokens land on ${role}.`]
       : ['WARNING: this harness exposed no session id, so captured usage cannot be attributed to you. Pass --harness-session <id> or set BRAIN_HARNESS_SESSION.']),
     ...(adopted ? [`Adopted ${adopted.events} event(s) already observed on this session from ${adopted.agents.join(', ')}.`] : []),
     tracingLine(db),
-    ...(seeding && seeded ? [`Seeded this fresh control plane with ${seeded} provider quota scope(s); budgets start from the real account.`] : []),
+    ...(seeding && seeded ? [`Seeded this fresh control plane with ${seeded} provider quota scope(s) read from the real account.`] : []),
     '',
     state.renderStatus(snapshot),
     '',
@@ -414,7 +287,6 @@ async function main(args = process.argv.slice(2)) {
       '  context  --role ceo --harness <h> --model <id> --effort <level>   claim the role and print the full state',
       '  session  claim|release|heartbeat|list',
       '  agent    register|heartbeat|set|close|list|tree',
-      '  budget   show|allocate|ask|decide',
       '  quota    [--provider claude,codex,...]', '  status', "  event    --event '<json>'", '  serve    [--port 4173]',
       '  export   langfuse [--limit N] [--all] [--dry-run]   ship events to Langfuse as OTLP spans',
       '  config   show|set --key K --value V'].join('\n') + '\n');
@@ -426,7 +298,6 @@ async function main(args = process.argv.slice(2)) {
     if (group === 'context') return contextCommand(db, args, actor);
     if (group === 'session') return sessionCommand(db, args, actor);
     if (group === 'agent') return agentCommand(db, args, actor);
-    if (group === 'budget') return budgetCommand(db, args, actor);
     if (group === 'quota') return quotaCommand(db, args);
     if (group === 'export') return await exportCommand(db, args, actor);
     if (group === 'status') { const s = state.statusData(db); return out(args, s, state.renderStatus(s)); }

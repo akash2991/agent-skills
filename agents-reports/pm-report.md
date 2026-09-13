@@ -4,7 +4,6 @@
 - Ticket: <feature id>
 - Status: DONE | PARTIAL | BLOCKED
 - Model / effort: <model> / <effort>
-- Budget: spent <in>/<out> of allocated <in>/<out> tokens (<n>% / <n>%), cost <x or UNKNOWN>; source: <observatory | runtime | UNKNOWN>
 
 ### Feature
 - Goal: <one sentence>
@@ -17,7 +16,7 @@
 - Not doing: <bullets>
 
 ### Milestones
-| Milestone | Service | EM | Usable outcome | Status | Budget spent |
+| Milestone | Service | EM | Usable outcome | Status |
 |---|---|---|---|---|---|
 
 ### What the user can do right now

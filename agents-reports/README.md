@@ -26,7 +26,6 @@ Every report starts with this header, then the role-specific sections.
 - Ticket: <tracker id>
 - Status: DONE | PARTIAL | BLOCKED
 - Model / effort: <model> / <low|medium|high|max>
-- Budget: spent <in>/<out> of allocated <in>/<out> tokens (<n>% / <n>%), cost <x or UNKNOWN>; source: <observatory | runtime | UNKNOWN>
 ```
 
 ## Status words

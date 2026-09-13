@@ -1,6 +1,6 @@
 # Control Plane
 
-One SQLite database holds every piece of **mutable runtime state** for the organization: harness sessions (with the single-CEO lock), the agent registry, observability events, budget allocations and asks, and an audit trail of every change. Durable **documents** stay as markdown: `ORG.md`, `CONVENTIONS.md`, `DECISIONS.md`, and the service `HLD.md`/`LLD.md`. State that changes while agents work lives here; text that humans read and review lives there.
+One SQLite database holds every piece of **mutable runtime state** for the organization: harness sessions, the agent registry, observability events, provider quota snapshots, and an audit trail of every change. Durable **documents** stay as markdown: `ORG.md`, `CONVENTIONS.md`, `DECISIONS.md`, and the service `HLD.md`/`LLD.md`. State that changes while agents work lives here; text that humans read and review lives there.
 
 Node 22.5 or newer, no dependencies: the store is Node's built-in `node:sqlite`.
 
@@ -33,20 +33,8 @@ node brain.js agent close --agent-id staff-ENG-42-1 --result DONE
 node brain.js agent list ; node brain.js agent tree
 ```
 
-Registration reports the allocation that covers the agent and any path conflict with another running agent. There is no per-persona model allowlist: any agent may run any model at any effort, chosen per task from complexity, budget, and provider quota (`model-routing`).
+Registration reports any path conflict with another running agent. There is no per-persona model allowlist: any agent may run any model at any effort, chosen by the coordinator when the role is invoked.
 
-## Budgets
-
-Allocations form a chain (user → ceo → PMs and EMs → agents) and spend rolls up the `parent` tree from `model.completed` events.
-
-```bash
-node brain.js budget                                            # allocated / spent / remaining
-node brain.js budget allocate --holder em-api-1 --granted-by ceo --input 40000 --output 40000
-node brain.js budget ask --from staff-ENG-42-1 --to em-api-1 --input 8000 --output 2000 --reason "..."
-node brain.js budget decide --id B-ab12cd --status GRANTED
-```
-
-An allocation that would exceed the grantor's own allocation is refused (exit 4) unless `--force` with a reason. Heartbeats and mutations print a warning at `warn_at_percent` (default 80) and an explicit stop instruction at 100%.
 
 ## Observability events
 
@@ -55,7 +43,7 @@ node brain.js event --event '{"schema_version":"1.0","type":"model.completed","a
 node .agent-brain/control-plane/emit.js --stdin   # equivalent, for host hooks
 ```
 
-The contract is `event.schema.json`: metadata only. Raw prompts, responses, reasoning, document bodies, tool arguments, and tool output are not representable. A missing value is `UNKNOWN`, never zero. Event types: `agent.started`, `agent.status_changed`, `agent.completed`, `skill.loaded`, `document.loaded`, `turn.started`, `turn.completed`, `model.completed`, `tool.completed`, `control.completed`, `budget.changed`.
+The contract is `event.schema.json`: metadata only. Raw prompts, responses, reasoning, document bodies, tool arguments, and tool output are not representable. A missing value is `UNKNOWN`, never zero. Event types: `agent.started`, `agent.status_changed`, `agent.completed`, `skill.loaded`, `document.loaded`, `turn.started`, `turn.completed`, `model.completed`, `tool.completed`, `control.completed`.
 
 **Nothing emits these automatically.** Until a host hook is wired, token, cost, and context figures stay `UNKNOWN` and the provider view below is the reliable number.
 
@@ -77,7 +65,7 @@ It reads local credential stores and calls first-party provider endpoints. It re
 node brain.js serve            # http://127.0.0.1:4173
 ```
 
-Loopback only, zero dependencies. Shows the agent tree with status, model, effort, tokens, cost and heartbeat; budgets with spend bars and open asks; provider quota; spend by model; which skills and documents entered context and their token cost; tool calls and failures; what needs attention; and the audit trail. Model, effort, status, operation, and allocations are editable, and every edit is the same audited mutation as the CLI.
+Loopback only, zero dependencies. Shows the agent tree with status, model, effort, tokens, cost and heartbeat; provider quota; spend by model; which skills and documents entered context and their token cost; tool calls and failures; what needs attention; and the audit trail. Model, effort, status, and operation are editable, and every edit is the same audited mutation as the CLI.
 
 
 ## Optional external views
@@ -96,7 +84,7 @@ See `../references/agent-observability.md` for the architecture decision, the Op
 |---|---|
 | `schema.sql` | tables, indexes, and the partial unique index that enforces one live CEO |
 | `db.js` | open/migrate, config, audit, and the recursive subtree spend query |
-| `state.js` | read side: agent tree, path conflicts, budget roll-up, combined status |
+| `state.js` | read side: agent tree, path conflicts, combined status |
 | `brain.js` | the CLI (context, session, agent, budget, quota, status, event, control, serve, config) |
 | `emit.js` | event validation and ingestion, shared with host hooks |
 | `quota.js` | quota-axi adapter |

@@ -8,8 +8,6 @@
 // GET  /api/state                     everything the page renders
 // GET  /api/quota                     provider quota via quota-axi (cached briefly)
 // POST /api/agents/<id>               { model?, effort?, status?, ticket?, operation?, blocker?, reason? }
-// POST /api/budget/allocate           { holder, granted_by, input_tokens, output_tokens, scope?, reason?, force? }
-// POST /api/budget/decide             { id, status, input_tokens?, output_tokens?, reason? }
 // POST /api/config                    { key, value, reason? }
 // POST /api/sessions/<id>/release     {}
 const fs = require('node:fs');
@@ -85,42 +83,6 @@ function serve({ port = 4173, host = '127.0.0.1', dbFile } = {}) {
           applied.push(column);
         }
         return json(res, 200, { ok: true, applied, agent: db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id) });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/budget/allocate') {
-        const body = await readBody(req);
-        if (!body.holder || !body.granted_by) return json(res, 400, { error: 'holder and granted_by are required' });
-        const parent = state.budgetRows(db).find(r => r.holder === body.granted_by);
-        if (parent && !body.force) {
-          const siblings = db.prepare('SELECT COALESCE(SUM(input_tokens),0) i, COALESCE(SUM(output_tokens),0) o FROM budget_allocations WHERE granted_by = ? AND holder != ?').get(body.granted_by, body.holder);
-          const overIn = parent.allocated.input_tokens !== 'UNKNOWN' && siblings.i + Number(body.input_tokens || 0) > parent.allocated.input_tokens;
-          const overOut = parent.allocated.output_tokens !== 'UNKNOWN' && siblings.o + Number(body.output_tokens || 0) > parent.allocated.output_tokens;
-          if (overIn || overOut) return json(res, 409, { error: `${body.granted_by} would allocate more than it holds`, parent: parent.allocated, siblings });
-        }
-        const before = db.prepare('SELECT * FROM budget_allocations WHERE holder = ?').get(body.holder);
-        db.prepare(`INSERT INTO budget_allocations(holder, granted_by, input_tokens, output_tokens, cost_usd, scope, granted_at, note)
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(holder) DO UPDATE SET granted_by=excluded.granted_by, input_tokens=excluded.input_tokens,
-                      output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd, scope=excluded.scope, granted_at=excluded.granted_at`)
-          .run(body.holder, body.granted_by, body.input_tokens ?? null, body.output_tokens ?? null, body.cost_usd ?? null, body.scope ?? null, new Date().toISOString(), body.note ?? null);
-        database.record(db, actor, 'budget', body.holder, 'allocation', before ? `${before.input_tokens}/${before.output_tokens}` : null, `${body.input_tokens}/${body.output_tokens}`, body.reason || 'changed from the control-plane UI');
-        return json(res, 200, { ok: true, budgets: state.budgetRows(db) });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/budget/decide') {
-        const body = await readBody(req);
-        if (!body.id || !REQUEST_STATUS.has(body.status)) return json(res, 400, { error: 'id and a valid status are required' });
-        const req_ = db.prepare('SELECT * FROM budget_requests WHERE id = ?').get(body.id);
-        if (!req_) return json(res, 404, { error: `unknown request ${body.id}` });
-        db.prepare('UPDATE budget_requests SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?').run(body.status, actor, new Date().toISOString(), body.id);
-        database.record(db, actor, 'budget_request', body.id, 'status', req_.status, body.status, body.reason || 'decided in the control-plane UI');
-        if (body.status === 'GRANTED' || body.status === 'PARTIAL') {
-          const current = db.prepare('SELECT * FROM budget_allocations WHERE holder = ?').get(req_.from_holder);
-          const addIn = Number(body.input_tokens ?? req_.input_tokens ?? 0), addOut = Number(body.output_tokens ?? req_.output_tokens ?? 0);
-          if (current) db.prepare('UPDATE budget_allocations SET input_tokens = ?, output_tokens = ?, granted_at = ? WHERE holder = ?')
-            .run((current.input_tokens || 0) + addIn, (current.output_tokens || 0) + addOut, new Date().toISOString(), req_.from_holder);
-          else db.prepare('INSERT INTO budget_allocations(holder, granted_by, input_tokens, output_tokens, granted_at) VALUES(?, ?, ?, ?, ?)')
-            .run(req_.from_holder, req_.to_holder, addIn, addOut, new Date().toISOString());
-        }
-        return json(res, 200, { ok: true });
       }
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const body = await readBody(req);

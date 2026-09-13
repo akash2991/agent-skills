@@ -1,5 +1,5 @@
 -- Agent Brain control plane. One SQLite database holds every piece of mutable runtime state:
--- sessions (with the single-CEO lock), the agent registry, observability events, budgets, and an
+-- sessions, the agent registry, observability events, provider quota, and an
 -- audit trail of runtime changes. Durable *documents* (ORG.md, CONVENTIONS.md, HLD/LLD, DECISIONS)
 -- stay as markdown; only state that changes while agents work lives here.
 PRAGMA journal_mode = WAL;
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
--- Company budget and settings. Values are strings so UNKNOWN is representable.
+-- Settings. Values are strings so UNKNOWN is representable.
 CREATE TABLE IF NOT EXISTS config (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -34,8 +34,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- usage cannot be matched to the role this session claimed and lands on a synthetic agent.
   harness_session_id TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS sessions_single_live_ceo
-  ON sessions(role) WHERE released_at IS NULL AND role = 'ceo';
 
 -- The agent registry. `model` and `effort` are current values, mutable at runtime; there is no
 -- per-persona allowlist. Every change is recorded in `changes`.
@@ -108,42 +106,12 @@ CREATE TABLE IF NOT EXISTS events (
   control_action          TEXT,
   control_target          TEXT,
   control_outcome         TEXT,
-  budget_action           TEXT,
-  budget_holder           TEXT,
-  budget_granted_by       TEXT,
-  budget_request_id       TEXT,
   raw                     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id, timestamp);
 CREATE INDEX IF NOT EXISTS events_type  ON events(type, timestamp);
 
--- Budget allocations: one row per holder, granted by its parent in the allocation chain.
-CREATE TABLE IF NOT EXISTS budget_allocations (
-  holder        TEXT PRIMARY KEY,
-  granted_by    TEXT NOT NULL,
-  input_tokens  INTEGER,
-  output_tokens INTEGER,
-  cost_usd      REAL,
-  scope         TEXT,
-  granted_at    TEXT NOT NULL,
-  note          TEXT
-);
 
--- Budget asks, in order, with their decision.
-CREATE TABLE IF NOT EXISTS budget_requests (
-  id            TEXT PRIMARY KEY,
-  from_holder   TEXT NOT NULL,
-  to_holder     TEXT NOT NULL,
-  input_tokens  INTEGER,
-  output_tokens INTEGER,
-  cost_usd      REAL,
-  reason        TEXT,
-  status        TEXT NOT NULL DEFAULT 'PENDING',
-  decided_by    TEXT,
-  created_at    TEXT NOT NULL,
-  decided_at    TEXT
-);
-CREATE INDEX IF NOT EXISTS budget_requests_status ON budget_requests(status);
 
 -- Audit trail for every runtime mutation made through the CLI or the UI.
 CREATE TABLE IF NOT EXISTS changes (
@@ -170,7 +138,7 @@ CREATE TABLE IF NOT EXISTS exports (
 );
 
 -- What each provider said was left on the plan, snapshotted every time quota is read. A fresh
--- database is seeded with one snapshot at the first session claim, so budgets start from the real
+-- database is seeded with one snapshot at the first session claim, so routing starts from the real
 -- account rather than from a guess, and a later reading can be compared against it.
 CREATE TABLE IF NOT EXISTS provider_quota (
   read_at              TEXT NOT NULL,

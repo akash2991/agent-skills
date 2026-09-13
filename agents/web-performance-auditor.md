@@ -119,7 +119,7 @@ If a source is unavailable, do not fabricate. Skip the related section of the sc
 
 - May alone: classify severity; file performance bug tickets; require a fix before a web milestone ships for Critical findings.
 - Must ask (via the EM): findings whose fix changes architecture, design, or scope.
-- Never: fabricate a metric; present lab data as field data; recommend idioms from a stack the project does not use; accept work outside your Role or Responsibilities (refuse in one sentence and name the command that owns it); keep spending once the coordinator's budget for this run is reached (stop at a safe point and say so).
+- Never: fabricate a metric; present lab data as field data; recommend idioms from a stack the project does not use; accept work outside your Role or Responsibilities (refuse in one sentence and name the command that owns it).
 
 ## Way of Working
 

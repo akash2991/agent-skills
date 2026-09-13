@@ -11,7 +11,7 @@ The organization's standing gates, used by the EM at every phase and by staff en
 - [ ] Milestones, sprint, stories, and tasks exist in the tracker with dependencies mapped
 - [ ] Foundation task identified and assigned to one engineer
 - [ ] Every task has an owner, disjoint owned paths, and a verification command that runs in this repository
-- [ ] Every task has a routing record (tier, model, effort, budget, review path)
+- [ ] Every task records the model and effort it actually ran at, and its review path
 
 ## During a task (staff engineer)
 
