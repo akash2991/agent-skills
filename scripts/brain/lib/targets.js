@@ -48,7 +48,7 @@ const TARGETS = {
       })
     },
     mcp: { file: '.mcp.json', key: 'mcpServers', envRef: v => `\${${v}}`, server: s => ({ type: 'http', url: s.url, ...(s.headers ? { headers: s.headers } : {}) }) },
-    delegationNote: 'Delegation: the main session is the CEO. Spawn every other role as a subagent from `{{AGENTS_DIR}}/` (one per assignment) using the Agent tool; pass the ticket, goal, owned paths, and report format in the prompt. Subagents cannot spawn subagents, so the EM asks the CEO session to spawn engineers on its behalf and the CEO does so without taking over the EM\'s decisions.',
+    delegationNote: "On this tool: spawn subagents from `.claude/agents/` with the Agent tool, one assignment each. A subagent cannot spawn further subagents, so keep the depth at one.",
   },
   codex: {
     label: 'Codex',
@@ -68,7 +68,7 @@ const TARGETS = {
     skillsDir: '.agents/skills',
     agentsDir: null,
     mcp: null, // global ~/.codex/config.toml only; see references/tool-auth.md
-    delegationNote: 'Delegation: this tool runs one session. Play each role in turn by invoking its persona skill, produce that role\'s report, then move to the next role. Keep the registry current for every role you play, as if each were a separate agent.',
+    delegationNote: "On this tool: there are no native subagents. Say what you would have delegated and let the user run it as a separate invocation.",
   },
   cursor: {
     label: 'Cursor',
@@ -80,7 +80,7 @@ const TARGETS = {
     skillsDir: '.cursor/skills',
     agentsDir: null,
     mcp: { file: '.cursor/mcp.json', key: 'mcpServers', envRef: v => `\${env:${v}}`, server: s => ({ url: s.url, ...(s.headers ? { headers: s.headers } : {}) }) },
-    delegationNote: 'Delegation: this tool runs one session. Play each role in turn by invoking its persona skill, produce that role\'s report, then move to the next role. Keep the registry current for every role you play, as if each were a separate agent.',
+    delegationNote: "On this tool: there are no native subagents. Say what you would have delegated and let the user run it as a separate invocation.",
   },
   gemini: {
     label: 'Gemini CLI',
@@ -94,7 +94,7 @@ const TARGETS = {
     agentFile: name => `${name}.md`,
     agentFrontmatter: d => ({ name: d.name, description: d.description }),
     mcp: { file: '.gemini/settings.json', key: 'mcpServers', envRef: v => `$${v}`, server: s => ({ httpUrl: s.url, ...(s.headers ? { headers: s.headers } : {}) }) },
-    delegationNote: 'Delegation: the main session is the CEO. Every other role is a subagent in `{{AGENTS_DIR}}/`, invoked by name with the ticket, goal, owned paths, and report format in the prompt. Subagents cannot spawn subagents, so the CEO session spawns engineers on the EM\'s behalf without overriding the EM\'s routing decisions.',
+    delegationNote: "On this tool: invoke a subagent from `.gemini/agents/` by name with the goal, the paths it owns, and the output you expect. A subagent cannot spawn further subagents.",
   },
   opencode: {
     label: 'OpenCode',
@@ -107,7 +107,7 @@ const TARGETS = {
     agentFile: name => `${name}.md`,
     agentFrontmatter: d => ({ description: d.description, mode: 'subagent' }),
     mcp: { file: 'opencode.json', key: 'mcp', extra: { $schema: 'https://opencode.ai/config.json' }, envRef: v => `{env:${v}}`, server: s => ({ type: 'remote', url: s.url, enabled: true, ...(s.headers ? { headers: s.headers } : {}) }) },
-    delegationNote: 'Delegation: the main session is the CEO. Every other role is a subagent in `{{AGENTS_DIR}}/`, invoked with the ticket, goal, owned paths, and report format in the prompt. The CEO session spawns engineers on the EM\'s behalf without overriding the EM\'s routing decisions.',
+    delegationNote: "On this tool: invoke a subagent from `.opencode/agent/` with the goal, the paths it owns, and the output you expect.",
   },
   copilot: {
     label: 'GitHub Copilot',
@@ -121,7 +121,7 @@ const TARGETS = {
     agentFile: name => `${name}.agent.md`,
     agentFrontmatter: d => ({ name: d.name, description: d.description }),
     mcp: { file: '.vscode/mcp.json', key: 'servers', envRef: v => `\${env:${v}}`, server: s => ({ type: 'http', url: s.url, ...(s.headers ? { headers: s.headers } : {}) }) },
-    delegationNote: 'Delegation: the main chat is the CEO. Every other role is a custom agent in `{{AGENTS_DIR}}/`, invoked with the ticket, goal, owned paths, and report format. Where custom agents are unavailable, play each role in turn by invoking its persona skill.',
+    delegationNote: "On this tool: invoke a custom agent from `.github/agents/` with the goal, the paths it owns, and the output you expect. Where custom agents are unavailable, say what you would have delegated instead.",
   },
 };
 

@@ -12,6 +12,15 @@ const { execFileSync } = require('node:child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const INJECT = path.join(ROOT, 'scripts', 'brain', 'inject.js');
 
+// Injection needs a build to inject. Producing one here rather than failing keeps the test
+// independent of whether someone has run `npm run all` first.
+function ensureBuild() {
+  if (fs.existsSync(path.join(ROOT, 'build', 'product', 'claude-code', 'AGENTS.md'))) return;
+  execFileSync('node', [path.join(ROOT, 'scripts', 'brain', 'select.js')], { cwd: ROOT, stdio: 'ignore' });
+  execFileSync('node', [path.join(ROOT, 'scripts', 'brain', 'build.js')], { cwd: ROOT, stdio: 'ignore' });
+}
+ensureBuild();
+
 function scratch() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-inject-'));
 }
@@ -79,6 +88,44 @@ test('a project file the brain never wrote is untouched', () => {
   const commands = JSON.stringify(settings.hooks.Stop);
   assert.match(commands, /echo mine/, "the project's own hook must survive the merge");
   assert.match(commands, /hook\.js/, "and the brain's usage capture must be added alongside it");
+});
+
+test('the organization document is the same file whatever tool reads it', () => {
+  // AGENTS.md is shared: Codex and OpenCode both read it, and injecting several tools into one
+  // repository writes it several times. If it carried a tool name or one tool's paths, the last
+  // target written would tell every other tool something false about itself.
+  const built = path.join(ROOT, 'build', 'product');
+  const targets = fs.readdirSync(built).filter(t => fs.existsSync(path.join(built, t, 'AGENTS.md')));
+  assert.ok(targets.length > 1, 'need more than one target built to prove this');
+  const first = fs.readFileSync(path.join(built, targets[0], 'AGENTS.md'), 'utf8');
+  for (const t of targets.slice(1)) {
+    assert.equal(fs.readFileSync(path.join(built, t, 'AGENTS.md'), 'utf8'), first,
+      `AGENTS.md differs between ${targets[0]} and ${t}, so it is not safe to share`);
+  }
+  // Tool-specific guidance belongs in the per-tool command files, which are never shared.
+  const claude = fs.readFileSync(path.join(built, 'claude-code', '.claude', 'commands', 'brain-pm.md'), 'utf8');
+  const codex = fs.readFileSync(path.join(built, 'codex', '.codex', 'prompts', 'brain-pm.md'), 'utf8');
+  assert.notEqual(claude, codex, 'the per-tool commands must carry what the shared file cannot');
+});
+
+test('a harness whose commands live outside the repository gets them installed and cleaned', () => {
+  // Codex reads prompts only from $CODEX_HOME/prompts, never from the repository, so a repo-local
+  // copy is not a command at all. Installing must happen by default, and a command the brain no
+  // longer produces must be removed from that directory or a renamed one keeps answering forever.
+  const repo = scratch();
+  const home = scratch();
+  const prompts = path.join(home, 'prompts');
+  fs.mkdirSync(prompts, { recursive: true });
+  fs.writeFileSync(path.join(prompts, 'brain-gone.md'), 'a command from an older version');
+  fs.writeFileSync(path.join(prompts, 'somebody-elses.md'), 'not ours, must survive');
+
+  execFileSync('node', [INJECT, repo, '--targets', 'codex'],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, CODEX_HOME: home } });
+
+  const after = fs.readdirSync(prompts);
+  assert.ok(after.includes('brain-pm.md'), 'commands must be installed where the harness looks');
+  assert.ok(!after.includes('brain-gone.md'), 'a retired brain command must not keep answering');
+  assert.ok(after.includes('somebody-elses.md'), 'only brain-* files are ours to remove');
 });
 
 test('each project gets its own control plane', () => {

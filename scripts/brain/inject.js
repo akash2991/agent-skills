@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // Copy a built target into another repository.
-//   node scripts/inject.js <repo-path> [--targets claude-code,codex] [--dry-run] [--install-commands]
+//   node scripts/inject.js <repo-path> [--targets claude-code,codex] [--dry-run] [--no-install-commands]
 // Rules: never deletes anything in the target repo; overwrites only files agent-brain owns;
 // seeds (registry, global docs) are created only when missing; always-on files are merged as a
 // managed block; MCP config is merged by server name.
@@ -21,12 +21,15 @@ const dryRun = args.includes('--dry-run');
 const selfBuild = args.includes('--self');
 const sourceDir = selfBuild ? DIST_SELF_DIR : DIST_DIR;
 // Some harnesses discover commands only under a home directory, never inside a repository. The repo
-// copy is still the version-controlled source; this opts into installing it where the harness looks.
-const installCommands = args.includes('--install-commands');
+// copy stays the version-controlled source; the home directory is where the harness actually looks.
+// A harness whose commands live outside the repository is installed by default: leaving them out
+// means its commands simply do not exist, which is indistinguishable from the feature being broken.
+// `--no-install-commands` opts out for anyone who manages that directory themselves.
+const installCommands = !args.includes('--no-install-commands');
 const tIdx = args.indexOf('--targets');
 const only = tIdx === -1 ? null : args[tIdx + 1].split(',').map(s => s.trim()).filter(Boolean);
 
-if (!repo) { console.error('usage: node scripts/inject.js <repo-path> [--targets a,b] [--dry-run] [--install-commands]'); process.exit(2); }
+if (!repo) { console.error('usage: node scripts/inject.js <repo-path> [--targets a,b] [--dry-run] [--no-install-commands]'); process.exit(2); }
 const repoAbs = path.resolve(repo);
 if (!isDir(repoAbs)) { console.error(`not a directory: ${repoAbs}`); process.exit(1); }
 const built = listDirs(sourceDir);
@@ -155,16 +158,24 @@ if (!dryRun) {
 console.log(`\n${dryRun ? 'would inject' : 'injected'} ${count} file(s)${retired.length ? `, retired ${retired.length}` : ''} into ${repoAbs} for: ${targets.join(', ')}`);
 
 if (globalCommands.length) {
-  console.log(`\nharness-global commands (${globalCommands[0].why})`);
-  for (const c of globalCommands) {
-    if (!c.to) { console.log(`  ${c.id}: cannot resolve the harness home directory; copy ${c.rel} there yourself`); continue; }
-    if (installCommands && !dryRun) {
-      ensureDir(path.dirname(c.to));
-      fs.copyFileSync(c.from, c.to);
-      console.log(`  installed     ${c.to}`);
-    } else {
-      console.log(`  ${dryRun ? '[dry-run] ' : ''}not installed: ${c.to}`);
-      console.log(`    re-run with --install-commands, or: mkdir -p ${path.dirname(c.to)} && cp ${path.join(repoAbs, c.rel)} ${c.to}`);
-    }
+  const dest = path.dirname(globalCommands.find(c => c.to)?.to || '');
+  if (!dest) {
+    console.log(`\nharness-global commands: cannot resolve the home directory; copy them there yourself`);
+  } else if (!installCommands || dryRun) {
+    console.log(`\n${dryRun ? '[dry-run] ' : ''}${globalCommands.length} command(s) NOT installed to ${dest}`);
+    console.log(`  ${globalCommands[0].why}`);
+    console.log('  Without this the commands do not exist in that tool. Re-run without --no-install-commands.');
+  } else {
+    let installed = 0;
+    const ours = new Set(globalCommands.map(c => path.basename(c.to)));
+    for (const c of globalCommands) { ensureDir(path.dirname(c.to)); fs.copyFileSync(c.from, c.to); installed++; }
+    // A command the brain no longer produces must go, or a renamed one keeps answering from a
+    // directory the repository does not own. Only `brain-*` files are ours to remove.
+    const stale = fs.existsSync(dest)
+      ? fs.readdirSync(dest).filter(f => /^brain-.*\.md$/.test(f) && !ours.has(f))
+      : [];
+    for (const f of stale) fs.rmSync(path.join(dest, f), { force: true });
+    console.log(`\ninstalled ${installed} command(s) to ${dest}${stale.length ? `, retired ${stale.length} (${stale.join(', ')})` : ''}`);
+    console.log('  Restart the tool so it picks them up.');
   }
 }

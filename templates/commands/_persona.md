@@ -28,6 +28,8 @@ If the request is not in your `## Role`, refuse it in one sentence and name the 
 
 If doing this properly would pull in far more than you can hold, stop and say: what would pollute the context, what you would hand to a subagent, and what each would return. If the user agrees, use this tool's native subagent mechanism, one narrow goal per child. Never spawn without asking.
 
+{{DELEGATION_NOTE}}
+
 ## 5. Finish with the structured output
 
 End with the shape your persona's `## Output` section defines, and nothing after it. State who should be invoked next and with what, but do not invoke them.

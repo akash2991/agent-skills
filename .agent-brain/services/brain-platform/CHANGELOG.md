@@ -4,6 +4,10 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-42 — Codex slash commands did not work. Its prompts live in `$CODEX_HOME/prompts` and installing there was opt-in, so a repository could be fully injected with no commands in the tool at all, and the notice saying so was 28 lines of per-file noise. Installing is now the default with `--no-install-commands` to opt out, the output is one line, and stale `brain-*` commands in that directory are retired: a `brain-init.md` from before the per-persona rename was still shadowing the real ones. Files that are not ours are never touched — org-staff-engineer
+
+- F-self-41 — `AGENTS.md` is shared by several tools but was rendered per target, so injecting more than one left every tool reading the last one's name and paths: a Codex session was told its skills were in `.opencode/skills/`. The organization document is now tool-neutral and byte-identical across all six targets, with a table each tool finds its own row in. Tool-specific guidance moved to the per-tool command files, which are never shared. A test pins it — org-staff-engineer
+
 - F-self-40 — `--role` no longer defaults to `ceo`, the validator no longer requires a CEO persona, and the usage hook no longer falls back to "the running CEO". With several agents running and no binding it now refuses to guess — org-staff-engineer
 
 - F-self-32 — budget enforcement removed: the allocation tables, `brain.js budget`, the HTTP routes, the UI tab, the `budget.changed` event, and the warn and exhaust checks. Recorded token and cost usage is unchanged, and `budget_input_basis` became `usage_input_basis` — org-staff-engineer

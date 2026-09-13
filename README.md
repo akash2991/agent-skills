@@ -1,24 +1,24 @@
 # Agent Brain
 
-**An injectable operating brain for agentic coding.** One source of truth becomes the file layout every coding tool expects, so any repository can be run by the same agent organization with the same rules, budgets, and records.
+**An injectable operating brain for agentic coding.** One source of truth becomes the file layout every coding tool expects, so any repository can be run by the same agent personas, enforcing the same conventions, working from the same skills.
 
 ```
-                        ┌─────────────────────────────────────────┐
-   your request ───────▶│  CEO   admits it, or parks it ranked    │
-                        └──────────────────┬──────────────────────┘
-                                           ▼
-                    PM  ──▶ Principal Engineers ──▶ EM per service
-                   (PRD)     (HLD, domain model)    (milestones, sprints,
-                                                     model routing)
-                                           ▼
-                 Staff Engineers · Code Reviewers · Test Engineer · Auditors
-                        backend  ·  web  ·  mobile
-                                           ▼
-                  SQLite control plane: who is running, on which model,
-                  how many tokens, how much budget is left
+   you ──▶ /brain-pm            a request becomes a ticket, then a refined idea,
+                                a spec, or a PRD, whichever you pick
+
+   you ──▶ /brain-pe-backend    a PRD becomes a design: domain model, interfaces, plan
+           /brain-pe-web
+
+   you ──▶ /brain-em            a design becomes milestones and ready tickets
+
+   you ──▶ /brain-swe-backend   one ticket, story or bug, becomes a pull request
+           /brain-review-backend · /brain-qa · /brain-security · /brain-webperf
+
+   each role does one step, then hands back and names what could run next.
+   it never invokes the next one. you decide what runs, and what to skip.
 ```
 
-Nothing is invoked directly. Every request reaches the CEO, which is the only role that can see the whole budget, the priority order, and how much is already running.
+There is no entry point. You invoke whichever role the work needs, in any order. A bug can go straight to an engineer with no PRD and no design step.
 
 ## Quick start
 
@@ -29,22 +29,26 @@ npm run all                              # validate, select, build every target 
 npm run inject -- /path/to/your-repo     # install into a repository
 ```
 
-Then open your coding agent **in that repository** and type the slash command:
+Then open your coding agent **in that repository** and invoke whichever role the work needs:
 
 ```
-/brain-init
+/brain-pm      turn a request into a ticket, then a refined idea, a spec, or a PRD
+/brain-em      turn an approved design into milestones and ready tickets
+/brain-swe-backend   build one ticket, story or bug, with tests and a pull request
+/brain-review-backend   review a pull request
+/brain-qa      verify a story independently
 ```
 
-It claims the CEO role, records the model and effort your session is actually running, prints the current state, and refuses if another terminal already holds the role. Give it a role and an instruction when you want one: `/brain-init ceo add saved carts`.
+There is no entry point and no order you must follow. Each command confirms which model and thinking effort to run at, asks for the inputs its persona declares, does one step, and hands back naming what should run next. It never invokes the next role itself.
 
-Every command this organization ships is namespaced `brain-`, so it never collides with a command from another tool. It is a command inside the agent, not a shell command, and commands are discovered when a session starts, so start a new session after injecting.
+Every command is namespaced `brain-`, so it cannot collide with a command from another tool. Commands are discovered when a session starts, so start a new session after injecting.
 
-**Codex differs in two ways.** It namespaces every custom prompt, so the command is **`/prompts:brain-init`**, and it reads prompts only from `$CODEX_HOME/prompts` (default `~/.codex/prompts`), never from a repository. The injected copy at `.codex/prompts/brain-init.md` is therefore the source, not the installed command. Install it with `npm run inject -- <path> --install-commands`, or copy it yourself; one copy serves every injected repository, because the prompt uses repository-relative paths. Injection prints the exact command when the step is outstanding, and Codex needs a restart afterwards. Skills and `AGENTS.md` need no such step: Codex scans `.agents/skills` up from the working directory.
+**Codex differs in two ways.** Custom prompts are namespaced, so the command is `/prompts:brain-pm`, and they are read only from `$CODEX_HOME/prompts` (default `~/.codex/prompts`), never from a repository. Injection installs them there for you and retires any `brain-*` command it no longer produces, leaving files it does not own alone. Pass `--no-install-commands` to manage that directory yourself. Restart Codex afterwards. Skills and `AGENTS.md` need no such step, because Codex scans `.agents/skills` up from the working directory.
 
-| Harness | How you invoke it |
+| Harness | How you invoke a role |
 |---|---|
-| Claude Code, Cursor, Gemini CLI, OpenCode, Copilot | `/brain-init` |
-| Codex | `/prompts:brain-init`, after installing to `~/.codex/prompts` and restarting |
+| Claude Code, Cursor, Gemini CLI, OpenCode, Copilot | `/brain-pm` |
+| Codex | `/prompts:brain-pm`, after a restart |
 
 The equivalent from a shell, useful for scripts and for harnesses without commands, is:
 
@@ -59,7 +63,7 @@ node .agent-brain/control-plane/brain.js context --role ceo --harness claude-cod
 |---|---|
 | `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules/`, `.github/copilot-instructions.md` | The organization as a managed block; your own text outside the markers is kept |
 | `.claude/skills/`, `.agents/skills/`, and the other per-tool skill directories | The selected skills plus one per persona |
-| `.claude/agents/` and the other per-tool agent directories | The personas as subagents, never the CEO |
+| `.claude/agents/` and the other per-tool agent directories | The personas as subagents, for when you approve delegation |
 | `.agent-brain/control-plane/` | SQLite store, CLI, local UI, and the hooks that capture usage |
 | `.agent-brain/ORG.md`, `agents-reports/`, `references/`, `docs/`, `services/` | The rules, report formats, and per-service documents |
 | `.claude/settings.json`, `.mcp.json` and their per-tool equivalents | Usage-capture hooks and the Linear and GitHub MCP servers, merged with whatever is already there |
@@ -71,8 +75,7 @@ Re-injecting updates what the brain owns and leaves your own state alone.
 One SQLite database holds everything that changes while agents work:
 
 ```bash
-node .agent-brain/control-plane/brain.js status     # tree, budgets, blocked, stale, conflicts
-node .agent-brain/control-plane/brain.js budget     # allocated, spent, remaining per holder
+node .agent-brain/control-plane/brain.js status     # tree, blocked, stale, path conflicts
 node .agent-brain/control-plane/brain.js quota      # what each provider will actually serve
 node .agent-brain/control-plane/brain.js serve      # local UI, editable, zero dependencies
 node .agent-brain/control-plane/brain.js export langfuse   # ship traces, tokens and cost to Langfuse
@@ -82,15 +85,10 @@ The local UI answers "what is running right now" and deliberately stays minimal.
 
 Events are metadata only, so nothing you or an agent wrote can leave the machine through this path.
 
-It records sessions with a single-CEO lock, the agent tree with the model and effort actually in use, token and cost usage per agent and per model, budget allocations with a chain where no child may exceed its parent, and an audit trail of every change. Usage is captured automatically from harness hooks, so tokens and cost are real numbers rather than estimates.
+It records sessions, the agent tree with the model and effort actually in use, token and cost usage per agent and per model, provider quota snapshots, and an audit trail of every change. Usage is captured automatically from harness hooks, so tokens and cost are real numbers rather than estimates.
 
 Documents that humans read stay as markdown. State that changes while agents work lives in the database.
 
-## Budgets
-
-The CEO holds the company budget and allocates down the reporting tree; an agent that reaches its allocation stops at a safe point and asks its grantor, and asks bubble up until the CEO asks you.
-
-Prompt caching makes the definition of an input token a real choice, so it is explicit. In a measured session, 40 assistant messages billed 80 fresh input tokens, 767k cache writes, and 29M cache reads. `budget_input_basis` selects `fresh`, `new` (the default: fresh plus cache writes), or `billable` (everything the provider counted), and every component is always shown next to the total.
 
 ## Repository layout
 
@@ -129,4 +127,4 @@ Node 22.5 or newer, for the built-in SQLite the control plane uses. No other dep
 
 ## Credits
 
-This repository began as a fork of [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) and still uses its skill format, several of its engineering skills, its shared checklists, and its eval framework. Those parts remain MIT licensed under the original copyright; see [LICENSE](LICENSE). The organization, control plane, budgets, and injection pipeline are new work.
+This repository began as a fork of [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) and still uses its skill format, several of its engineering skills, its shared checklists, and its eval framework. Those parts remain MIT licensed under the original copyright; see [LICENSE](LICENSE). The organization, control plane, and injection pipeline are new work.

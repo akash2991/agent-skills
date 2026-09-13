@@ -401,3 +401,11 @@ at root
 remove model routing logic as welll..if havent already. 
 remove one ceo check. 
 remove budget/cost check.
+
+--
+North star is continous delivery
+PM and Principal engineer are scoped project wide. They have bords eye view of overall product and arch
+Staff and EM are scoped within their service only
+so PM is tasked with maintaining a project level PRD as source of truth (should be really high level)
+so PE is tasked with maintaining a project level HLD as source of truth (should be really high level)
+so Staff is tasked with maintaining a service level HLD  and LLD as source of truth (should be high level) (code is for detailing)

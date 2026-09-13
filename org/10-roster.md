@@ -15,4 +15,4 @@ One command per role. There is no entry point and no order you must follow: invo
 
 Engineers and reviewers are split by discipline: backend, web (React), and mobile (React Native). An engineering manager is not split; one owns a service across all three.
 
-Every role is a persona in `{{SKILLS_DIR}}/`. Read yours before acting, and use only the skills it lists.
+Every role is a persona, installed as a skill in your tool's skills directory (see "Where things live"). Read yours before acting, and use only the skills it lists.

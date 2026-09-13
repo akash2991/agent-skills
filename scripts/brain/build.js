@@ -33,12 +33,23 @@ const rootRefs = new Set(exists(REFERENCES_DIR) ? fs.readdirSync(REFERENCES_DIR)
 
 const md = vars => (rel, buf) => (rel.endsWith('.md') ? render(buf.toString('utf8'), vars) : buf);
 
+// The always-on organization document is one file shared by every tool in the repository, so it
+// must not name a tool or a single tool's paths: whichever target was built last would otherwise
+// tell a Codex session its skills live in OpenCode's directory. This table is true for all of them.
+function skillsDirTable() {
+  const rows = [...new Set(Object.values(TARGETS).map(t => `${t.label}|${t.skillsDir}`))]
+    .map(r => r.split('|'))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return ['| Tool | Personas and skills |', '|---|---|',
+    ...rows.map(([label, dir]) => `| ${label} | \`${dir}/\` |`)].join('\n');
+}
+
 function indexMarkdown(vars) {
   const byCat = {};
   for (const s of skills) (byCat[s.category] = byCat[s.category] || []).push(s);
   const lines = ['## Installed personas and skills', '',
     `Personas: ${personas.map(p => `\`${p.name}\``).join(', ')}. Read your persona before acting; use only the skills it lists.`, '',
-    `Skills live in \`${vars.SKILLS_DIR}/\`:`, ''];
+    'Skills are installed in your tool\'s skills directory (see "Where things live"):', ''];
   for (const cat of Object.keys(byCat).sort()) lines.push(`- **${cat}**: ${byCat[cat].map(s => `\`${s.name}\``).join(', ')}`);
   return lines.join('\n') + '\n';
 }
@@ -68,6 +79,7 @@ for (const id of targets) {
     TOOL: target.toolLabel || target.label,
     ORG_DIR: O,
     SKILLS_DIR: target.skillsDir,
+    SKILLS_DIR_TABLE: skillsDirTable(),
     AGENTS_DIR: target.agentsDir || '',
     AGENTS_NOTE: target.agentsDir
       ? `\`${target.agentsDir}/\` (subagents, one per persona except the CEO) and \`${target.skillsDir}/<persona>/\` (same content as a skill)`
