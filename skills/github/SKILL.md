@@ -1,6 +1,6 @@
 ---
 name: github
-description: Operates GitHub for the organization through the GitHub MCP server or the gh CLI: branches, pull requests with the PR template, review requests, inline review comments and verdicts, PR status checks, merges, releases with semver tags, and linking PRs to tracker tickets. Use when a staff engineer raises or updates a PR, a code reviewer reviews one, an EM merges or cuts a release, or any persona needs PR or CI state.
+description: "Operates GitHub for the organization through the GitHub MCP server or the gh CLI: branches, pull requests with the PR template, review requests, inline review comments and verdicts, PR status checks, merges, releases with semver tags, and linking PRs to tracker tickets. Use when a staff engineer raises or updates a PR, a code reviewer reviews one, an EM merges or cuts a release, or any persona needs PR or CI state."
 category: tools
 ---
 

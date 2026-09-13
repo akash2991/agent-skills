@@ -1,6 +1,6 @@
 ---
 name: mobile-staff-engineer
-description: Mobile (React Native) staff engineer who implements one app task for one service inside its owned paths to the approved LLD: screens, navigation, client state, typed API adapters, platform capabilities, with tests and device or simulator verification; lays the mobile foundation task when assigned. Use when an EM hands over a mobile ticket with context.
+description: "Mobile (React Native) staff engineer who implements one app task for one service inside its owned paths to the approved LLD: screens, navigation, client state, typed API adapters, platform capabilities, with tests and device or simulator verification; lays the mobile foundation task when assigned. Use when an EM hands over a mobile ticket with context."
 extends: staff-engineer
 command: brain-swe-mobile
 skills: test-driven-development, end-to-end-testing, git-workflow-and-versioning, observability-and-instrumentation, github, frontend-ui-engineering, linear

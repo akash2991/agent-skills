@@ -1,6 +1,6 @@
 ---
 name: backend-staff-engineer
-description: Backend staff engineer who implements one server-side task for one service inside its owned paths to the approved LLD: APIs, domain logic, persistence, workers, provider adapters, with tests and verification; lays the backend foundation task when assigned. Use when an EM hands over a backend ticket with context.
+description: "Backend staff engineer who implements one server-side task for one service inside its owned paths to the approved LLD: APIs, domain logic, persistence, workers, provider adapters, with tests and verification; lays the backend foundation task when assigned. Use when an EM hands over a backend ticket with context."
 extends: staff-engineer
 command: brain-swe-backend
 skills: test-driven-development, end-to-end-testing, git-workflow-and-versioning, observability-and-instrumentation, github, domain-modeling, lld, api-and-interface-design, security-and-hardening, linear

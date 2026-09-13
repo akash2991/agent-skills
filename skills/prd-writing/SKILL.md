@@ -1,6 +1,6 @@
 ---
 name: prd-writing
-description: Produces a detailed product requirements document for one feature: users, outcomes, scope, stories with testable acceptance criteria, affected services, budget, and deferred scope. Use when a product manager receives a feature from the user and before any design work starts.
+description: "Produces a detailed product requirements document for one feature: users, outcomes, scope, stories with testable acceptance criteria, affected services, budget, and deferred scope. Use when a product manager receives a feature from the user and before any design work starts."
 category: process
 ---
 

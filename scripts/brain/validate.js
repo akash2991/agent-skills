@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { ROOT, DUMP_DIR, AGENTS_DIR, TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, DIST_DIR, DIST_SELF_DIR, exists, loadManifest } = require('./lib/fs-utils');
 const { indexDump, resolveManifest } = require('./lib/dump');
+const fm = require('./lib/frontmatter');
 const { indexPersonas } = require('./lib/personas');
 const { TARGETS } = require('./lib/targets');
 const { lintSkillContent } = require(path.join(__dirname, '..', 'lib', 'skill-lint'));
@@ -90,6 +91,19 @@ for (const dir of [DIST_DIR, DIST_SELF_DIR]) {
   };
   walkFor(dir);
   for (const f of leaked) errors.push(`${f}: a control-plane database must never be built or shipped; each project creates its own on first use`);
+}
+
+// Frontmatter every harness must be able to parse, not just ours.
+for (const dir of [DUMP_DIR, AGENTS_DIR]) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    if (e.name.endsWith('-original')) continue;
+    const file = e.isDirectory() ? path.join(dir, e.name, 'SKILL.md') : path.join(dir, e.name);
+    if (!file.endsWith('.md') || !exists(file)) continue;
+    for (const problem of fm.strictProblems(fs.readFileSync(file, 'utf8'))) {
+      errors.push(`${path.relative(ROOT, file)}: ${problem}`);
+    }
+  }
 }
 
 if (!exists(path.join(REFERENCES_DIR, 'project-management-interface.md'))) errors.push('references/project-management-interface.md is missing');

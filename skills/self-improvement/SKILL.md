@@ -1,6 +1,6 @@
 ---
 name: self-improvement
-description: Runs the loop where the organization improves itself: friction met while doing real work becomes a ticket against the brain's own sources, the change is made as a normal task with the org's own review and verification, the brain is rebuilt and re-injected, and the next session runs on the improved version. Use when an agent hits a missing skill, an unclear rule, a persona that does not fit, or a tool that fights the work, and when developing the brain repository itself.
+description: "Runs the loop where the organization improves itself: friction met while doing real work becomes a ticket against the brain's own sources, the change is made as a normal task with the org's own review and verification, the brain is rebuilt and re-injected, and the next session runs on the improved version. Use when an agent hits a missing skill, an unclear rule, a persona that does not fit, or a tool that fights the work, and when developing the brain repository itself."
 category: process
 ---
 

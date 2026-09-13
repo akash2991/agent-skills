@@ -4,6 +4,8 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-46 — 19 skills and personas had frontmatter a strict YAML parser rejects: a description containing `: ` is read as a nested mapping, so pi refused to load those skills entirely while Claude Code accepted them. Values are quoted now, the build fails on the pattern, and a test asserts the built output parses strictly — org-staff-engineer
+
 - F-self-43 — north star changed to continuous delivery: every change small enough to merge, shippable on its own, leaving the repository releasable — org-staff-engineer
 - F-self-44 — scope made explicit and tied to document ownership. The product manager and principal engineers are project-wide and own `docs/PRD.md` and `docs/ARCHITECTURE.md`, both kept really high level. Engineering managers and staff engineers are scoped to one service, and the service `HLD.md` and `LLD.md` moved from the EM to its staff engineers, updated in the pull request that changes them. The EM now checks they are true before merging rather than writing them — org-staff-engineer
 - F-self-45 — a project-level `PRD.md` template added as the product's source of truth, and `ARCHITECTURE.md` rewritten around services, contracts between them, and where a change belongs — org-staff-engineer

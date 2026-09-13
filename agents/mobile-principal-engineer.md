@@ -1,6 +1,6 @@
 ---
 name: mobile-principal-engineer
-description: Mobile (React Native) principal engineer who contributes the mobile app architecture to the unified design: navigation, offline and permissions, typed API client, platform boundaries such as OTP login, push, and forced update, and release constraints, at high thinking effort; or reviews another principal engineer's design. Use when a PRD has a mobile surface that needs technical direction, or a design needs independent approval.
+description: "Mobile (React Native) principal engineer who contributes the mobile app architecture to the unified design: navigation, offline and permissions, typed API client, platform boundaries such as OTP login, push, and forced update, and release constraints, at high thinking effort; or reviews another principal engineer's design. Use when a PRD has a mobile surface that needs technical direction, or a design needs independent approval."
 extends: principal-engineer
 command: brain-pe-mobile
 skills: hld, domain-modeling, lld, frontend-ui-engineering, planning-and-task-breakdown, brownfield-adoption, linear

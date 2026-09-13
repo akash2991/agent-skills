@@ -1,6 +1,6 @@
 ---
 name: web-principal-engineer
-description: Web (React) principal engineer who contributes the web client architecture to the unified design: app structure, typed API client, state and data layer, design system, accessibility, and mock-backed independence, at high thinking effort; or reviews another principal engineer's design. Use when a PRD has a web surface that needs technical direction, or a design needs independent approval.
+description: "Web (React) principal engineer who contributes the web client architecture to the unified design: app structure, typed API client, state and data layer, design system, accessibility, and mock-backed independence, at high thinking effort; or reviews another principal engineer's design. Use when a PRD has a web surface that needs technical direction, or a design needs independent approval."
 extends: principal-engineer
 command: brain-pe-web
 skills: hld, domain-modeling, lld, frontend-ui-engineering, planning-and-task-breakdown, brownfield-adoption, linear

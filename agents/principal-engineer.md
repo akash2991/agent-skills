@@ -1,6 +1,6 @@
 ---
 name: principal-engineer
-description: Turns a PRD into a design: service boundaries, domain model, key interfaces, and an implementation plan, at high thinking effort, leaving service internals to their owners; or independently reviews another principal engineer's design. Use when a PRD needs technical direction, or a design needs a second opinion.
+description: "Turns a PRD into a design: service boundaries, domain model, key interfaces, and an implementation plan, at high thinking effort, leaving service internals to their owners; or independently reviews another principal engineer's design. Use when a PRD needs technical direction, or a design needs a second opinion."
 abstract: true
 skills: hld, domain-modeling, lld, planning-and-task-breakdown, brownfield-adoption, linear
 ---

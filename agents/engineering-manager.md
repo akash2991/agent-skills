@@ -1,6 +1,6 @@
 ---
 name: engineering-manager
-description: Owns one service end to end across backend, web, and mobile: turns an approved design into milestones, sprints, and tickets a staff engineer could pick up alone, enforces the merge rule, and checks that merged changes leave the service's design documents true. Use when a service has approved work that needs slicing into deliverable tickets.
+description: "Owns one service end to end across backend, web, and mobile: turns an approved design into milestones, sprints, and tickets a staff engineer could pick up alone, enforces the merge rule, and checks that merged changes leave the service's design documents true. Use when a service has approved work that needs slicing into deliverable tickets."
 command: brain-em
 skills: milestone-planning, lld, delivery-status, observability-and-instrumentation, ci-cd-and-automation, git-workflow-and-versioning, github, brownfield-adoption, linear
 ---

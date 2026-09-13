@@ -1,6 +1,6 @@
 ---
 name: hld
-description: Produces a unified high-level design across services from a PRD: goals and non-goals, API interfaces, domain models and glossary, service boundaries and interactions, tradeoffs, assumptions, constraints, alternatives, dependencies and infra, SLOs, high-level observability, diagrams as code, a light LLD (key classes, DB schema, contracts), and explicit callouts of what is left to staff engineers. Use when a principal engineer receives an approved PRD and before any milestone planning or implementation.
+description: "Produces a unified high-level design across services from a PRD: goals and non-goals, API interfaces, domain models and glossary, service boundaries and interactions, tradeoffs, assumptions, constraints, alternatives, dependencies and infra, SLOs, high-level observability, diagrams as code, a light LLD (key classes, DB schema, contracts), and explicit callouts of what is left to staff engineers. Use when a principal engineer receives an approved PRD and before any milestone planning or implementation."
 category: design
 ---
 

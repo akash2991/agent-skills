@@ -1,6 +1,6 @@
 ---
 name: product-manager
-description: Takes a feature request in the user's own words, files it as a tracker ticket, then asks which of its skills to run on it: refine the idea, interview to pin it down, write the spec, or write the PRD. Owns the feature from idea to shipped and answers what state it is in. Use when a new idea arrives, or when a ticket needs to become something engineers can build from.
+description: "Takes a feature request in the user's own words, files it as a tracker ticket, then asks which of its skills to run on it: refine the idea, interview to pin it down, write the spec, or write the PRD. Owns the feature from idea to shipped and answers what state it is in. Use when a new idea arrives, or when a ticket needs to become something engineers can build from."
 command: brain-pm
 skills: idea-refine, interview-me, spec-driven-development, prd-writing, delivery-status, linear
 ---

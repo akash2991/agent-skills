@@ -1,6 +1,6 @@
 ---
 name: lld
-description: Turns an approved HLD section into a low-level design for one service or module: folder structure, types and interfaces as code, data model and migrations, API contracts, state machines, error handling, and testing strategy. Use when a staff engineer designs or updates the internals of the service it owns, before or alongside implementation.
+description: "Turns an approved HLD section into a low-level design for one service or module: folder structure, types and interfaces as code, data model and migrations, API contracts, state machines, error handling, and testing strategy. Use when a staff engineer designs or updates the internals of the service it owns, before or alongside implementation."
 category: design
 ---
 

@@ -12,12 +12,15 @@ const { execFileSync } = require('node:child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const INJECT = path.join(ROOT, 'scripts', 'brain', 'inject.js');
 
-// Injection needs a build to inject. Producing one here rather than failing keeps the test
-// independent of whether someone has run `npm run all` first.
+// Injection needs a build to inject, and a *stale* build is worse than none: a test asserting a
+// property of the output would pass against yesterday's files. Rebuilding takes well under a
+// second, so always do it rather than reasoning about freshness.
+let built = false;
 function ensureBuild() {
-  if (fs.existsSync(path.join(ROOT, 'build', 'product', 'claude-code', 'AGENTS.md'))) return;
+  if (built) return;
   execFileSync('node', [path.join(ROOT, 'scripts', 'brain', 'select.js')], { cwd: ROOT, stdio: 'ignore' });
   execFileSync('node', [path.join(ROOT, 'scripts', 'brain', 'build.js')], { cwd: ROOT, stdio: 'ignore' });
+  built = true;
 }
 ensureBuild();
 
@@ -142,4 +145,23 @@ test('each project gets its own control plane', () => {
   assert.match(out, /You are the ceo/);
   assert.ok(fs.existsSync(dbOf(a)) && fs.existsSync(dbOf(b)));
   assert.notEqual(fs.realpathSync(dbOf(a)), fs.realpathSync(dbOf(b)));
+});
+
+test('every built skill and persona parses under a strict YAML parser', () => {
+  // Claude Code tolerates a plain scalar containing ": "; pi and others run a real YAML parser and
+  // reject the whole file, so a description with a colon in it silently removes the skill.
+  ensureBuild();
+  const { strictProblems } = require(path.join(ROOT, 'scripts', 'brain', 'lib', 'frontmatter'));
+  const root = path.join(ROOT, 'build', 'product', 'claude-code', '.claude');
+  const files = [];
+  for (const d of fs.readdirSync(path.join(root, 'skills'))) {
+    const f = path.join(root, 'skills', d, 'SKILL.md');
+    if (fs.existsSync(f)) files.push(f);
+  }
+  for (const f of fs.readdirSync(path.join(root, 'agents'))) files.push(path.join(root, 'agents', f));
+  assert.ok(files.length > 20, 'expected a built organization to check');
+  const broken = files
+    .map(f => [path.relative(root, f), strictProblems(fs.readFileSync(f, 'utf8'))])
+    .filter(([, p]) => p.length);
+  assert.deepEqual(broken, [], 'frontmatter must parse in every harness, not just the lenient ones');
 });

@@ -1,6 +1,6 @@
 ---
 name: web-staff-engineer
-description: Web (React) staff engineer who implements one client-side task for one service inside its owned paths to the approved LLD: screens, components, client state, typed API adapters, accessibility, with tests and real-browser verification; lays the web foundation task when assigned. Use when an EM hands over a web ticket with context.
+description: "Web (React) staff engineer who implements one client-side task for one service inside its owned paths to the approved LLD: screens, components, client state, typed API adapters, accessibility, with tests and real-browser verification; lays the web foundation task when assigned. Use when an EM hands over a web ticket with context."
 extends: staff-engineer
 command: brain-swe-web
 skills: test-driven-development, end-to-end-testing, git-workflow-and-versioning, observability-and-instrumentation, github, frontend-ui-engineering, browser-testing-with-devtools, linear

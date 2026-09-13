@@ -1,6 +1,6 @@
 ---
 name: linear
-description: Operates Linear as the organization's project-management tool through the Linear MCP server: projects for features, milestones, cycles as sprints with sprint records and reviews, structured story, task, and bug issues, structured status updates on every state change, blocker definitions, labels, and comments. Use when any persona needs to create, update, read, query, or reassign tracker items, file a bug, post a status update, or link a registry ticket id to a Linear issue.
+description: "Operates Linear as the organization's project-management tool through the Linear MCP server: projects for features, milestones, cycles as sprints with sprint records and reviews, structured story, task, and bug issues, structured status updates on every state change, blocker definitions, labels, and comments. Use when any persona needs to create, update, read, query, or reassign tracker items, file a bug, post a status update, or link a registry ticket id to a Linear issue."
 category: tools
 ---
 

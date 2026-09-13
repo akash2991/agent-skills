@@ -1,6 +1,6 @@
 ---
 name: domain-modeling
-description: Derives explicit, strongly typed domain models from requirements in any language: entities, value objects, typed identifiers, sum and product types, invariants, lifecycle states, contracts between parts, aggregate-level validation with structured errors, and a single source of truth for each contract, keeping static typing and runtime validation separate. Use when a principal engineer defines the shared model in an HLD, when a staff engineer implements or extends a module's domain types, or when a bug traces back to an ambiguous concept, a stringly typed API, or an impossible state.
+description: "Derives explicit, strongly typed domain models from requirements in any language: entities, value objects, typed identifiers, sum and product types, invariants, lifecycle states, contracts between parts, aggregate-level validation with structured errors, and a single source of truth for each contract, keeping static typing and runtime validation separate. Use when a principal engineer defines the shared model in an HLD, when a staff engineer implements or extends a module's domain types, or when a bug traces back to an ambiguous concept, a stringly typed API, or an impossible state."
 category: design
 ---
 

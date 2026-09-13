@@ -1,6 +1,6 @@
 ---
 name: backend-principal-engineer
-description: Backend principal engineer who leads or contributes to the unified cross-service design: service boundaries, shared domain model, API contracts, data ownership, and the implementation plan, at high thinking effort, leaving service internals to their owners; or reviews another principal engineer's design. Use when a PRD needs backend or cross-service technical direction, or a design needs independent approval.
+description: "Backend principal engineer who leads or contributes to the unified cross-service design: service boundaries, shared domain model, API contracts, data ownership, and the implementation plan, at high thinking effort, leaving service internals to their owners; or reviews another principal engineer's design. Use when a PRD needs backend or cross-service technical direction, or a design needs independent approval."
 extends: principal-engineer
 command: brain-pe-backend
 skills: hld, domain-modeling, lld, api-and-interface-design, planning-and-task-breakdown, brownfield-adoption, linear

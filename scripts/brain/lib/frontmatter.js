@@ -60,4 +60,27 @@ function stringify(data, body) {
   return `---\n${lines.join('\n')}\n---\n${body.startsWith('\n') ? body : '\n' + body}`;
 }
 
-module.exports = { parse, stringify };
+// Our own parser is forgiving, but the harnesses that consume these files are not: pi and others
+// run a real YAML parser and reject the whole skill. The rule that bites is a plain scalar holding
+// `: `, which YAML reads as a nested mapping, so a description with a colon in it fails to load.
+// This reports what a strict parser would refuse, so the build catches it before a user does.
+function strictProblems(text) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+  if (!m) return [];
+  const problems = [];
+  for (const [i, line] of m[1].split(/\r?\n/).entries()) {
+    const kv = /^([A-Za-z0-9_-]+):[ \t]+(.*)$/.exec(line);
+    if (!kv) continue;
+    const value = kv[2].trim();
+    if (!value || /^["'|>[]/.test(value)) continue;
+    if (value.includes(': ')) {
+      problems.push(`line ${i + 2}: \`${kv[1]}\` contains ": " but is not quoted, which a strict YAML parser reads as a nested mapping. Wrap the value in double quotes.`);
+    }
+    if (value.includes(' #')) {
+      problems.push(`line ${i + 2}: \`${kv[1]}\` contains " #", which a strict YAML parser reads as a comment. Wrap the value in double quotes.`);
+    }
+  }
+  return problems;
+}
+
+module.exports = { parse, stringify, strictProblems };

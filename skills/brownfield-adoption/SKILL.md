@@ -1,6 +1,6 @@
 ---
 name: brownfield-adoption
-description: Brings an existing codebase under the organization: inventories services and assigns EMs and PMs, documents the current state as HLD, LLD, and DB diagrams at overall and service level, runs a gap analysis against the global conventions, and turns the gaps into a refactoring roadmap (domain typing per API, feature-first layout, generated typed clients) delivered through normal milestones and sprints. Use when the brain is first injected into a repository that already has code, or when a service has never been documented against the conventions.
+description: "Brings an existing codebase under the organization: inventories services and assigns EMs and PMs, documents the current state as HLD, LLD, and DB diagrams at overall and service level, runs a gap analysis against the global conventions, and turns the gaps into a refactoring roadmap (domain typing per API, feature-first layout, generated typed clients) delivered through normal milestones and sprints. Use when the brain is first injected into a repository that already has code, or when a service has never been documented against the conventions."
 category: process
 ---
 
