@@ -75,6 +75,12 @@ function mergeMcp(existingText, incoming, key) {
 }
 
 const summary = { injectedAt: new Date().toISOString(), source: sourceDir, selfBuild, targets: {} };
+// What the previous injection wrote. A file the brain owned and no longer produces, because it was
+// renamed or dropped, has to be removed: leaving it behind means a repository keeps answering to a
+// command or loading a skill that no longer exists anywhere in the source.
+const previousFile = path.join(repoAbs, '.agent-brain', 'injected.json');
+const previous = exists(previousFile) ? (readJson(previousFile) || {}) : {};
+const retired = [];
 let count = 0;
 for (const id of targets) {
   const base = path.join(sourceDir, id);
@@ -124,6 +130,20 @@ for (const id of targets) {
       globalCommands.push({ id, rel, from: path.join(sourceDir, id, rel), to: dest ? path.join(dest, path.basename(rel)) : null, why: build.commands.why });
     }
   }
+  // Only ever remove a path this target wrote last time and does not write now. A seed is never
+  // retired whatever the record says: it is created once and then belongs to the project, so its
+  // content is the user's. The same goes for always-on files and merged config, which are shared.
+  const ownedBefore = (previous.targets && previous.targets[id] && previous.targets[id].files) || [];
+  const ownedNow = new Set(done);
+  const untouchable = new Set([build.alwaysOn, build.mcpFile, build.hooksFile].filter(Boolean));
+  for (const rel of ownedBefore) {
+    if (ownedNow.has(rel) || seeds.has(rel) || untouchable.has(rel)) continue;
+    const abs = path.join(repoAbs, rel);
+    if (!exists(abs)) continue;
+    if (!dryRun) fs.rmSync(abs, { force: true });
+    retired.push(rel);
+    console.log(`  ${dryRun ? '[dry-run] ' : ''}retire       ${rel}`);
+  }
   summary.targets[id] = { builtAt: build.builtAt, files: done };
   console.log(`  ${id}: ${done.length} file(s)${overwritten ? `, ${overwritten} overwritten` : ''}${kept ? `, ${kept} seed(s) kept as-is` : ''}`);
 }
@@ -132,7 +152,7 @@ if (!dryRun) {
   const orgDir = first ? first.orgDir : '.agent-brain';
   writeJson(path.join(repoAbs, orgDir, 'injected.json'), summary);
 }
-console.log(`\n${dryRun ? 'would inject' : 'injected'} ${count} file(s) into ${repoAbs} for: ${targets.join(', ')}`);
+console.log(`\n${dryRun ? 'would inject' : 'injected'} ${count} file(s)${retired.length ? `, retired ${retired.length}` : ''} into ${repoAbs} for: ${targets.join(', ')}`);
 
 if (globalCommands.length) {
   console.log(`\nharness-global commands (${globalCommands[0].why})`);

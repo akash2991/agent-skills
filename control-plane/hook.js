@@ -98,7 +98,7 @@ function transcriptMessages(file, limit) {
 // and reported in the hook's own output rather than thrown.
 async function autoExport(db, when) {
   try {
-    const mode = database.config(db).langfuse_export || 'session-end';
+    const mode = database.config(db).langfuse_export || 'turn';
     if (mode === 'off' || (mode === 'session-end' && when !== 'session-end')) return null;
     const langfuse = require('./langfuse');
     if (langfuse.credentials().missing.length) return null;

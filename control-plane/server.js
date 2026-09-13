@@ -11,7 +11,6 @@
 // POST /api/budget/allocate           { holder, granted_by, input_tokens, output_tokens, scope?, reason?, force? }
 // POST /api/budget/decide             { id, status, input_tokens?, output_tokens?, reason? }
 // POST /api/config                    { key, value, reason? }
-// POST /api/agents/<id>/control       { action: focus|steer|interrupt|stop, text?, confirm? }  (Herdr)
 // POST /api/sessions/<id>/release     {}
 const fs = require('node:fs');
 const http = require('node:http');
@@ -19,7 +18,6 @@ const path = require('node:path');
 const database = require('./db');
 const state = require('./state');
 const quota = require('./quota');
-const control = require('./control');
 
 const AGENT_FIELDS = { model: 'model', effort: 'effort', status: 'status', ticket: 'ticket', operation: 'current_operation', blocker: 'blocker', owned_paths: 'owned_paths' };
 const AGENT_STATUS = new Set(['PLANNED', 'RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'UNKNOWN']);
@@ -129,17 +127,6 @@ function serve({ port = 4173, host = '127.0.0.1', dbFile } = {}) {
         if (!body.key) return json(res, 400, { error: 'key is required' });
         database.setConfig(db, body.key, body.value, actor, body.reason || 'changed from the control-plane UI');
         return json(res, 200, { ok: true, config: database.config(db) });
-      }
-      if (req.method === 'POST' && /^\/api\/agents\/.+\/control$/.test(url.pathname)) {
-        const id = decodeURIComponent(url.pathname.split('/')[3]);
-        const agent = db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id);
-        if (!agent) return json(res, 404, { error: `unknown agent ${id}` });
-        const body = await readBody(req);
-        try {
-          const result = control.controlAgent(agent, { action: body.action, text: body.text, confirm: body.confirm });
-          database.record(db, actor, 'agent', id, `control:${body.action}`, null, body.text || 'ok', body.reason || 'from the control-plane UI');
-          return json(res, 200, { ok: true, result });
-        } catch (error) { return json(res, 409, { error: error.message }); }
       }
       if (req.method === 'POST' && /^\/api\/sessions\/.+\/release$/.test(url.pathname)) {
         const id = decodeURIComponent(url.pathname.split('/')[3]);

@@ -4,7 +4,7 @@
 // manifest.json, templates/, references/. Exit 1 on errors.
 const path = require('path');
 const fs = require('fs');
-const { ROOT, DUMP_DIR, AGENTS_DIR, TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, exists, loadManifest } = require('./lib/fs-utils');
+const { ROOT, DUMP_DIR, AGENTS_DIR, TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, DIST_DIR, DIST_SELF_DIR, exists, loadManifest } = require('./lib/fs-utils');
 const { indexDump, resolveManifest } = require('./lib/dump');
 const { indexPersonas } = require('./lib/personas');
 const { TARGETS } = require('./lib/targets');
@@ -55,16 +55,43 @@ for (const f of ['README.md', 'ceo-report.md', 'pm-report.md', 'em-report.md',
   'principal-engineer-design-report.md', 'design-review.md', 'staff-engineer-report.md', 'merge-review.md', 'qa-report.md']) {
   if (!exists(path.join(REPORTS_DIR, f))) errors.push(`agents-reports/${f} is missing`);
 }
-for (const f of ['README.md', 'schema.sql', 'db.js', 'state.js', 'brain.js', 'emit.js', 'quota.js', 'control.js',
-  'server.js', 'ui.html', 'hook.js', 'event.schema.json', 'herdr-plugin.toml', '.gitignore']) {
+for (const f of ['README.md', 'schema.sql', 'db.js', 'state.js', 'brain.js', 'emit.js', 'quota.js', 'langfuse.js',
+  'server.js', 'ui.html', 'hook.js', 'event.schema.json', '.gitignore']) {
   if (!exists(path.join(CONTROL_PLANE_DIR, f))) errors.push(`control-plane/${f} is missing`);
 }
-for (const f of ['global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'global-docs/CHANGELOG.md',
+for (const f of ['global-docs/ARCHITECTURE.md', 'global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'global-docs/CHANGELOG.md',
   'service-docs/CONVENTIONS.md', 'service-docs/CHANGELOG.md', 'service-docs/HLD.md', 'service-docs/LLD.md',
   'service-docs/CURRENT_MILESTONE.md', 'service-docs/DECISIONS.md', 'service-docs/RCA.md',
-  'commands/brain.md']) {
+  'commands/brain-init.md']) {
   if (!exists(path.join(TEMPLATES_DIR, f))) errors.push(`templates/${f} is missing`);
 }
+// Every command this organization ships is namespaced `brain-`. A command lands in a shared
+// directory next to whatever the project and its other tools already put there, so an unprefixed
+// name is a collision waiting to happen, and the loser is silently whichever one loads second.
+for (const f of fs.readdirSync(path.join(TEMPLATES_DIR, 'commands')).filter(n => n.endsWith('.md'))) {
+  const name = f.replace(/\.md$/, '');
+  if (!/^brain-[a-z0-9][a-z0-9-]*$/.test(name)) {
+    errors.push(`templates/commands/${f}: a command must be named brain-<something> in lowercase kebab-case, so it cannot collide with a command from another tool`);
+  }
+}
+
+// Runtime state must never reach a build. `control-plane/brain.db` is created by running the CLI
+// from the source directory, and shipping it would hand every consuming project this repository's
+// sessions, agents, budgets and events.
+for (const dir of [DIST_DIR, DIST_SELF_DIR]) {
+  if (!exists(dir)) continue;
+  const leaked = [];
+  const walkFor = d => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) walkFor(full);
+      else if (/^brain\.db(-wal|-shm)?$/.test(entry.name)) leaked.push(path.relative(ROOT, full));
+    }
+  };
+  walkFor(dir);
+  for (const f of leaked) errors.push(`${f}: a control-plane database must never be built or shipped; each project creates its own on first use`);
+}
+
 if (!exists(path.join(REFERENCES_DIR, 'project-management-interface.md'))) errors.push('references/project-management-interface.md is missing');
 if (!exists(path.join(REFERENCES_DIR, 'agent-observability.md'))) errors.push('references/agent-observability.md is missing');
 

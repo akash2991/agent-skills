@@ -18,7 +18,6 @@ const path = require('node:path');
 const database = require('./db');
 const state = require('./state');
 const quota = require('./quota');
-const control = require('./control');
 const langfuse = require('./langfuse');
 const { emitEvent } = require('./emit');
 
@@ -279,6 +278,7 @@ function quotaCommand(db, args) {
   const providers = (flag(args, 'provider') || '').split(',').map(s => s.trim()).filter(Boolean);
   const report = quota.read({ providers });
   if (!report.available) { out(args, report, `quota UNKNOWN: ${report.reason}`); return; }
+  quota.snapshot(db, report);
   const ranked = quota.preferred(report.scopes);
   out(args, report, [
     `quota from ${report.command} at ${report.generated_at || now()}`,
@@ -309,6 +309,18 @@ function adoptObservedAgent(db, harnessSession, role, actor) {
   return observed.length ? { agents: observed.map(r => r.agent_id), events: moved } : null;
 }
 
+// Silence is the worst failure mode for tracing: you only find out it never worked when you go
+// looking for data that is not there. Say plainly, at session start, whether it is on.
+function tracingLine(db) {
+  const mode = database.config(db).langfuse_export || 'turn';
+  const cred = langfuse.credentials();
+  if (mode === 'off') return 'Langfuse tracing: OFF (langfuse_export=off).';
+  if (cred.missing.length) {
+    return `Langfuse tracing: OFF, no credentials. Set ${cred.missing.join(' and ')} in ${cred.searched[0]} or ${cred.searched[cred.searched.length - 1]} (which serves every project).`;
+  }
+  return `Langfuse tracing: ON (${mode}) → ${cred.baseUrl}, credentials from ${cred.source}.`;
+}
+
 function contextCommand(db, args, actor) {
   const role = flag(args, 'role') || 'ceo';
   const claim = claimSession(db, args, actor);
@@ -336,8 +348,14 @@ function contextCommand(db, args, actor) {
   emitEvent({ schema_version: '1.0', type: 'agent.started', agent_id: role, session_id: session.id, role,
     model: session.model || undefined, effort: session.effort || undefined }, { db });
   const snapshot = state.statusData(db);
+  // A fresh database knows nothing about the account it will spend against. Seeding it with a real
+  // reading means the first budget decision is made against what the providers will actually serve,
+  // not against a default that happens to be in the code.
+  const seeding = !quota.isSeeded(db);
   const q = quota.read({});
-  const data = { ok: true, session, role, state: snapshot, quota: q };
+  const seeded = quota.snapshot(db, q);
+  if (seeding && seeded) database.record(db, actor, 'quota', 'provider_quota', 'seeded', null, String(seeded), 'first reading on a fresh database');
+  const data = { ok: true, session, role, state: snapshot, quota: q, quota_seeded: seeding ? seeded : 0 };
   out(args, data, [
     `You are the ${role}. Session ${session.id} on ${session.harness}; your model is ${session.model || UNKNOWN} at ${session.effort || UNKNOWN} effort, recorded as the ${role}'s current values.`,
     `You hold the ${role} lock: no other session may act as ${role} until this one is released.`,
@@ -345,6 +363,8 @@ function contextCommand(db, args, actor) {
       ? [`Usage capture is bound to harness session ${session.harness_session_id}: tokens land on ${role}.`]
       : ['WARNING: this harness exposed no session id, so captured usage cannot be attributed to you. Pass --harness-session <id> or set BRAIN_HARNESS_SESSION.']),
     ...(adopted ? [`Adopted ${adopted.events} event(s) already observed on this session from ${adopted.agents.join(', ')}.`] : []),
+    tracingLine(db),
+    ...(seeding && seeded ? [`Seeded this fresh control plane with ${seeded} provider quota scope(s); budgets start from the real account.`] : []),
     '',
     state.renderStatus(snapshot),
     '',
@@ -383,19 +403,6 @@ async function exportCommand(db, args, actor) {
     : `exported ${result.sent} event(s) as ${result.spans} span(s) to ${result.baseUrl}${result.note ? ` (${result.note})` : ''}`);
 }
 
-// ─── runtime control (Herdr) ─────────────────────────────────────────────────
-function controlCommand(db, args, actor) {
-  const action = args[1];
-  const id = need(flag(args, 'agent-id'), 'agent-id');
-  const agent = db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id);
-  if (!agent) throw new Error(`unknown agent ${id}`);
-  const result = control.controlAgent(agent, { action, text: flag(args, 'text'), confirm: has(args, 'confirm') });
-  emitEvent({ schema_version: '1.0', type: 'control.completed', agent_id: id, session_id: agent.session_id || actor,
-    control: { action, target: id, outcome: 'success' } }, { db });
-  database.record(db, actor, 'agent', id, `control:${action}`, null, flag(args, 'text') || 'ok', flag(args, 'reason') || null);
-  out(args, result, `${action} ${id} via ${agent.runtime}/${agent.runtime_ref}: ok`);
-}
-
 // ─── entry ───────────────────────────────────────────────────────────────────
 // Async because one command (export) performs network I/O. Every other command stays synchronous;
 // the await below is what keeps the database open until an async command has finished with it.
@@ -409,7 +416,6 @@ async function main(args = process.argv.slice(2)) {
       '  agent    register|heartbeat|set|close|list|tree',
       '  budget   show|allocate|ask|decide',
       '  quota    [--provider claude,codex,...]', '  status', "  event    --event '<json>'", '  serve    [--port 4173]',
-      '  control  focus|steer|interrupt|stop --agent-id A [--text "..."] [--confirm]   (requires a Herdr runtime binding)',
       '  export   langfuse [--limit N] [--all] [--dry-run]   ship events to Langfuse as OTLP spans',
       '  config   show|set --key K --value V'].join('\n') + '\n');
     return;
@@ -422,7 +428,6 @@ async function main(args = process.argv.slice(2)) {
     if (group === 'agent') return agentCommand(db, args, actor);
     if (group === 'budget') return budgetCommand(db, args, actor);
     if (group === 'quota') return quotaCommand(db, args);
-    if (group === 'control') return controlCommand(db, args, actor);
     if (group === 'export') return await exportCommand(db, args, actor);
     if (group === 'status') { const s = state.statusData(db); return out(args, s, state.renderStatus(s)); }
     if (group === 'event') {

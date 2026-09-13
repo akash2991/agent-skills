@@ -303,24 +303,6 @@ test('the CLI runs the whole session, register, budget, and status path', () => 
   assert.match(cli(dbFile, ['config']).out, /company_input_tokens=100000/);
 });
 
-test('the CLI refuses control without a Herdr binding and without confirmation', () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-cli2-')), 'brain.db');
-  cli(dbFile, ['agent', 'register', '--agent-id', 'staff-1', '--role', 'backend-staff-engineer', '--actor', 'ceo']);
-  assert.match(cli(dbFile, ['control', 'focus', '--agent-id', 'staff-1']).err, /no Herdr runtime binding/);
-});
-
-test('a Herdr binding can be completed after registration, not only at register time', () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-bind-')), 'brain.db');
-  cli(dbFile, ['agent', 'register', '--agent-id', 'staff-1', '--role', 'backend-staff-engineer', '--actor', 'ceo']);
-  // An agent is usually registered before its terminal exists, so the runtime and its reference must
-  // both be settable later. Setting only the reference would leave control permanently refused.
-  cli(dbFile, ['agent', 'set', '--agent-id', 'staff-1', '--runtime', 'herdr', '--runtime-ref', 'w1:p2', '--actor', 'ceo']);
-  const row = JSON.parse(cli(dbFile, ['agent', 'list', '--json']).out).agents.find(a => a.agent_id === 'staff-1');
-  assert.equal(row.runtime, 'herdr');
-  assert.equal(row.runtime_ref, 'w1:p2');
-  assert.doesNotMatch(cli(dbFile, ['control', 'focus', '--agent-id', 'staff-1']).err || '', /no Herdr runtime binding/);
-});
-
 test('a claimed role is bound to the harness session, so hook usage lands on the role', () => {
   const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-bind2-')), 'brain.db');
   const harnessSession = 'abc12345-harness-session';

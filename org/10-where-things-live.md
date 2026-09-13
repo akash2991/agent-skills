@@ -8,6 +8,7 @@
 | Control plane: sessions, agent registry, events, budgets, audit | `{{ORG_DIR}}/control-plane/` (SQLite; `node {{ORG_DIR}}/control-plane/brain.js`) |
 | Session entry command | `/brain` in this harness; claims your role and loads the organization |
 | Live view | `node {{ORG_DIR}}/control-plane/brain.js status`, or the UI at `brain.js serve` |
+| Global architecture: what exists and where a change belongs (every role) | `{{ORG_DIR}}/docs/ARCHITECTURE.md` |
 | Global docs (conventions, decisions, changelog) | `{{ORG_DIR}}/docs/` |
 | Service docs (one folder per service, owned by its EM) | `{{ORG_DIR}}/services/<service>/` |
 | Uniform report templates | `{{ORG_DIR}}/agents-reports/` |

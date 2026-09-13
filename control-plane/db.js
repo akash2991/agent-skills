@@ -27,9 +27,10 @@ const DEFAULT_CONFIG = {
   budget_input_basis: 'new',
   session_stale_minutes: '30',
   agent_stale_minutes: '20',
-  // When captured events are shipped to Langfuse: off | session-end | turn. Nothing is sent unless
+  // When captured events are shipped to Langfuse: off | session-end | turn. `turn` keeps the trace
+  // view live while you work, which is the point of using it as the UI. Nothing is sent unless
   // LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are present, so this default is inert without them.
-  langfuse_export: 'session-end'
+  langfuse_export: 'turn'
 };
 
 // Columns added after a database already exists. `CREATE TABLE IF NOT EXISTS` never adds a column

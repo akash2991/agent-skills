@@ -38,5 +38,6 @@ Rules live in `org/`, one topic per numbered part, emitted as a single `ORG.md`.
 
 - Do not hand-edit anything under `build/`, or an emitted `ORG.md`.
 - Do not duplicate a rule across a skill, a persona, and a reference. One owns it; the others point.
-- Do not add a command that starts a persona or a skill directly. Requests route through the CEO, and `/brain` is the only command.
+- Do not add a command that starts a persona or a skill directly. Requests route through the CEO, and `/brain-init` is the only command.
+- If a command is ever added, name it `brain-<something>`: `templates/commands/` is validated against that prefix, because commands share a directory with the project's own and with other tools'.
 - Do not weaken a validator to make a change pass. Change the code it checks, or change the contract deliberately and update its test with the reason.

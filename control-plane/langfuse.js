@@ -19,6 +19,7 @@
 // prompt, response, reasoning, file content, tool argument, or tool result is representable here.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const OTEL_PATH = '/api/public/otel/v1/traces';
@@ -45,26 +46,48 @@ const attr = (key, value) => {
 };
 const attrs = pairs => pairs.map(([k, v]) => attr(k, v)).filter(Boolean);
 
-// Read credentials from the environment, falling back to a .env file in the repository. Node does
-// not load .env on its own, and asking a user to export three variables before every command is the
-// kind of friction that stops a tool being used.
+// Where a .env may live, nearest first: an explicit path, then this project and every directory
+// above it, then a machine-level file. Keys set once in ~/.agent-brain/.env work in every injected
+// repository, which is the difference between tracing that works and tracing that silently does not.
+function envFiles(explicit) {
+  if (explicit) return [explicit];
+  const files = [];
+  let dir = process.cwd();
+  for (let i = 0; i < 10; i++) {
+    files.push(path.join(dir, '.env'));
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  files.push(path.join(os.homedir(), '.agent-brain', '.env'));
+  return files;
+}
+
+// Read credentials from the environment, falling back to the .env files above. Node does not load
+// .env on its own, and asking a user to export three variables before every command is the kind of
+// friction that stops a tool being used.
 function credentials(envFile) {
   const env = { ...process.env };
-  const file = envFile || path.join(process.cwd(), '.env');
-  if (fs.existsSync(file)) {
+  let source = 'environment';
+  for (const file of envFiles(envFile)) {
+    if (!fs.existsSync(file)) continue;
+    let used = false;
     for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
       const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
       if (!m) continue;
       const [, key, raw] = m;
-      if (env[key]) continue; // a real environment variable always wins over the file
+      if (env[key]) continue; // anything already set, environment or a nearer file, always wins
       env[key] = raw.trim().replace(/^['"]|['"]$/g, '');
+      if (key.startsWith('LANGFUSE_')) used = true;
     }
+    if (used && source === 'environment') source = file;
   }
   const publicKey = env.LANGFUSE_PUBLIC_KEY;
   const secretKey = env.LANGFUSE_SECRET_KEY;
   const baseUrl = (env.LANGFUSE_BASE_URL || env.LANGFUSE_HOST || 'https://cloud.langfuse.com').replace(/\/+$/, '');
   const missing = [!publicKey && 'LANGFUSE_PUBLIC_KEY', !secretKey && 'LANGFUSE_SECRET_KEY'].filter(Boolean);
-  return { publicKey, secretKey, baseUrl, missing, environment: env.LANGFUSE_TRACING_ENVIRONMENT || 'default' };
+  return { publicKey, secretKey, baseUrl, missing, source, searched: envFiles(envFile),
+           environment: env.LANGFUSE_TRACING_ENVIRONMENT || 'default' };
 }
 
 // One Langfuse observation type per event type. Sending the most specific type is what makes the

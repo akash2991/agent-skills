@@ -8,9 +8,9 @@ Use a composed stack. Nothing off the shelf models the organization's own semant
 
 1. **quota-axi for provider tokens, quota, and cost.** [quota-axi](https://github.com/kunchenguid/quota-axi) (MIT) reports percent remaining, reset time, burn pace, usable runway, and a comparative `spendPriority` per provider scope across Claude, Codex, Cursor, Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode, and Antigravity. It reads local credential stores and calls first-party endpoints, and it explicitly does not route. We shell out to it, so it is optional and its absence degrades to `UNKNOWN` rather than failing. This is the authoritative answer to "how much is left on the plan", which no amount of local instrumentation can infer.
 2. **A SQLite control plane for the organization semantics.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds harness sessions with the single-CEO lock, the agent registry with parentage and current model and effort, metadata-only observability events, budget allocations and asks, and an audit trail of every mutation. The CLI and the local UI are two faces of the same store, so an edit in either is the same audited change.
-3. **Herdr for runtime control.** Herdr is an Apache-2.0 terminal workspace manager for coding agents. It keeps real agent terminals in persistent panes, recognizes common agents, exposes state, and offers CLI and socket operations to focus, prompt, send keys, read output, wait, and attach. It is the control plane, not the tracker: its own documentation does not claim token, cost, context, skill-load, turn, or tool telemetry, and it has no concept of our hierarchy.
+3. **No terminal control.** Controlling live agent terminals was tried with Herdr and removed; see "Terminal control, tried and dropped" below. Nothing replaces it, because the question it answered was not the one the organization needs answered.
 4. **OpenTelemetry GenAI as the interoperability baseline.** Standard agent, workflow, model, and tool concepts and the `gen_ai.usage.*` fields map onto our events; Agent Brain additions use an `agent_brain.*` namespace in exporters.
-5. **Langfuse as the trace UI, shipped and wired.** Self-hostable, accepts OpenTelemetry or custom instrumentation, and gives trace trees, agent graphs, sessions, and token and cost dashboards. It observes executions that send it traces; it cannot focus, prompt, or interrupt a terminal, so it complements Herdr rather than replacing it.
+5. **Langfuse as the trace UI, shipped and wired.** Self-hostable, accepts OpenTelemetry or custom instrumentation, and gives trace trees, agent graphs, sessions, and token and cost dashboards. This is where a human looks at what happened and what it cost; the local page only answers what is running right now.
 
 Do not build a terminal runtime, a provider quota reader, or a full web observability platform. The local UI exists only as the zero-dependency view of our own semantics, which none of the borrowed tools can provide; it answers "what is happening right now", and nothing more should be invested in it.
 
@@ -35,11 +35,11 @@ Three rules this follows, from Langfuse's own best-practice guidance:
 
 Span and trace ids are derived from event and agent ids, so a re-export updates the same spans instead of duplicating them. `exports` records what has shipped, so an interrupted run resumes. Automatic shipping is controlled by `langfuse_export` (`off`, `session-end`, `turn`), and nothing leaves the machine unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
 
-### Why Herdr cannot show subagents
+### Terminal control, tried and dropped
 
-Herdr manages terminal panes and the agent processes inside them. A subagent spawned by Claude Code is not a terminal: it runs inside the parent's process, so there is no pane for Herdr to attach to, and no amount of configuration will make one appear. This is a boundary, not a bug.
+Herdr was adopted for runtime control (focus, steer, interrupt, stop) and removed on 2026-09-13 by the owner's decision. The reason is structural: Herdr manages terminal panes and the agent processes inside them, and a subagent runs inside its parent's process with no pane to attach to. The hierarchy the organization cares about was therefore invisible in it, and no configuration would have changed that.
 
-Subagents show up in the control plane, which knows them because they register, and in Langfuse, where each is its own trace nested under its parent. Herdr's job is the terminals you actually started; the hierarchy inside one of them belongs to the control plane.
+Nothing replaced it. Terminal control is out of scope. Subagents are visible where they were always going to be visible: in the control plane, because they register, and in Langfuse, where each is a trace nested under its parent. The archived adapter and the reasoning are in `deprecated/removed-integrations/`.
 
 One gap remains: a sidechain turn in a Claude Code transcript is attributed to the session's agent, because the hook cannot tell which registered child produced it. Per-subagent token attribution is therefore `UNKNOWN` until the harness exposes the child's identity in the transcript.
 
@@ -55,14 +55,9 @@ One gap remains: a sidechain turn in a Claude Code transcript is attributed to t
 |---|---|---|
 | Provider quota, reset, pace, runway, spend priority | quota-axi | `brain.js quota`. The authoritative account-level figure; degrades to `UNKNOWN` when the CLI is absent. |
 | One live CEO across terminals | Control plane | A partial unique index on unreleased `role='ceo'` sessions. A stale heartbeat is reclaimable; a live one refuses with exit 3. |
-| Parent/child organization tree | Control plane `agents.parent` | Herdr organizes workspaces, tabs, and panes, not the CEO → PM → EM hierarchy. |
+| Parent/child organization tree | Control plane `agents.parent` | Rolled up recursively for budgets and reproduced as span nesting in Langfuse. |
 | Current model and effort per agent | Control plane, mutable | Changed by `agent set` or the UI, audited in `changes`; also corrected from observed events. |
 | Budget allocation, roll-up, asks, guards | Control plane | Recursive subtree spend over `agents.parent`; allocations exceeding the grantor are refused. |
-| Live agents and state | Herdr + control-plane reconciliation | Herdr state is runtime evidence; registry state is reported. Show both when both are available. |
-| Jump to an agent | Herdr `agent focus` / attach | Requires `runtime='herdr'` and a `runtime_ref` on the agent's row. |
-| Steer an agent | Herdr `agent prompt` | Prompting a blocked agent can be refused by Herdr; inspect it first. |
-| Interrupt an agent | Herdr `agent send-keys ... ctrl+c` | Explicit confirmation required; safer than closing the pane. |
-| Stop an agent | Herdr `agent get` then `pane close` | Explicit confirmation required; terminates every process in that pane. Whole-session stop is out of scope. |
 | Skills and documents used, and their context cost | Control-plane events | Record name, path, bytes, hash, and token count with its measurement, never content. |
 | Context input and window | Host or provider hook → event | Exact only when the host exposes it. Otherwise `UNKNOWN`. |
 | Turns | Control-plane events | One `turn.completed` per agent turn. |
@@ -74,17 +69,11 @@ One gap remains: a sidechain turn in a Claude Code transcript is attributed to t
 | Binding captured usage to a role | `sessions.harness_session_id` | A hook only knows the harness's session id. Without the binding, usage lands on a synthetic agent and the role spends against an empty budget. |
 | Hosted fleet dashboards | Mission Control | Optional mirror for agent tracking only; the tracker stays the source of truth for work. |
 
-## Why Herdr is necessary but insufficient
-
-Herdr provides the best match for interactive control because it operates the real coding-agent terminal rather than wrapping the agent SDK. Its automation API supports supported agent kinds including Claude, Codex, Cursor, Kimi, Gemini, OpenCode, and Copilot. It exposes focus, prompt, send-keys, wait, read, session snapshots, and event subscriptions.
-
-Herdr's integrations primarily report lifecycle authority or native session identity. Its metadata tokens are presentation key and value labels, not LLM token accounting. The product documentation does not claim cost, prompt or context composition, skill-load, turn, or tool-call tracing. Those signals come from the control plane's events, provider quota comes from quota-axi, and an optional Langfuse export gives the trace views.
-
-## Why Langfuse is optional rather than the control plane
+## Why Langfuse is the UI rather than the control plane
 
 Langfuse supplies the mature telemetry views that would be wasteful to rebuild: trace trees, agent graphs, sessions, model generations, tool observations, dashboards, token/cost tracking, and self-hosting. Its core is MIT-licensed; enterprise governance features have separate licensing.
 
-Langfuse observes application/agent executions that send it traces. It does not own arbitrary Codex/Claude/Kimi terminal processes and cannot safely focus, prompt, or interrupt those sessions. It complements Herdr.
+Langfuse observes executions that send it traces. It has no concept of a CEO → PM → EM tree, a budget chain where a child cannot exceed its parent, or a single-CEO lock across terminals, which is why those stay in the control plane and are projected into Langfuse as span nesting and metadata.
 
 ## Event and trace mapping
 
@@ -121,28 +110,19 @@ OpenTelemetry's GenAI agent conventions are still marked Development. Keep this 
 - Do not record credentials, environment-variable values, authorization headers, full command output, user PII, or repository content.
 - Keep the control-plane database out of git (the injected `.gitignore` does this) and define retention before long-running use. It is live state, not product history.
 - OpenTelemetry marks input messages, output messages, system instructions, and tool definitions as opt-in and warns that they can contain sensitive data. Any future content mode requires an explicit user decision, redaction policy, retention limit, and access control.
-- Herdr plugins run as the local user and are not sandboxed; inspect and pin third-party plugin sources before installation.
 
 ## Operating flow
 
 1. Claim the session and load the organization with the harness's entry command, which runs `brain.js context`. It refuses if the role is already held by a live session.
-2. Register each agent before it acts, with `--parent` set to whoever assigned the work and the model and effort actually in use; bind `runtime` and `runtime_ref` when the harness exposes them.
+2. Register each agent before it acts, with `--parent` set to whoever assigned the work and the model and effort actually in use.
 3. Emit `skill.loaded` and `document.loaded` only when the content actually entered the working context, not when a file was merely read.
 4. Emit turn, model-usage, and tool-completion events from runtime or provider measurements. Heartbeat at every meaningful step.
 5. Read provider quota before routing or reporting, and record the figures with their read time.
-6. Reconcile the control plane against the live runtime, git, and the tracker before claiming any state is current (`delivery-status`).
-7. Use the control commands only with a Herdr binding. Inspect a blocked agent before steering it; confirm interrupts and pane-closing stops, and prefer interrupt.
-8. Export to Langfuse or another OTLP backend, or mirror to Mission Control, only after the user configures the endpoint and credentials.
+6. Reconcile the control plane against git and the tracker before claiming any state is current (`delivery-status`).
+7. Export to Langfuse automatically per `langfuse_export`, or on demand with `brain.js export langfuse`. Nothing leaves the machine until the credentials are set.
 
 ## Sources
 
-- Herdr concepts and live agent state: https://herdr.dev/docs/concepts/
-- Herdr agent automation and supported agents: https://herdr.dev/docs/agent-automation/
-- Herdr CLI control commands: https://herdr.dev/docs/cli-reference/
-- Herdr socket API and session snapshots/events: https://herdr.dev/docs/socket-api/
-- Herdr integration scope and metadata behavior: https://herdr.dev/docs/integrations/
-- Herdr plugin trust model: https://herdr.dev/docs/plugins/
-- Herdr source and Apache-2.0 license: https://github.com/herdrdev/herdr
 - quota-axi (provider quota, pace, runway, spend priority): https://github.com/kunchenguid/quota-axi
 - axi design principles for agent-native CLIs: https://github.com/kunchenguid/axi
 - Mission Control (considered as an optional fleet UI): https://github.com/builderz-labs/mission-control

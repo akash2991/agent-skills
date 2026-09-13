@@ -188,7 +188,6 @@ Product telemetry and agent-work telemetry answer different questions. When oper
 - Emit skill/document loads only when the artifact enters model context, with name/path, bytes, hash, tokens, and measurement class.
 - Emit one completion event per turn, model call, and tool call. Provider/runtime usage wins; missing usage is `UNKNOWN`, not zero.
 - Keep raw prompts, responses, reasoning, repository content, tool arguments/results, secrets, and PII out of events.
-- Use Herdr only as the runtime/control plane and optional Langfuse/OTLP only as trace storage/UI. Neither replaces the portable event contract.
 
 ## Common Rationalizations
 

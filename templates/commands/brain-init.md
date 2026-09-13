@@ -1,6 +1,6 @@
 Load the organization and claim your role for this session. Run this first in a new session; it replaces typing out who you are.
 
-This file is a command for the agent, not a shell script. Invoke it as `/brain` inside the agent.
+This file is a command for the agent, not a shell script. How you invoke it depends on the harness: `/brain-init` in Claude Code, Cursor, Gemini CLI, OpenCode and Copilot, and **`/prompts:brain-init` in Codex**, which namespaces every custom prompt under `prompts:` and reads them only from `$CODEX_HOME/prompts`. Every command this organization ships starts with `brain-`, so it never collides with a command from another tool.
 
 The role is the first argument, defaulting to `ceo` when none is given. Anything after it is your instruction for this session.
 
@@ -25,7 +25,9 @@ Read, in this order:
 
 1. `{{ORG_DIR}}/ORG.md` — the organization, the non-negotiable rules, the project flow, the merge rule, precedence and authorization.
 2. `{{SKILLS_DIR}}/<your role>/SKILL.md` — your persona: role, responsibilities, authorization, way of working, and the only skills you may use.
-3. `{{ORG_DIR}}/docs/CONVENTIONS.md` — the quality bar, and the service `CONVENTIONS.md` for any service you touch.
+3. `{{ORG_DIR}}/docs/ARCHITECTURE.md` — what exists, what each service is for, and where a change belongs.
+
+Then read only what your role decides with. The scope table in `ORG.md` under "Context scope" says what that is for you: a CEO or PM plans from `ARCHITECTURE.md` and does not load service internals or coding conventions; an engineer loads its service's `LLD.md` and `CONVENTIONS.md` and not the PRD. Context is a budget, and loading more is not being better informed.
 
 Do not load every skill now. Load a skill when its trigger matches, which is what the descriptions are for.
 

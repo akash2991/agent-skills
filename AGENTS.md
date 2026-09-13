@@ -14,7 +14,7 @@ The loop, and the invariants that keep it from eating itself, are in the `self-i
 
 ## Working here
 
-Start a session with `/brain`, the same way you would in any project the brain is installed in. Requests route through the CEO, which admits or parks them against the budget. This repository has two services, each with documents under `.agent-brain/services/`:
+Start a session with `/brain-init`, the same way you would in any project the brain is installed in. Requests route through the CEO, which admits or parks them against the budget. This repository has two services, each with documents under `.agent-brain/services/`:
 
 | Service | Covers | Personas |
 |---|---|---|
@@ -50,7 +50,7 @@ Edit the sources. Everything under `build/` is generated and git-ignored; never 
 | `agents-reports/*.md` | one uniform report per role | `.agent-brain/agents-reports/` |
 | `control-plane/` | SQLite schema, CLI, UI, usage hooks, adapters | `.agent-brain/control-plane/` |
 | `references/*.md` | shared checklists and cross-cutting contracts | `.agent-brain/references/`, with skill links rewritten |
-| `templates/` | what is stamped into a project: global docs, service docs, the entry command | global docs and service-doc template, plus `/brain` in each tool's command format |
+| `templates/` | what is stamped into a project: global docs, service docs, the entry command | global docs and service-doc template, plus `/brain-init` in each tool's command format |
 | `manifest.json` | which skills, personas, and tools get built, plus `self.add` and `self.omit` for this repository | — |
 
 ## Commands
@@ -86,7 +86,8 @@ CI runs all of these plus an inject-and-exercise smoke test. Node 22.5 or newer 
 - **Always** keep `Goal.md` untouched, and treat its updates as the requirements they are.
 - **Never** hand-edit anything under `build/`, or an emitted `ORG.md`.
 - **Never** put a model or effort on a persona, or reintroduce a per-persona allowlist.
-- **Never** add a slash command that starts a persona or a skill directly: in this organization every request routes through the CEO, and `/brain` is the only command.
+- **Never** add a slash command that starts a persona or a skill directly: in this organization every request routes through the CEO, and `/brain-init` is the only command.
+- **Always** name a command `brain-<something>`. Commands land in a directory shared with the project and its other tools, so an unprefixed name is a collision whose loser is silently whichever loads second. The validator enforces it.
 - **Never** let a product artifact reference a self-only one. Put brain-development machinery in `self.add`, and keep the universal behaviour (report friction upward) in the rules that ship.
 - **Ask first** before deleting material that is not clearly a relic of the upstream fork, and before changing a validator's contract rather than the code it checks.
 

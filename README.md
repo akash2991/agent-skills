@@ -32,14 +32,19 @@ npm run inject -- /path/to/your-repo     # install into a repository
 Then open your coding agent **in that repository** and type the slash command:
 
 ```
-/brain
+/brain-init
 ```
 
-It claims the CEO role, records the model and effort your session is actually running, prints the current state, and refuses if another terminal already holds the role. Give it a role and an instruction when you want one: `/brain ceo add saved carts`.
+It claims the CEO role, records the model and effort your session is actually running, prints the current state, and refuses if another terminal already holds the role. Give it a role and an instruction when you want one: `/brain-init ceo add saved carts`.
 
-`/brain` is a command inside the agent, not a shell command. Project commands are discovered when a session starts, so start a new session in that repository after injecting.
+Every command this organization ships is namespaced `brain-`, so it never collides with a command from another tool. It is a command inside the agent, not a shell command, and commands are discovered when a session starts, so start a new session after injecting.
 
-**Codex is the exception.** It reads custom prompts only from `$CODEX_HOME/prompts` (default `~/.codex/prompts`) and never from a repository, so the injected copy at `.codex/prompts/brain.md` is the source, not the installed command. Install it once with `npm run inject -- <path> --install-commands`, or copy it yourself; one copy serves every injected repository, because the prompt uses repository-relative paths. Injection prints the exact command when the step is outstanding. Skills and `AGENTS.md` need no such step: Codex scans `.agents/skills` up from the working directory.
+**Codex differs in two ways.** It namespaces every custom prompt, so the command is **`/prompts:brain-init`**, and it reads prompts only from `$CODEX_HOME/prompts` (default `~/.codex/prompts`), never from a repository. The injected copy at `.codex/prompts/brain-init.md` is therefore the source, not the installed command. Install it with `npm run inject -- <path> --install-commands`, or copy it yourself; one copy serves every injected repository, because the prompt uses repository-relative paths. Injection prints the exact command when the step is outstanding, and Codex needs a restart afterwards. Skills and `AGENTS.md` need no such step: Codex scans `.agents/skills` up from the working directory.
+
+| Harness | How you invoke it |
+|---|---|
+| Claude Code, Cursor, Gemini CLI, OpenCode, Copilot | `/brain-init` |
+| Codex | `/prompts:brain-init`, after installing to `~/.codex/prompts` and restarting |
 
 The equivalent from a shell, useful for scripts and for harnesses without commands, is:
 
@@ -94,9 +99,9 @@ org/              ordered parts emitted as one always-on ORG.md
 agents/           the personas; discipline variants extend a base with `extends:`
 agents-reports/   one uniform report template per role
 skills/           the flat skill dump; `category:` groups them at build time
-control-plane/    SQLite schema, CLI, UI, usage hooks, quota and Herdr adapters
+control-plane/    SQLite schema, CLI, UI, usage hooks, quota and Langfuse adapters
 references/       shared checklists and the cross-cutting contracts
-templates/        what gets stamped into a project: global docs, service docs, the entry command
+templates/        what gets stamped into a project: global docs, service docs, the entry command (every command is named brain-*)
 scripts/brain/    validate · select · build · inject · import
 docs/             brain.md, persona-anatomy.md, skill-anatomy.md
 evals/            trigger and routing evals; every skill needs a case
@@ -114,7 +119,6 @@ Built here only where nothing existed. Everything else is borrowed:
 | [quota-axi](https://github.com/kunchenguid/quota-axi) | provider quota, pace, runway, and spend priority across Claude, Codex, Cursor, Copilot, Grok, Kimi, Z.AI, OpenCode |
 | [Linear](https://linear.app) | the tracker: milestones, sprints, tickets, bugs, blockers, reports |
 | [GitHub](https://github.com) | pull requests, reviews, CI/CD, releases |
-| [Herdr](https://herdr.dev) | optional control of live agent terminals: focus, steer, interrupt, stop |
 | [Langfuse](https://langfuse.com) | trace timelines, agent graphs, and cost dashboards; the recommended UI |
 
 The reasoning, including what was evaluated and rejected, is in [references/agent-observability.md](references/agent-observability.md).

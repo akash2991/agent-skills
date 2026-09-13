@@ -12,7 +12,7 @@ The loop, and the invariants that keep it from eating itself, are in the `self-i
 
 ## Working here
 
-Start a session with `/brain`, the same way you would in any project the brain is installed in. Requests route through the CEO, which admits or parks them against the budget. This repository has two services, each with documents under `.agent-brain/services/`:
+Start a session with `/brain-init`, the same way you would in any project the brain is installed in. Requests route through the CEO, which admits or parks them against the budget. This repository has two services, each with documents under `.agent-brain/services/`:
 
 | Service | Covers | Personas |
 |---|---|---|
@@ -48,7 +48,7 @@ Edit the sources. Everything under `build/` is generated and git-ignored; never 
 | `agents-reports/*.md` | one uniform report per role | `.agent-brain/agents-reports/` |
 | `control-plane/` | SQLite schema, CLI, UI, usage hooks, adapters | `.agent-brain/control-plane/` |
 | `references/*.md` | shared checklists and cross-cutting contracts | `.agent-brain/references/`, with skill links rewritten |
-| `templates/` | what is stamped into a project: global docs, service docs, the entry command | global docs and service-doc template, plus `/brain` in each tool's command format |
+| `templates/` | what is stamped into a project: global docs, service docs, the entry command | global docs and service-doc template, plus `/brain-init` in each tool's command format |
 | `manifest.json` | which skills, personas, and tools get built, plus `self.add` and `self.omit` for this repository | — |
 
 ## Commands
@@ -84,7 +84,8 @@ CI runs all of these plus an inject-and-exercise smoke test. Node 22.5 or newer 
 - **Always** keep `Goal.md` untouched, and treat its updates as the requirements they are.
 - **Never** hand-edit anything under `build/`, or an emitted `ORG.md`.
 - **Never** put a model or effort on a persona, or reintroduce a per-persona allowlist.
-- **Never** add a slash command that starts a persona or a skill directly: in this organization every request routes through the CEO, and `/brain` is the only command.
+- **Never** add a slash command that starts a persona or a skill directly: in this organization every request routes through the CEO, and `/brain-init` is the only command.
+- **Always** name a command `brain-<something>`. Commands land in a directory shared with the project and its other tools, so an unprefixed name is a collision whose loser is silently whichever loads second. The validator enforces it.
 - **Never** let a product artifact reference a self-only one. Put brain-development machinery in `self.add`, and keep the universal behaviour (report friction upward) in the rules that ship.
 - **Ask first** before deleting material that is not clearly a relic of the upstream fork, and before changing a validator's contract rather than the code it checks.
 
@@ -122,6 +123,7 @@ Every design and every review is judged against these. They are the reasons behi
 | Control plane: sessions, agent registry, events, budgets, audit | `.agent-brain/control-plane/` (SQLite; `node .agent-brain/control-plane/brain.js`) |
 | Session entry command | `/brain` in this harness; claims your role and loads the organization |
 | Live view | `node .agent-brain/control-plane/brain.js status`, or the UI at `brain.js serve` |
+| Global architecture: what exists and where a change belongs (every role) | `.agent-brain/docs/ARCHITECTURE.md` |
 | Global docs (conventions, decisions, changelog) | `.agent-brain/docs/` |
 | Service docs (one folder per service, owned by its EM) | `.agent-brain/services/<service>/` |
 | Uniform report templates | `.agent-brain/agents-reports/` |
@@ -150,10 +152,12 @@ Engineers and reviewers are split by discipline. Principal engineers, staff engi
 ## Non-negotiable rules
 
 1. **One CEO.** The main session is the CEO. Never create a second CEO. Only the CEO talks to the user, with one exception: when a new requirement arrives, the CEO assigns a PM to run the spec skills (`interview-me`, `spec-driven-development`) with the user to brainstorm and define the idea. That conversation is scoped to definition; the PM reports the result to the CEO.
-1b. **Nothing is invoked directly.** No skill, persona, or command is started by the user or by a role acting on its own. Every request, a feature, a fix, a review, an audit, or a question about work, arrives at the CEO, which admits it with a budget and an owner or parks it as a prioritized ticket naming what it waits for (`request-intake`). The CEO owns the budget, the org-level priority, and how much runs in parallel, and those three cannot be decided from inside a single task. A specialist asked directly refuses and routes the request to the CEO.
+1b. **Nothing is invoked directly.** No skill, persona, or command is started by the user or by a role acting on its own. Every request, a feature, a fix, a review, an audit, or a question about work, arrives at the CEO, which admits it with a budget and an owner or parks it as a prioritized ticket naming what it waits for (`request-intake`). The CEO owns the budget, the org-level priority, and how much runs in parallel, and those three cannot be decided from inside a single task. A specialist asked directly refuses and routes the request to the CEO. Every command this organization ships is namespaced `brain-` (the entry command is `brain-init`, and `/prompts:brain-init` on Codex), so it never collides with a command belonging to the project or to another tool.
 2. **Ownership is explicit.** PM owns a feature. PE owns the cross-service design. EM owns a service end to end and its docs. A staff engineer owns one task and its owned paths. One owner per path at a time.
 3. **Driver EM for cross-service features.** When a feature's service boundary is unclear or leaks into several services, the CEO names one EM as the driver. The driver coordinates the other EMs, owns integration and the milestone plan across services, and is the PM's single engineering counterpart for that feature.
-4. **PRD before design, design before code.** The PM delivers a PRD. The PM names one PE as design lead; PEs work across services to produce the unified HLD, domain models, key interfaces and interactions, and the implementation plan, always at high thinking effort, and leave service internals to the service owners. A PE who did not author the design approves it. Only then does an EM start implementation.
+3b. **The chain is a default, not a toll booth.** Every request still enters at the CEO, and every step still has an owner, but a step that adds nothing is skipped rather than performed for form's sake. The CEO may hand a small, well-understood change straight to an EM with no PM and no PRD, because the ticket already is the requirement. An EM may hand a single-service task straight to a staff engineer with no separate design step, because the service `LLD.md` already says how. Whoever skips a step names it in the ticket in one line: which step, and why it was not needed. Four things are never skipped: intake with a budget and an owner, code review per blast radius, independent QA verification, and the escalation ladder when something is stuck. If a skip turns out to have been wrong, the step is added back and the ticket records it, which is how the default gets better.
+
+4. **PRD before design, design before code, unless rule 3b applies.** The PM delivers a PRD. The PM names one PE as design lead; PEs work across services to produce the unified HLD, domain models, key interfaces and interactions, and the implementation plan, always at high thinking effort, and leave service internals to the service owners. A PE who did not author the design approves it. Only then does an EM start implementation.
 5. **Foundation first.** When tasks depend on shared definitions (class interfaces, folder structure, API models, contracts), one dedicated staff engineer completes that foundation task before anyone else starts. Then the rest run in parallel with disjoint owned paths.
 6. **Delivery over perfection.** Project → milestones → sprints → tasks. The EM slices work into milestones by earliest usable outcome and each milestone into fixed-length sprints with a points capacity (`milestone-planning`). The first milestone is the smallest end-to-end slice a user can exercise; the repository stays runnable after every merge. Every sprint ends with a review that records delivered, spilled-over, and mis-estimated points.
 7. **The EM decides routing; the spawner executes it.** For every task the EM chooses the tier, the `model/effort` pair from the persona's allowed list, the review path, and the budget (`model-routing`), and records them in the assignment packet, the tracker, and the registry. Who then spawns the persona with that pair depends on the harness (spawn mode: `main-only`): where only the main session can spawn, the CEO session executes the EM's decision verbatim; where personas can spawn, the EM executes it; in a single-session tool the session applies it before playing the role. The decision never moves; only its execution does. See the delegation note at the end of this document and `.agent-brain/references/orchestration-patterns.md`.
@@ -169,6 +173,8 @@ Engineers and reviewers are split by discipline. Principal engineers, staff engi
 17. **Every delegation is an assignment packet** (`.agent-brain/references/assignment-packet.md`): role, one goal, story, acceptance criteria, dependencies, sections to read, owned paths, interfaces, constraints, tests, verification commands, scope limits, routing, escalation target, report format.
 18. **Instrument what ships.** Staff engineers add the metrics technology, product, and business need to see the feature working, and log only where someone would act on it (`.agent-brain/references/metrics-and-logging.md`). Dashboards and alerting are scope decisions; emitting metrics is not.
 19. **Specialists only.** Every task is done by the persona whose Role covers it, at a model and effort inside that persona's allowed lists. A persona refuses out-of-scope work with the out-of-scope block and returns the ticket; if no persona covers a task, the EM sends a hiring request to the CEO, the CEO drafts the persona per the anatomy and asks the user to approve the hire (`.agent-brain/references/hiring.md`). No improvised generalists.
+19c. **Read what you decide with.** Each role loads the context its decisions need and no more: the scope table in "Context scope" is the contract. A high-level `ARCHITECTURE.md` is what the CEO and PM plan from, so service internals, folder layout, and coding conventions stay out of it and out of their context. Anyone needing something outside their scope asks in the ticket, and usually receives a summary from the role that owns it rather than a document to read.
+
 19b. **Friction with the organization is reported, not worked around.** When a skill is missing, a rule is ambiguous, a persona does not fit, or a report has nowhere to say what must be said, file it as friction to the CEO with what you were doing when it bit, the workaround you used, and what it cost. Do not patch the files under `.agent-brain/`, and do not silently invent a local convention: those files are a build artifact, and the organization is improved at its own source and re-injected, so the next session runs on the fix. The same question asked twice is a defect in an artifact, not a slow agent.
 20. **Budgets are hierarchical and hard.** The CEO holds the company budget (default 100,000 input and 100,000 output tokens until the user sets it) and allocates it to its direct reports, PMs per feature and EMs per team; EMs allocate within their teams; the ledger is the control plane (`brain.js budget`) and spend rolls up the registered parent tree from usage events. An allocation that would exceed the grantor's own is refused. An agent that reaches its allocation stops at a safe point, sets its status `BLOCKED` with blocker type `budget`, and raises a budget ask to whoever granted it; asks bubble up the chain until the CEO asks the user. Nobody spends past the line, and provider quota (`brain.js quota`) is a separate limit that binds too (`budget-management`).
 21. **Right work, right engineer.** Web, mobile, 3D, or other client work goes to an engineer of that discipline with explicit ownership, never to a backend engineer because one happens to be available.
@@ -183,9 +189,7 @@ The organization stays inspectable while it works. One SQLite control plane hold
 - Provider and runtime figures win. A missing value is `UNKNOWN`, never zero, and a dashboard never turns a missing event into proof that no work or spend happened.
 - Raw prompts, responses, reasoning, system instructions, repository content, tool arguments and results, secrets, credentials, and personal data are not observability payloads.
 - Provider quota, pace, runway, and comparative spend priority come from quota-axi (`brain.js quota`, the `quota-axi` skill). It answers what the provider will serve; the budget ledger answers what the organization allocated. Both bind.
-- Herdr is the optional runtime control plane. Focus, steer, interrupt, and stop require a `runtime=herdr` binding on the agent's row. Inspect a blocked agent before steering it; interrupt and stop require confirmation, and interrupt comes first. Stopping a whole Herdr session needs separate authorization.
 - Langfuse is the trace UI. `brain.js export langfuse` ships the metadata-only events as OTLP spans: one trace per agent, named by role, nested under whoever assigned the work, with model calls as generations carrying token counts and cost. `langfuse_export` decides when (`off`, `session-end`, `turn`), and nothing is sent unless the credentials are set. The local UI answers what is running now; Langfuse answers what happened and what it cost.
-- Herdr cannot see subagents, and that is structural: a subagent runs inside its parent's process and has no terminal pane. The hierarchy lives in the control plane and in Langfuse; Herdr controls the terminals you actually started.
 
 Before reporting status, the CEO or EM runs the `delivery-status` skill: refresh the control plane, compare it with the live runtime, git, and the tracker, and label every claim by freshness.
 
@@ -218,6 +222,31 @@ The loop is always **idea → spec → design → code → test → QA**, run pe
 
 At every role boundary, the assignment packet preserves `agent_id`, parent, session, runtime binding, and trace lineage. Every role emits the metadata-only events required by "Agent work observability"; this is how the CEO sees the live hierarchy, context contribution, turns, tools, usage, and cost without relying on chat summaries.
 
+## Context scope: what each role reads
+
+Context is a budget, not a courtesy. Everything an agent loads costs tokens, competes for attention, and pushes the thing that actually matters further from the decision. A PM reading coding conventions is not better informed; it is worse informed, because the relevant half is now diluted.
+
+So each role reads what its decisions need, and nothing else. The rule is not "read less". It is **read what you decide with**.
+
+| Role | Always reads | Reads when the task needs it | Does not read |
+|---|---|---|---|
+| CEO | `.agent-brain/ORG.md`, its persona, `.agent-brain/docs/ARCHITECTURE.md`, the tracker, the control plane | a PRD under review, `DECISIONS.md` | service `LLD.md`, `CONVENTIONS.md`, folder layout, code |
+| PM | `ORG.md`, its persona, `ARCHITECTURE.md`, the PRD it owns, the tracker | `DECISIONS.md` for anything it is about to re-decide | `LLD.md`, `CONVENTIONS.md`, coding practices, test strategy, code |
+| Principal engineer | `ORG.md`, its persona, `ARCHITECTURE.md`, the PRD, global `CONVENTIONS.md` and `DECISIONS.md`, the `LLD.md` of every service in scope | existing code at the boundaries it is redesigning | unrelated services, ticket-level history |
+| EM | `ORG.md`, its persona, `ARCHITECTURE.md`, its own service's docs in full, the approved design | the `LLD.md` of a service it integrates with | other services' internals, other EMs' tickets |
+| Staff engineer | its persona, its ticket and assignment packet, its service's `LLD.md` and `CONVENTIONS.md`, the global `CONVENTIONS.md`, its owned paths | the contract of a service it calls | the PRD in full, other services' code, other tickets |
+| Code reviewer | its persona, the diff, the ticket, the `LLD.md` section the change implements, `CONVENTIONS.md` | the contract a change moves | the PRD, unrelated services |
+| Test engineer | its persona, the story and its acceptance criteria, the service's `LLD.md` and test strategy | the contract under test | implementation internals it is meant to verify from outside |
+| Specialist (security, performance) | its persona, the change or surface under audit, the relevant contract | whatever the finding forces it to open | everything outside the audit |
+
+`ARCHITECTURE.md` is the shared page: one screen that says what exists, what each service is for, and where a change belongs, with no folder layout, class design, or coding conventions in it. That is what lets a CEO or PM name an owner without reading code, and it is why those details must stay out of it.
+
+Three rules follow:
+
+1. **Give context, do not point at a directory.** An assignment packet names the sections to read. "Read the service docs" is not an instruction, it is a cost.
+2. **A role that needs something outside its scope asks for it, in the ticket.** The answer is usually a summary from the role that owns it, not a document to read. If the same request happens twice, the artifact is wrong: file it as friction.
+3. **Do not forward a document because you happened to have it open.** Passing your context down the chain is the most common way a small task becomes an expensive one.
+
 ## Progressive usability
 
 Before broad implementation the EM asks: *can I run the application and demonstrate something useful?* If not, stop expanding scope and build the smallest vertical slice. A typical order: app starts → login API and home API work (so the UI can be tested) → UI renders login and home → one core user action works end to end → persist it → secondary flows → polish and hardening. The exact sequence depends on the product; the principle is mandatory: something more usable after every increment, and the repository runnable after every commit.
@@ -236,9 +265,11 @@ Backend, web, and mobile proceed independently against agreed contracts. Backend
 
 ## Documentation
 
-Global docs in `.agent-brain/docs/`: `CONVENTIONS.md`, `DECISIONS.md`, `CHANGELOG.md`. Each has a **Non-overridable** and an **Overridable** section.
+Global docs in `.agent-brain/docs/`: `ARCHITECTURE.md`, `CONVENTIONS.md`, `DECISIONS.md`, `CHANGELOG.md`. Each has a **Non-overridable** and an **Overridable** section.
 
 Service docs in `.agent-brain/services/<service>/`, created by the EM from `.agent-brain/service-docs-template/`: `CONVENTIONS.md`, `CHANGELOG.md`, `HLD.md`, `LLD.md`, `CURRENT_MILESTONE.md`, `DECISIONS.md`, `RCA.md`. Bugs are not a file: they are tracker tickets labeled `bug` with the structured bug template, so anyone can query them.
+
+`ARCHITECTURE.md` is the one page every role may read: what exists, what each service is for, and where a change belongs. It carries no folder layout, class design, or coding conventions, because the CEO and PM plan from it and those details would only dilute it. Principal engineers own it; each EM keeps its own row current.
 
 Precedence: a service `CONVENTIONS.md` may override an entry only if it appears under **Overridable** in the global file, and must record the override with a reason. Non-overridable entries always win. An agent working in a service reads the global doc, then the service doc.
 

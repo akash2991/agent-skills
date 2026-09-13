@@ -18,15 +18,24 @@
   header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
   h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .02em; }
   .dim { color: var(--dim); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; padding: 12px 16px; }
+  /* One component per tab. Sections used to share an auto-fit grid, so every new row reflowed the
+     whole page and whatever you were reading moved. A tab owns the viewport and only its own
+     content scrolls, so nothing below you shifts while data arrives. */
+  nav.tabs { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); overflow-x: auto; position: sticky; top: 49px; background: var(--bg); z-index: 2; }
+  nav.tabs button { border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; padding: 5px 12px; color: var(--dim); background: none; white-space: nowrap; }
+  nav.tabs button[aria-selected="true"] { color: var(--text); background: var(--panel); border-color: var(--line); }
+  nav.tabs button .count { color: var(--dim); font-size: 11px; margin-left: 6px; font-variant-numeric: tabular-nums; }
+  main { padding: 12px 16px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  section[hidden] { display: none; }
   section > h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
-  .wide { grid-column: 1 / -1; }
+  /* The scroll lives inside the panel, so the page itself never grows and never jumps. */
+  .scroll { overflow: auto; max-height: calc(100vh - 190px); }
+  thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
   th { color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .scroll { overflow-x: auto; }
   .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); }
   .RUNNING, .OK, .success { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
   .WARN, .WAITING, .PLANNED, .PENDING, .NO_USAGE_RECORDED { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
@@ -58,44 +67,55 @@
   </span>
 </header>
 
-<div class="grid">
-  <section class="wide"><h2>Agents</h2><div class="scroll"><table class="tree">
+<nav class="tabs" id="tabs">
+  <button type="button" data-tab="agents" aria-selected="false">Agents<span class="count" data-count="agents"></span></button>
+  <button type="button" data-tab="budgets" aria-selected="false">Budgets<span class="count" data-count="budgets"></span></button>
+  <button type="button" data-tab="quota" aria-selected="false">Quota<span class="count" data-count="quota"></span></button>
+  <button type="button" data-tab="models" aria-selected="false">Models<span class="count" data-count="models"></span></button>
+  <button type="button" data-tab="context" aria-selected="false">Context<span class="count" data-count="context"></span></button>
+  <button type="button" data-tab="tools" aria-selected="false">Tools<span class="count" data-count="tools"></span></button>
+  <button type="button" data-tab="attention" aria-selected="false">Attention<span class="count" data-count="attention"></span></button>
+  <button type="button" data-tab="changes" aria-selected="false">Audit<span class="count" data-count="changes"></span></button>
+</nav>
+
+<main>
+<section data-tab="agents" hidden><h2>Agents</h2><div class="scroll"><table class="tree">
     <thead><tr><th>agent</th><th>status</th><th>role</th><th>ticket</th><th>model</th><th>effort</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th><th class="num">hb</th><th>operation</th><th></th></tr></thead>
     <tbody id="agents"></tbody></table></div></section>
 
-  <section><h2>Budgets</h2><div class="scroll"><table>
+<section data-tab="budgets" hidden><h2>Budgets</h2><div class="scroll"><table>
     <thead><tr><th>holder</th><th>status</th><th class="num">in spent</th><th>alloc in</th><th class="num">out spent</th><th>alloc out</th><th>use</th><th></th></tr></thead>
     <tbody id="budgets"></tbody></table></div>
     <div id="asks"></div>
   </section>
 
-  <section><h2>Provider quota (quota-axi)</h2><div class="scroll"><table>
+<section data-tab="quota" hidden><h2>Provider quota (quota-axi)</h2><div class="scroll"><table>
     <thead><tr><th>provider</th><th>scope</th><th class="num">left</th><th class="num">priority</th><th>runway</th><th>pace</th></tr></thead>
     <tbody id="quota"></tbody></table></div>
   </section>
 
-  <section><h2>Spend by model</h2><div class="scroll"><table>
+<section data-tab="models" hidden><h2>Spend by model</h2><div class="scroll"><table>
     <thead><tr><th>model</th><th class="num">calls</th><th class="num">in</th><th class="num">out</th><th class="num">cost</th></tr></thead>
     <tbody id="models"></tbody></table></div>
   </section>
 
-  <section><h2>Context: skills and documents loaded</h2><div class="scroll"><table>
+<section data-tab="context" hidden><h2>Context: skills and documents loaded</h2><div class="scroll"><table>
     <thead><tr><th>kind</th><th>name</th><th class="num">loads</th><th class="num">tokens</th></tr></thead>
     <tbody id="artifacts"></tbody></table></div>
   </section>
 
-  <section><h2>Tool calls</h2><div class="scroll"><table>
+<section data-tab="tools" hidden><h2>Tool calls</h2><div class="scroll"><table>
     <thead><tr><th>tool</th><th>outcome</th><th class="num">n</th></tr></thead>
     <tbody id="tools"></tbody></table></div>
   </section>
 
-  <section><h2>Attention</h2><div id="attention"></div></section>
+<section data-tab="attention" hidden><h2>Attention</h2><div id="attention"></div></section>
 
-  <section class="wide"><h2>Recent changes</h2><div class="scroll"><table>
+<section data-tab="changes" hidden><h2>Recent changes</h2><div class="scroll"><table>
     <thead><tr><th>at</th><th>actor</th><th>entity</th><th>field</th><th>from</th><th>to</th><th>reason</th></tr></thead>
     <tbody id="changes"></tbody></table></div>
   </section>
-</div>
+</main>
 
 <div id="toast"></div>
 
@@ -157,6 +177,7 @@ function agentRows(nodes, depth, out) {
 }
 
 function render(s) {
+  renderCounts(s);
   $('checked').textContent = new Date(s.checked_at).toLocaleTimeString();
   $('sessions').innerHTML = s.sessions.length
     ? s.sessions.map(x => '<span class="pill RUNNING">' + esc(x.role) + '</span> ' + esc(x.id) + ' ' + esc(x.harness) + ' ' + esc(x.model || UNKNOWN) + '/' + esc(x.effort || UNKNOWN)
@@ -212,6 +233,7 @@ function render(s) {
 }
 
 function renderQuota(q) {
+  setCount('quota', q && q.scopes ? q.scopes.length : '');
   if (!q || !q.available) {
     $('quota').innerHTML = '<tr><td colspan="6" class="note">' + esc((q && q.reason) || 'quota ' + UNKNOWN) + '</td></tr>';
     return;
@@ -252,6 +274,42 @@ async function refresh() {
 async function refreshQuota() {
   try { renderQuota(await (await fetch('/api/quota')).json()); } catch { renderQuota(null); }
 }
+// ── tabs ────────────────────────────────────────────────────────────────────
+// One component per tab, and the choice survives a reload. Without that, every refresh would drop
+// you back on the first tab, which is the same interruption the tabs exist to remove.
+const TAB_KEY = 'agent-brain.tab';
+function showTab(name) {
+  const tabs = [...document.querySelectorAll('nav.tabs button')];
+  const known = tabs.some(b => b.dataset.tab === name) ? name : tabs[0].dataset.tab;
+  for (const b of tabs) b.setAttribute('aria-selected', String(b.dataset.tab === known));
+  for (const p of document.querySelectorAll('main section')) p.hidden = p.dataset.tab !== known;
+  try { localStorage.setItem(TAB_KEY, known); } catch { /* private window: the tab just resets */ }
+}
+document.getElementById('tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-tab]');
+  if (b) showTab(b.dataset.tab);
+});
+let storedTab = null;
+try { storedTab = localStorage.getItem(TAB_KEY); } catch { /* ignore */ }
+showTab(storedTab || 'agents');
+
+// Counts on the tab labels, so a tab worth opening says so without being opened.
+function setCount(name, n) {
+  const el = document.querySelector(`[data-count="${name}"]`);
+  if (el) el.textContent = n === null || n === undefined ? '' : n;
+}
+function renderCounts(s) {
+  setCount('agents', (s.tree || []).length);
+  setCount('budgets', (s.budgets || []).length);
+  setCount('models', (s.by_model || []).length);
+  setCount('context', (s.artifacts || []).length);
+  setCount('tools', (s.tools || []).length);
+  setCount('changes', (s.recent_changes || s.changes || []).length);
+  const attention = (s.blocked || []).length + (s.stale || []).length
+    + (s.path_conflicts || []).length + (s.open_budget_requests || []).length;
+  setCount('attention', attention || '');
+}
+
 refresh(); refreshQuota();
 setInterval(() => { if ($('live').checked) refresh(); }, 3000);
 setInterval(() => { if ($('live').checked) refreshQuota(); }, 60000);

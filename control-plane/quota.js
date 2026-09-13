@@ -62,4 +62,35 @@ function preferred(scopes) {
     .sort((a, b) => (b.spend_priority ?? -101) - (a.spend_priority ?? -101));
 }
 
-module.exports = { read, normalize, preferred, PROVIDERS };
+// Persist a reading so the database records what the account actually had, rather than only what a
+// command printed once. A quota figure is only current when just read; the timestamp is what lets a
+// later report say `HISTORICAL` honestly instead of implying freshness it does not have.
+function snapshot(db, reading) {
+  if (!db || !reading || !reading.scopes || !reading.scopes.length) return 0;
+  const at = reading.generated_at || new Date().toISOString();
+  const insert = db.prepare(`INSERT OR REPLACE INTO provider_quota
+    (read_at, provider, scope, plan, status, percent_remaining, spend_priority, runway_status,
+     runway_seconds, projected_exhausted_at, pace_status, burn_multiple, provider_state, stale)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  for (const s of reading.scopes) {
+    insert.run(at, s.provider, s.scope, s.plan ?? null, s.status ?? null,
+      s.percent_remaining ?? null, s.spend_priority ?? null, s.runway_status ?? null,
+      s.runway_seconds ?? null, s.projected_exhausted_at ?? null, s.pace_status ?? null,
+      s.burn_multiple ?? null, s.provider_state ?? null, s.stale === undefined ? null : (s.stale ? 1 : 0));
+  }
+  return reading.scopes.length;
+}
+
+// The most recent reading per scope, for a report that must not re-run the CLI.
+function latest(db) {
+  return db.prepare(`SELECT p.* FROM provider_quota p
+    JOIN (SELECT provider, scope, MAX(read_at) read_at FROM provider_quota GROUP BY provider, scope) m
+      ON m.provider = p.provider AND m.scope = p.scope AND m.read_at = p.read_at
+    ORDER BY p.spend_priority DESC`).all();
+}
+
+function isSeeded(db) {
+  return Boolean(db.prepare('SELECT 1 FROM provider_quota LIMIT 1').get());
+}
+
+module.exports = { read, normalize, preferred, snapshot, latest, isSeeded, PROVIDERS };

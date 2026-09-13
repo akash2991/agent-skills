@@ -79,25 +79,12 @@ node brain.js serve            # http://127.0.0.1:4173
 
 Loopback only, zero dependencies. Shows the agent tree with status, model, effort, tokens, cost and heartbeat; budgets with spend bars and open asks; provider quota; spend by model; which skills and documents entered context and their token cost; tool calls and failures; what needs attention; and the audit trail. Model, effort, status, operation, and allocations are editable, and every edit is the same audited mutation as the CLI.
 
-## Runtime control (optional, Herdr)
-
-Bind an agent to a live terminal (`runtime=herdr`, `runtime_ref=<agent name or pane id>`), then:
-
-```bash
-node brain.js control focus     --agent-id staff-ENG-42-1
-node brain.js control steer     --agent-id staff-ENG-42-1 --text "Re-run the focused test and report."
-node brain.js control interrupt --agent-id staff-ENG-42-1 --confirm
-node brain.js control stop      --agent-id staff-ENG-42-1 --confirm
-```
-
-Interrupt sends ctrl+c; stop closes the pane and terminates its processes. Both require `--confirm`, and interrupt is the safer first choice. Inspect a blocked agent before steering it.
 
 ## Optional external views
 
 | Tool | What it adds | How |
 |---|---|---|
 | [quota-axi](https://github.com/kunchenguid/quota-axi) | plan quota, pace, runway, spend priority | already wired; `--tui` for a live view |
-| [Herdr](https://herdr.dev) | persistent agent terminals, focus/steer/interrupt/stop | `herdr plugin link .agent-brain/control-plane` |
 | [Langfuse](https://langfuse.com) | trace timelines, agent graphs, sessions, cost dashboards | export events through an OTLP adapter; opt-in |
 | [Mission Control](https://github.com/builderz-labs/mission-control) | a hosted fleet UI | mirror registrations and usage to its REST API; alpha, and its task board is not used because the tracker is the source of truth for work |
 
@@ -113,6 +100,6 @@ See `../references/agent-observability.md` for the architecture decision, the Op
 | `brain.js` | the CLI (context, session, agent, budget, quota, status, event, control, serve, config) |
 | `emit.js` | event validation and ingestion, shared with host hooks |
 | `quota.js` | quota-axi adapter |
-| `control.js` | Herdr control adapter |
+| `langfuse.js` | Langfuse OTLP export adapter |
 | `server.js` + `ui.html` | local UI and JSON API |
 | `event.schema.json` | the metadata-only event contract |

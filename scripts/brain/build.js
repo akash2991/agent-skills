@@ -111,9 +111,13 @@ for (const id of targets) {
   for (const rel of copyTree(REPORTS_DIR, path.join(out, O, 'agents-reports'), md(vars))) files.push(`${O}/agents-reports/${rel}`);
   for (const rel of copyTree(path.join(TEMPLATES_DIR, 'service-docs'), path.join(out, O, 'service-docs-template'), md(vars))) files.push(`${O}/service-docs-template/${rel}`);
   for (const rel of copyTree(path.join(TEMPLATES_DIR, 'global-docs'), path.join(out, O, 'docs'), md(vars))) seeds.push(`${O}/docs/${rel}`);
-  // The control plane is code plus a schema. Its SQLite database is created on first use and is
-  // never shipped or overwritten, so every file here is owned rather than seeded.
-  for (const rel of copyTree(CONTROL_PLANE_DIR, path.join(out, O, 'control-plane'), md(vars))) files.push(`${O}/control-plane/${rel}`);
+  // The control plane is code plus a schema. Its SQLite database is live state belonging to whoever
+  // ran it, so it must never be copied into a build and from there into somebody else's repository:
+  // that would hand every project this one's sessions, agents, budgets and events. Running the CLI
+  // from the source directory creates one right here, so the exclusion is not hypothetical.
+  const runtimeState = rel => /(^|\/)brain\.db(-wal|-shm)?$/.test(rel);
+  const controlPlane = (rel, buf) => (runtimeState(rel) ? null : md(vars)(rel, buf));
+  for (const rel of copyTree(CONTROL_PLANE_DIR, path.join(out, O, 'control-plane'), controlPlane)) files.push(`${O}/control-plane/${rel}`);
   for (const rel of copyTree(REFERENCES_DIR, path.join(out, O, 'references'), md(vars))) files.push(`${O}/references/${rel}`);
   for (const f of ['persona-anatomy.md']) {
     const p = path.join(DOCS_DIR, f);

@@ -168,3 +168,25 @@ CREATE TABLE IF NOT EXISTS exports (
   exported_at TEXT NOT NULL,
   PRIMARY KEY (event_id, backend)
 );
+
+-- What each provider said was left on the plan, snapshotted every time quota is read. A fresh
+-- database is seeded with one snapshot at the first session claim, so budgets start from the real
+-- account rather than from a guess, and a later reading can be compared against it.
+CREATE TABLE IF NOT EXISTS provider_quota (
+  read_at              TEXT NOT NULL,
+  provider             TEXT NOT NULL,
+  scope                TEXT NOT NULL,
+  plan                 TEXT,
+  status               TEXT,
+  percent_remaining    REAL,
+  spend_priority       REAL,
+  runway_status        TEXT,
+  runway_seconds       REAL,
+  projected_exhausted_at TEXT,
+  pace_status          TEXT,
+  burn_multiple        REAL,
+  provider_state       TEXT,
+  stale                INTEGER,
+  PRIMARY KEY (read_at, provider, scope)
+);
+CREATE INDEX IF NOT EXISTS provider_quota_latest ON provider_quota(provider, scope, read_at DESC);
