@@ -5,7 +5,7 @@ const path = require('path');
 const { AGENTS_DIR, exists, splitList } = require('./fs-utils');
 const fm = require('./frontmatter');
 
-const REQUIRED_SECTIONS = ['## Role', '## Responsibilities', '## Inputs', '## Output', '## Goals', '## Handover', '## Success Criteria',
+const REQUIRED_SECTIONS = ['## Role', '## Responsibilities', '## Inputs', '## Output', '## Goals', '## Success Criteria',
   '## Tools', '## Authorization', '## Way of Working', '## Quality Non-negotiables', '## Skills', '## Composition', '## Red Flags'];
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 

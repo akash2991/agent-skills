@@ -26,9 +26,8 @@ Every persona is a specialist: its `## Authorization` ends with a refusal of wor
 | `## Role` | One paragraph: who this is and what it owns. |
 | `## Responsibilities` | Bullet list of what the role is accountable for. |
 | `## Goals` | What "good" looks like for this role, as outcomes. |
-| `## Handover` | How the role hands back to the coordinator, and how it names what should run next without invoking it. |
 | `## Inputs` | Exactly what the coordinator must supply before this role can start. The role asks for these and never guesses one. |
-| `## Output` | The structured result the role ends with, so the next role has something to take as input rather than a transcript to reread. |
+| `## Output` | The structured result the role ends with, and what should be invoked next. This is the whole handover: there is no separate protocol section, because the protocol is the same for every role and lives in the org rules. |
 | `## Success Criteria` | Measurable checks the role is judged on. |
 | `## Tools` | Tool access: tracker, repository, shell, subagents, external services. |
 | `## Authorization` | Three lists: may do alone, must ask (and whom), never. |
