@@ -4,7 +4,7 @@
 // manifest.json, templates/, references/. Exit 1 on errors.
 const path = require('path');
 const fs = require('fs');
-const { TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, exists, loadManifest } = require('./lib/fs-utils');
+const { ROOT, DUMP_DIR, AGENTS_DIR, TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, exists, loadManifest } = require('./lib/fs-utils');
 const { indexDump, resolveManifest } = require('./lib/dump');
 const { indexPersonas } = require('./lib/personas');
 const { TARGETS } = require('./lib/targets');
@@ -12,7 +12,11 @@ const { lintSkillContent } = require(path.join(__dirname, '..', 'lib', 'skill-li
 
 const errors = [];
 const warnings = [];
-const manifest = loadManifest();
+// Validate everything that either build ships: the product selection plus whatever the self build
+// adds. Omissions are not validated away, because they are still product artifacts.
+const manifest = loadManifest({ selfBuild: true });
+for (const name of manifest.selfOmitPersonas) if (!manifest.personas.includes(name)) manifest.personas.push(name);
+for (const name of manifest.selfOmitSkills) if (!manifest.skills.includes(name)) manifest.skills.push(name);
 
 // Skills: index problems for all, anatomy lint for selected.
 const entries = indexDump();
@@ -64,7 +68,36 @@ for (const f of ['global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'glob
 if (!exists(path.join(REFERENCES_DIR, 'project-management-interface.md'))) errors.push('references/project-management-interface.md is missing');
 if (!exists(path.join(REFERENCES_DIR, 'agent-observability.md'))) errors.push('references/agent-observability.md is missing');
 
-console.log(`skills: ${entries.length} in skills/, ${selected.length} selected · personas: ${personas.length} selected`);
+// Leak check. Rule parts, report templates, references, and every product skill or persona ship to
+// projects that consume the brain. None of them may name an artifact that only the self build
+// carries, or the reference dangles there.
+const selfOnly = new Set([...(manifest.selfAddSkills || []), ...(manifest.selfAddPersonas || [])]);
+if (selfOnly.size) {
+  const productSkills = new Set(selected.filter(e => !selfOnly.has(e.name)).map(e => e.name));
+  const productFiles = [];
+  const collect = (dir, filter = f => f.endsWith('.md')) => {
+    if (!exists(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
+      const full = path.join(dir, f);
+      if (fs.statSync(full).isDirectory()) collect(full, filter);
+      else if (filter(f)) productFiles.push(full);
+    }
+  };
+  collect(ORG_DIR_SRC); collect(REPORTS_DIR); collect(REFERENCES_DIR); collect(TEMPLATES_DIR);
+  for (const name of productSkills) productFiles.push(path.join(DUMP_DIR, name, 'SKILL.md'));
+  for (const p2 of personas.filter(x => !selfOnly.has(x.name) && !x.missing)) productFiles.push(path.join(AGENTS_DIR, `${p2.name}.md`));
+  for (const file of productFiles) {
+    if (!exists(file)) continue;
+    const text = fs.readFileSync(file, 'utf8');
+    for (const name of selfOnly) {
+      if (new RegExp('`' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '`').test(text)) {
+        errors.push(`${path.relative(ROOT, file)} references \`${name}\`, which only the self build ships: a project that consumes the brain would find it missing`);
+      }
+    }
+  }
+}
+
+console.log(`skills: ${entries.length} in skills/, ${selected.length} selected (${selfOnly.size} self-only) · personas: ${personas.length} selected`);
 for (const w of warnings) console.log(`  WARN  ${w}`);
 for (const e of errors) console.log(`  ERROR ${e}`);
 console.log(errors.length ? `\nFAILED (${errors.length} error(s))` : `\nOK${warnings.length ? ` with ${warnings.length} warning(s)` : ''}`);

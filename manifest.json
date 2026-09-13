@@ -1,36 +1,37 @@
 {
-  "$comment": "Brain build configuration. `skills` selects from the flat skills/ dump by name, `category:<name>`, or `*`. `personas` selects from agents/ by name (abstract base personas are never emitted). Every skill a selected persona lists must be selected here.",
+  "$comment": "Brain build configuration. `skills` selects from the flat skills/ dump by name, `category:<name>`, or `*`. `personas` selects from agents/ by name (abstract base personas are never emitted). Every skill a selected persona lists must be selected here. `self` adds brain-development artifacts for the self-injection build only.",
   "skills": [
-    "request-intake",
-    "escalation",
-    "model-routing",
-    "milestone-planning",
-    "prd-writing",
+    "api-and-interface-design",
+    "brownfield-adoption",
+    "browser-testing-with-devtools",
+    "budget-management",
+    "ci-cd-and-automation",
+    "code-review-and-quality",
+    "debugging-and-error-recovery",
     "delivery-status",
-    "spec-driven-development",
-    "interview-me",
-    "planning-and-task-breakdown",
-    "hld",
-    "lld",
     "domain-modeling",
     "end-to-end-testing",
-    "test-driven-development",
-    "incremental-implementation",
-    "api-and-interface-design",
+    "escalation",
     "frontend-ui-engineering",
-    "browser-testing-with-devtools",
-    "debugging-and-error-recovery",
-    "security-and-hardening",
-    "linear",
-    "code-review-and-quality",
-    "performance-optimization",
     "git-workflow-and-versioning",
-    "observability-and-instrumentation",
-    "ci-cd-and-automation",
     "github",
-    "brownfield-adoption",
-    "budget-management",
-    "quota-axi"
+    "hld",
+    "incremental-implementation",
+    "interview-me",
+    "langfuse",
+    "linear",
+    "lld",
+    "milestone-planning",
+    "model-routing",
+    "observability-and-instrumentation",
+    "performance-optimization",
+    "planning-and-task-breakdown",
+    "prd-writing",
+    "quota-axi",
+    "request-intake",
+    "security-and-hardening",
+    "spec-driven-development",
+    "test-driven-development"
   ],
   "personas": [
     "ceo",
@@ -58,5 +59,28 @@
     "copilot"
   ],
   "projectManagement": "linear",
-  "orgDir": ".agent-brain"
+  "orgDir": ".agent-brain",
+  "self": {
+    "$comment": "Adjusts the product selection for the brain's own repository, used only by `npm run inject:self`. `add` carries the brain-development artifacts, which a project consuming the brain must never receive. `omit` drops roles the brain has no surface for.",
+    "add": {
+      "skills": [
+        "self-improvement"
+      ],
+      "personas": [
+        "org-principal-engineer",
+        "org-staff-engineer",
+        "org-code-reviewer"
+      ]
+    },
+    "omit": {
+      "$comment": "The brain has no mobile app and no public web surface: its only UI is one page on loopback. security-auditor is deliberately kept, because the brain handles credentials, reads local credential stores, serves HTTP, and has a privacy boundary on telemetry.",
+      "skills": [],
+      "personas": [
+        "mobile-principal-engineer",
+        "mobile-staff-engineer",
+        "mobile-code-reviewer",
+        "web-performance-auditor"
+      ]
+    }
+  }
 }

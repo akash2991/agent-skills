@@ -7,7 +7,11 @@
 //   agentFile        — file name for a persona subagent
 //   agentFrontmatter — frontmatter for a persona subagent from the resolved persona data
 //   mcp              — repo-level MCP config: file path, top-level key, per-server shape, env-var reference syntax; null when the tool only has a global config
-//   commands         — where user-facing commands live and how a command file is written, or null
+//   commands         — where user-facing commands live and how a command file is written, or null.
+//                      `scope: 'global'` means the harness only discovers commands under a home
+//                      directory, never inside a repository: the build still emits the repo copy as
+//                      the version-controlled source, and injection installs it to `home` (honouring
+//                      `homeEnv`) so the command actually resolves. `why` explains the constraint.
 //   hooks            — repo-level config that wires automatic usage capture, or null when the
 //                      harness has no hook mechanism (then usage stays UNKNOWN until it does)
 //   spawn            — 'main-only' (only the main session can spawn personas), 'nested' (any persona can spawn), 'single-session' (no subagents)
@@ -44,7 +48,16 @@ const TARGETS = {
   },
   codex: {
     label: 'Codex',
-    commands: { dir: '.codex/prompts', file: n => `${n}.md`, write: (name, description, body) => `# ${description}\n\n${body}` },
+    commands: {
+      dir: '.codex/prompts', file: n => `${n}.md`,
+      write: (name, description, body, hint) => `---\ndescription: ${description}\nargument-hint: ${hint}\n---\n\n${body}`,
+      // Codex resolves custom prompts only under $CODEX_HOME/prompts (default ~/.codex/prompts).
+      // Repo-local .codex/prompts is a requested feature, not a shipped one (openai/codex#4734,
+      // openai/codex#9848), so a prompt left in the project is never discovered. The body uses
+      // repository-relative paths, so one installed copy works in every injected repository.
+      scope: 'global', homeEnv: 'CODEX_HOME', home: '~/.codex', installDir: 'prompts',
+      why: 'Codex discovers custom prompts only under $CODEX_HOME/prompts; repo-local .codex/prompts is not read (openai/codex#4734, #9848).',
+    },
     spawn: 'single-session',
     routingNote: "Routing execution on Codex: one session plays every role. When the session reaches the EM's routing step it records the pair in the assignment packet and, if the harness exposes a model or effort switch, applies it before playing the staff engineer; otherwise it records the intended pair and the operator applies it. If this harness gains nested agent spawning, the EM executes its own routing directly.",
     alwaysOn: { path: 'AGENTS.md', kind: 'md' },

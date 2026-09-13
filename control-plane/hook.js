@@ -73,10 +73,15 @@ function transcriptMessages(file, limit) {
     out.push({
       uuid: entry.uuid || crypto.createHash('sha256').update(line).digest('hex').slice(0, 32),
       model: message.model || entry.model || undefined,
+      // The harness records the thinking effort it actually ran with. Reading it here is the only
+      // way the registry shows what ran rather than what somebody typed at session start.
+      effort: entry.effort || message.effort || undefined,
       sidechain: Boolean(entry.isSidechain),
       timestamp: entry.timestamp || undefined,
       input_tokens: u.input_tokens ?? 0,
       output_tokens: u.output_tokens ?? 0,
+      // A breakdown of output_tokens, never an addition to it.
+      thinking_tokens: u.output_tokens_details?.thinking_tokens ?? undefined,
       cache_read_input_tokens: u.cache_read_input_tokens ?? undefined,
       cache_write_input_tokens: u.cache_creation_input_tokens ?? undefined,
       // What actually sat in the window for this request: fresh input plus everything read from or
@@ -85,6 +90,23 @@ function transcriptMessages(file, limit) {
     });
   }
   return out.slice(-Math.max(limit ?? out.length, 1));
+}
+
+// Ship captured events to the external observability backend without the user running a command.
+// `langfuse_export` decides when: `off`, `session-end` (the default once credentials exist), or
+// `turn` for a near-live dashboard. A failure here must never break the harness, so it is swallowed
+// and reported in the hook's own output rather than thrown.
+async function autoExport(db, when) {
+  try {
+    const mode = database.config(db).langfuse_export || 'session-end';
+    if (mode === 'off' || (mode === 'session-end' && when !== 'session-end')) return null;
+    const langfuse = require('./langfuse');
+    if (langfuse.credentials().missing.length) return null;
+    const result = await langfuse.send(db, { limit: 500 });
+    return result.ok ? { langfuse: result.sent } : { langfuse: `failed: ${result.reason}` };
+  } catch (error) {
+    return { langfuse: `failed: ${error.message}` };
+  }
 }
 
 function alreadyRecorded(db, eventId) {
@@ -106,8 +128,10 @@ function ingest(db, { transcript, sessionId, agentId, harness, all }) {
       agent_id: owner, session_id: sessionId || 'unknown',
       ...(m.timestamp ? { timestamp: m.timestamp } : {}),
       ...(m.model ? { model: m.model } : {}),
+      ...(m.effort ? { effort: m.effort } : {}),
       usage: {
         input_tokens: m.input_tokens, output_tokens: m.output_tokens,
+        ...(m.thinking_tokens === undefined ? {} : { thinking_tokens: m.thinking_tokens }),
         ...(m.cache_read_input_tokens === undefined ? {} : { cache_read_input_tokens: m.cache_read_input_tokens }),
         ...(m.cache_write_input_tokens === undefined ? {} : { cache_write_input_tokens: m.cache_write_input_tokens }),
         source: 'runtime'
@@ -130,7 +154,7 @@ function ingest(db, { transcript, sessionId, agentId, harness, all }) {
   return { recorded, skipped, turns, considered: messages.length };
 }
 
-function main(args = process.argv.slice(2)) {
+async function main(args = process.argv.slice(2)) {
   const action = args[0];
   const hook = payload();
   const db = database.open(flag(args, 'db'));
@@ -158,7 +182,8 @@ function main(args = process.argv.slice(2)) {
       const result = transcript
         ? ingest(db, { transcript, sessionId, agentId, harness, all: has(args, 'all') })
         : { recorded: 0, skipped: 0, turns: 0, considered: 0, reason: 'no transcript path in the hook payload' };
-      return process.stdout.write(`${JSON.stringify({ ok: true, agent_id: agentId, ...result })}\n`);
+      const exported = await autoExport(db, 'turn');
+      return process.stdout.write(`${JSON.stringify({ ok: true, agent_id: agentId, ...result, ...(exported ? { exported } : {}) })}\n`);
     }
 
     if (action === 'session-start') {
@@ -171,6 +196,7 @@ function main(args = process.argv.slice(2)) {
 
     if (action === 'session-end') {
       if (transcript) ingest(db, { transcript, sessionId, agentId, harness });
+      await autoExport(db, 'session-end');
       emitEvent({ schema_version: '1.0', type: 'agent.completed', agent_id: agentId, session_id: sessionId || 'unknown' }, { db });
       if (sessionId) {
         const live = db.prepare('SELECT id FROM sessions WHERE (id = ? OR id LIKE ?) AND released_at IS NULL').get(sessionId, `%${String(sessionId).slice(0, 8)}%`);
@@ -192,6 +218,5 @@ module.exports = { main, ingest, transcriptMessages, resolveAgent };
 
 if (require.main === module) {
   // A hook must never break the session it observes: report the problem and exit 0.
-  try { main(); }
-  catch (error) { process.stderr.write(`brain hook: ${error.message}\n`); }
+  main().catch(error => process.stderr.write(`brain hook: ${error.message}\n`));
 }

@@ -17,7 +17,28 @@ Budgets are counted in input tokens, output tokens, and cost, held in the contro
 - `node {{ORG_DIR}}/control-plane/brain.js budget` shows `WARN` or `EXHAUSTED` for a holder.
 - An agent's registry usage or the observatory shows its subtree at or past its allocation.
 - A budget ask arrives on a ticket assigned to you.
+- A run fails or degrades in a way that looks like a provider wall rather than an allocation.
 - NOT for choosing a model per task; that is `model-routing`, which must fit inside the allocation this skill sets.
+
+## Two limits, both binding
+
+The allocation says what the organization gave you. Provider quota says what the provider will actually serve. Neither implies the other, and work needs room in both.
+
+| | Budget ledger | Provider quota |
+|---|---|---|
+| Question it answers | what was allocated to this holder and subtree | what is left on the plan, and until when |
+| Source | `brain.js budget`, rolled up from `model.completed` events | `brain.js quota`, from quota-axi reading local credential stores (`quota-axi`) |
+| Scope | one agent and its children | one provider scope, across every repository and every human using that account |
+| Enforced by | the organization: allocations refuse to exceed their grantor | the provider: requests fail or degrade |
+| When it runs out | stop, set `BLOCKED` with blocker type `budget`, raise an ask | route to a provider with room, or wait for the reset |
+
+Read quota before allocating a milestone and before admitting expensive work. Three rules follow:
+
+- **Healthy quota is never permission to exceed an allocation.** A full weekly window does not grant tokens the organization did not allocate.
+- **A healthy allocation does not guarantee capacity.** A task inside budget still fails when the window is spent, so check runway against the reset clock before committing to a milestone.
+- **Quota changes a routing decision, not a budget decision.** When a provider is exhausted, the EM re-routes to one with room (`model-routing`). The allocation is unchanged, because spend is counted in tokens, not in which provider served them.
+
+Quota figures are a burn-down against a reset clock. A figure is `VERIFIED NOW` only when just read, and `HISTORICAL` after that. When quota-axi is absent, every figure is `UNKNOWN`, never a full plan.
 
 ## Allocation chain
 
@@ -34,7 +55,7 @@ A holder's child allocations never sum to more than its own allocation. The obse
 
 ### Allocating (CEO, PM, EM)
 
-1. Read the company row and your own allocation with `node {{ORG_DIR}}/control-plane/brain.js budget`, which shows allocated, spent, and remaining per holder with the subtree roll-up.
+1. Read the company row and your own allocation with `node {{ORG_DIR}}/control-plane/brain.js budget`, which shows allocated, spent, and remaining per holder with the subtree roll-up. Read `brain.js quota` alongside it: an allocation larger than the provider's remaining runway is a plan that cannot be executed.
 2. Decide each child's allocation from the milestone plan: tier mix and expected turns, not evenly. Keep a reserve (default 15%) for re-routes and reviews.
 3. Allocate to each child: `brain.js budget allocate --holder <child> --granted-by <you> --input <n> --output <n> --scope "<what it covers>"`. The command refuses an allocation that exceeds your own and records a `budget.changed` event.
 4. Put the allocation in the assignment packet (`Budget for this task`) and the ticket description.
@@ -47,7 +68,7 @@ A holder's child allocations never sum to more than its own allocation. The obse
 
 ### Receiving an ask (PM, EM, CEO)
 
-8. Read the ask and the holder's roll-up (`brain.js budget`). Decide with `brain.js budget decide --id <ask> --status GRANTED|PARTIAL|DENIED|ESCALATED [--input <n> --output <n>]`, which raises the allocation on a grant and records the event. If you cannot cover it, escalate up your own chain with your attempt attached.
+8. Read the ask and the holder's roll-up (`brain.js budget`), and check `brain.js quota` before granting: granting tokens the provider will not serve moves the failure instead of fixing it. Decide with `brain.js budget decide --id <ask> --status GRANTED|PARTIAL|DENIED|ESCALATED [--input <n> --output <n>]`, which raises the allocation on a grant and records the event. If you cannot cover it, escalate up your own chain with your attempt attached.
 9. The CEO, when it cannot cover an ask from the company reserve, puts it in the CEO report under "Decisions I need from you" with the figures and what stops if denied. The user is the last holder.
 10. When granted, the agent's row is unblocked with a status update and work resumes from the recorded state.
 

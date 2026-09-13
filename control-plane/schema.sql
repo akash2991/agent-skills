@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   cwd            TEXT,
   claimed_at     TEXT NOT NULL,
   last_heartbeat TEXT NOT NULL,
-  released_at    TEXT
+  released_at    TEXT,
+  -- The harness's own session identifier, which is what runtime hooks report. Without it, hook
+  -- usage cannot be matched to the role this session claimed and lands on a synthetic agent.
+  harness_session_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS sessions_single_live_ceo
   ON sessions(role) WHERE released_at IS NULL AND role = 'ceo';
@@ -81,6 +84,9 @@ CREATE TABLE IF NOT EXISTS events (
   error_type              TEXT,
   input_tokens            INTEGER,
   output_tokens           INTEGER,
+  -- Reasoning tokens, reported by the harness inside output_tokens_details. Counted within
+  -- output_tokens by the provider, so it is a breakdown, never added on top.
+  thinking_tokens         INTEGER,
   cache_read_tokens       INTEGER,
   cache_write_tokens      INTEGER,
   cost_usd                REAL,
@@ -152,3 +158,13 @@ CREATE TABLE IF NOT EXISTS changes (
   reason    TEXT
 );
 CREATE INDEX IF NOT EXISTS changes_entity ON changes(entity, entity_id, at);
+
+-- Which events have been shipped to an external observability backend. The marker lives here rather
+-- than as a column on events so a second backend can be added without another migration, and so an
+-- interrupted export resumes instead of re-sending everything.
+CREATE TABLE IF NOT EXISTS exports (
+  event_id    TEXT NOT NULL,
+  backend     TEXT NOT NULL,
+  exported_at TEXT NOT NULL,
+  PRIMARY KEY (event_id, backend)
+);

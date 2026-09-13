@@ -39,10 +39,37 @@ jobs:
           node --test scripts/validate-reference-links-test.js
           node --test scripts/validate-artifact-paths-test.js
 
-      - name: Build every target
+      - name: Product build
         run: npm run select && npm run build
 
-      - name: Inject into a scratch repository and exercise the control plane
+      - name: Self build
+        run: npm run select:self && npm run build:self
+
+      - name: The product build must not carry the brain-development artifacts
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const selfOnly = [...(manifest.self?.skills ?? []), ...(manifest.self?.personas ?? [])];
+            const skills = fs.readdirSync("build/product/claude-code/.claude/skills");
+            const agents = fs.readdirSync("build/product/claude-code/.claude/agents").map(f => f.replace(/\.md$/, ""));
+            const leaked = selfOnly.filter(n => skills.includes(n) || agents.includes(n));
+            if (leaked.length) { console.error("leaked into the product build: " + leaked.join(", ")); process.exit(1); }
+            const omitted = [...(manifest.self?.omit?.personas ?? []), ...(manifest.self?.omit?.skills ?? [])];
+            const s2 = fs.readdirSync("build/self/claude-code/.claude/skills");
+            const a2 = fs.readdirSync("build/self/claude-code/.claude/agents").map(f => f.replace(/\.md$/, ""));
+            const notOmitted = omitted.filter(n => s2.includes(n) || a2.includes(n));
+            if (notOmitted.length) { console.error("should be omitted from the self build: " + notOmitted.join(", ")); process.exit(1); }
+            const missing = selfOnly.filter(n => {
+              const s = fs.readdirSync("build/self/claude-code/.claude/skills");
+              const a = fs.readdirSync("build/self/claude-code/.claude/agents").map(f => f.replace(/\.md$/, ""));
+              return !s.includes(n) && !a.includes(n);
+            });
+            if (missing.length) { console.error("missing from the self build: " + missing.join(", ")); process.exit(1); }
+            console.log(selfOnly.length + " added artifacts absent from the product build and present in the self build; " + omitted.length + " omitted from the self build");
+          '
+
+      - name: Inject into a scratch repository and exercise the control plane with nothing installed
         run: |
           mkdir -p /tmp/target
           node scripts/brain/inject.js /tmp/target --targets claude-code

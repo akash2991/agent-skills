@@ -25,7 +25,7 @@ Nothing is invoked directly. Every request reaches the CEO, which is the only ro
 In this repository:
 
 ```bash
-npm run all                              # validate, select, build every target
+npm run all                              # validate, select, build every target into build/product/
 npm run inject -- /path/to/your-repo     # install into a repository
 ```
 
@@ -37,7 +37,11 @@ Then open your coding agent **in that repository** and type the slash command:
 
 It claims the CEO role, records the model and effort your session is actually running, prints the current state, and refuses if another terminal already holds the role. Give it a role and an instruction when you want one: `/brain ceo add saved carts`.
 
-`/brain` is a command inside the agent, not a shell command. Project commands are discovered when a session starts, so start a new session in that repository after injecting. The equivalent from a shell, useful for scripts and for harnesses without commands, is:
+`/brain` is a command inside the agent, not a shell command. Project commands are discovered when a session starts, so start a new session in that repository after injecting.
+
+**Codex is the exception.** It reads custom prompts only from `$CODEX_HOME/prompts` (default `~/.codex/prompts`) and never from a repository, so the injected copy at `.codex/prompts/brain.md` is the source, not the installed command. Install it once with `npm run inject -- <path> --install-commands`, or copy it yourself; one copy serves every injected repository, because the prompt uses repository-relative paths. Injection prints the exact command when the step is outstanding. Skills and `AGENTS.md` need no such step: Codex scans `.agents/skills` up from the working directory.
+
+The equivalent from a shell, useful for scripts and for harnesses without commands, is:
 
 ```bash
 node .agent-brain/control-plane/brain.js context --role ceo --harness claude-code \
@@ -66,7 +70,12 @@ node .agent-brain/control-plane/brain.js status     # tree, budgets, blocked, st
 node .agent-brain/control-plane/brain.js budget     # allocated, spent, remaining per holder
 node .agent-brain/control-plane/brain.js quota      # what each provider will actually serve
 node .agent-brain/control-plane/brain.js serve      # local UI, editable, zero dependencies
+node .agent-brain/control-plane/brain.js export langfuse   # ship traces, tokens and cost to Langfuse
 ```
+
+The local UI answers "what is running right now" and deliberately stays minimal. For trace timelines, agent graphs, filtering, retention and cost dashboards, export to **Langfuse**: set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` (a `.env` file is read too) and the control plane posts OTLP spans with no dependency to install. Each agent becomes a trace named by its role, nested under the agent that assigned it, with model calls as generations carrying real token counts and cost. `langfuse_export` controls when it ships: `off`, `session-end` (default), or `turn`.
+
+Events are metadata only, so nothing you or an agent wrote can leave the machine through this path.
 
 It records sessions with a single-CEO lock, the agent tree with the model and effort actually in use, token and cost usage per agent and per model, budget allocations with a chain where no child may exceed its parent, and an audit trail of every change. Usage is captured automatically from harness hooks, so tokens and cost are real numbers rather than estimates.
 
@@ -91,6 +100,7 @@ templates/        what gets stamped into a project: global docs, service docs, t
 scripts/brain/    validate · select · build · inject · import
 docs/             brain.md, persona-anatomy.md, skill-anatomy.md
 evals/            trigger and routing evals; every skill needs a case
+build/            everything generated: the two selections and build/{product,self}/<tool>/
 ```
 
 Start with [docs/brain.md](docs/brain.md) for how the pieces fit, [docs/persona-anatomy.md](docs/persona-anatomy.md) to add a role, and [docs/skill-anatomy.md](docs/skill-anatomy.md) to add a skill.
@@ -105,7 +115,7 @@ Built here only where nothing existed. Everything else is borrowed:
 | [Linear](https://linear.app) | the tracker: milestones, sprints, tickets, bugs, blockers, reports |
 | [GitHub](https://github.com) | pull requests, reviews, CI/CD, releases |
 | [Herdr](https://herdr.dev) | optional control of live agent terminals: focus, steer, interrupt, stop |
-| [Langfuse](https://langfuse.com) | optional trace timelines, graphs, and cost dashboards |
+| [Langfuse](https://langfuse.com) | trace timelines, agent graphs, and cost dashboards; the recommended UI |
 
 The reasoning, including what was evaluated and rejected, is in [references/agent-observability.md](references/agent-observability.md).
 

@@ -26,12 +26,30 @@ const DEFAULT_CONFIG = {
   // See INPUT_BASIS below: fresh | new | billable.
   budget_input_basis: 'new',
   session_stale_minutes: '30',
-  agent_stale_minutes: '20'
+  agent_stale_minutes: '20',
+  // When captured events are shipped to Langfuse: off | session-end | turn. Nothing is sent unless
+  // LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are present, so this default is inert without them.
+  langfuse_export: 'session-end'
 };
+
+// Columns added after a database already exists. `CREATE TABLE IF NOT EXISTS` never adds a column
+// to a live table, so every additive change is listed here and applied once, in order.
+const ADDED_COLUMNS = [
+  ['sessions', 'harness_session_id', 'TEXT'],
+  ['events', 'thinking_tokens', 'INTEGER'],
+];
+
+function migrate(db) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const has = db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get(table, column);
+    if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
 
 function open(file = process.env.BRAIN_DB || DEFAULT_DB) {
   const db = new DatabaseSync(file);
   db.exec(fs.readFileSync(SCHEMA, 'utf8'));
+  migrate(db);
   const now = new Date().toISOString();
   db.prepare('INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)').run('schema_version', SCHEMA_VERSION);
   const insertConfig = db.prepare('INSERT OR IGNORE INTO config(key, value, updated_at, updated_by) VALUES(?, ?, ?, ?)');

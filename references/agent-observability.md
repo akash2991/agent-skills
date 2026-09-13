@@ -10,9 +10,38 @@ Use a composed stack. Nothing off the shelf models the organization's own semant
 2. **A SQLite control plane for the organization semantics.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds harness sessions with the single-CEO lock, the agent registry with parentage and current model and effort, metadata-only observability events, budget allocations and asks, and an audit trail of every mutation. The CLI and the local UI are two faces of the same store, so an edit in either is the same audited change.
 3. **Herdr for runtime control.** Herdr is an Apache-2.0 terminal workspace manager for coding agents. It keeps real agent terminals in persistent panes, recognizes common agents, exposes state, and offers CLI and socket operations to focus, prompt, send keys, read output, wait, and attach. It is the control plane, not the tracker: its own documentation does not claim token, cost, context, skill-load, turn, or tool telemetry, and it has no concept of our hierarchy.
 4. **OpenTelemetry GenAI as the interoperability baseline.** Standard agent, workflow, model, and tool concepts and the `gen_ai.usage.*` fields map onto our events; Agent Brain additions use an `agent_brain.*` namespace in exporters.
-5. **Langfuse OSS as the optional trace backend.** Self-hostable, accepts OpenTelemetry or custom instrumentation, and gives trace trees, agent graphs, sessions, and token and cost dashboards. It observes executions that send it traces; it cannot focus, prompt, or interrupt a terminal, so it complements Herdr rather than replacing it.
+5. **Langfuse as the trace UI, shipped and wired.** Self-hostable, accepts OpenTelemetry or custom instrumentation, and gives trace trees, agent graphs, sessions, and token and cost dashboards. It observes executions that send it traces; it cannot focus, prompt, or interrupt a terminal, so it complements Herdr rather than replacing it.
 
-Do not build a terminal runtime, a provider quota reader, or a full web observability platform. The local UI exists only as the zero-dependency view of our own semantics, which none of the borrowed tools can provide.
+Do not build a terminal runtime, a provider quota reader, or a full web observability platform. The local UI exists only as the zero-dependency view of our own semantics, which none of the borrowed tools can provide; it answers "what is happening right now", and nothing more should be invested in it.
+
+### How the Langfuse export works
+
+`control-plane/langfuse.js` posts OTLP/HTTP JSON straight to `/api/public/otel/v1/traces` with basic auth and the `x-langfuse-ingestion-version: 4` header. The Langfuse SDK is the better choice in an application that already has a package manager; here it would break the zero-install guarantee, and Node's built-in `fetch` is enough.
+
+| Control plane | Langfuse |
+|---|---|
+| an agent, plus its ancestors | root span, `observation.type=agent`, named by **role** so the name stays stable |
+| `agents.parent` | `parentSpanId`, which is what draws the organization as an agent graph |
+| `model.completed` | `generation` with model, `usage_details` including cache and reasoning tokens, and cost |
+| `tool.completed` | `tool`, named `call-tool: <name>` |
+| `turn.completed` | `span` named `run-turn`, with the number in metadata |
+| everything else | `event` |
+
+Three rules this follows, from Langfuse's own best-practice guidance:
+
+- **Names are an API.** Never the model and never a run-specific value, because every evaluator, dashboard and saved view targets the name. The model lives in its own attribute, the turn number and agent id in metadata.
+- **Specific observation types.** A generic span renders but tells you less; the type is what drives per-model analytics and the agent graph.
+- **Input and output on every observation**, built only from metadata: the assignment on the way in, the status and counts on the way out. The event contract has no field that can carry content, so the privacy boundary holds by construction rather than by discipline.
+
+Span and trace ids are derived from event and agent ids, so a re-export updates the same spans instead of duplicating them. `exports` records what has shipped, so an interrupted run resumes. Automatic shipping is controlled by `langfuse_export` (`off`, `session-end`, `turn`), and nothing leaves the machine unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
+
+### Why Herdr cannot show subagents
+
+Herdr manages terminal panes and the agent processes inside them. A subagent spawned by Claude Code is not a terminal: it runs inside the parent's process, so there is no pane for Herdr to attach to, and no amount of configuration will make one appear. This is a boundary, not a bug.
+
+Subagents show up in the control plane, which knows them because they register, and in Langfuse, where each is its own trace nested under its parent. Herdr's job is the terminals you actually started; the hierarchy inside one of them belongs to the control plane.
+
+One gap remains: a sidechain turn in a Claude Code transcript is attributed to the session's agent, because the hook cannot tell which registered child produced it. Per-subagent token attribution is therefore `UNKNOWN` until the harness exposes the child's identity in the transcript.
 
 ### Considered and not adopted
 
@@ -40,7 +69,9 @@ Do not build a terminal runtime, a provider quota reader, or a full web observab
 | Tool calls, failures, duration | Host hook → event | Arguments and results are excluded by design. |
 | Model tokens and cost per agent and per model | Provider or runtime → `model.completed` | Provider values win; a calculated cost names its pricing source. |
 | Local live view and runtime editing | Control plane UI (`brain.js serve`) | Zero dependencies, loopback only; every edit is an audited mutation. |
-| Trace timeline, graph, filtering, retention | Langfuse | Optional export; the local database remains fully usable without it. |
+| Trace timeline, graph, filtering, retention, cost dashboards | Langfuse | `brain.js export langfuse`, automatic per `langfuse_export`. The local database stays fully usable without it. |
+| Thinking effort and reasoning tokens | Harness → hook → event | Claude Code exposes `CLAUDE_EFFORT` and `output_tokens_details.thinking_tokens`; both are recorded rather than guessed. |
+| Binding captured usage to a role | `sessions.harness_session_id` | A hook only knows the harness's session id. Without the binding, usage lands on a synthetic agent and the role spends against an empty budget. |
 | Hosted fleet dashboards | Mission Control | Optional mirror for agent tracking only; the tracker stays the source of truth for work. |
 
 ## Why Herdr is necessary but insufficient

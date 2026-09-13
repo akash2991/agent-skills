@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 // Copy a built target into another repository.
-//   node scripts/inject.js <repo-path> [--targets claude-code,codex] [--dry-run]
+//   node scripts/inject.js <repo-path> [--targets claude-code,codex] [--dry-run] [--install-commands]
 // Rules: never deletes anything in the target repo; overwrites only files agent-brain owns;
 // seeds (registry, global docs) are created only when missing; always-on files are merged as a
 // managed block; MCP config is merged by server name.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { DIST_DIR, exists, isDir, listDirs, ensureDir, readJson, writeJson } = require('./lib/fs-utils');
+const { DIST_DIR, DIST_SELF_DIR, exists, isDir, listDirs, ensureDir, readJson, writeJson } = require('./lib/fs-utils');
 
 const START = '<!-- agent-brain:start -->';
 const END = '<!-- agent-brain:end -->';
@@ -15,15 +16,32 @@ const END = '<!-- agent-brain:end -->';
 const args = process.argv.slice(2);
 const repo = args.find(a => !a.startsWith('--'));
 const dryRun = args.includes('--dry-run');
+// --self installs the build that also carries the brain-development artifacts. Only the brain's own
+// repository should ever use it; a project consuming the brain gets the product build.
+const selfBuild = args.includes('--self');
+const sourceDir = selfBuild ? DIST_SELF_DIR : DIST_DIR;
+// Some harnesses discover commands only under a home directory, never inside a repository. The repo
+// copy is still the version-controlled source; this opts into installing it where the harness looks.
+const installCommands = args.includes('--install-commands');
 const tIdx = args.indexOf('--targets');
 const only = tIdx === -1 ? null : args[tIdx + 1].split(',').map(s => s.trim()).filter(Boolean);
 
-if (!repo) { console.error('usage: node scripts/inject.js <repo-path> [--targets a,b] [--dry-run]'); process.exit(2); }
+if (!repo) { console.error('usage: node scripts/inject.js <repo-path> [--targets a,b] [--dry-run] [--install-commands]'); process.exit(2); }
 const repoAbs = path.resolve(repo);
 if (!isDir(repoAbs)) { console.error(`not a directory: ${repoAbs}`); process.exit(1); }
-const built = listDirs(DIST_DIR);
-if (!built.length) { console.error('dist/ is empty: run `npm run build` first'); process.exit(1); }
+const built = listDirs(sourceDir);
+if (!built.length) { console.error(`${path.relative(process.cwd(), sourceDir)}/ is empty: run \`npm run ${selfBuild ? 'build:self' : 'build'}\` first`); process.exit(1); }
 const targets = only ? only.filter(t => { if (!built.includes(t)) console.error(`WARN  no build for target "${t}"`); return built.includes(t); }) : built;
+
+// Commands a harness only reads from a home directory. Collected while injecting, then either
+// installed (with --install-commands) or printed as the one manual step that makes them resolve.
+const globalCommands = [];
+
+function resolveHome(spec) {
+  const fromEnv = spec.homeEnv && process.env[spec.homeEnv];
+  const base = fromEnv || (spec.home || '').replace(/^~(?=$|\/)/, os.homedir());
+  return base ? path.resolve(base, spec.installDir || '') : null;
+}
 
 function mergeManagedBlock(existing, block) {
   const s = existing.indexOf(START), e = existing.indexOf(END);
@@ -56,10 +74,10 @@ function mergeMcp(existingText, incoming, key) {
   return JSON.stringify(existing, null, 2) + '\n';
 }
 
-const summary = { injectedAt: new Date().toISOString(), source: DIST_DIR, targets: {} };
+const summary = { injectedAt: new Date().toISOString(), source: sourceDir, selfBuild, targets: {} };
 let count = 0;
 for (const id of targets) {
-  const base = path.join(DIST_DIR, id);
+  const base = path.join(sourceDir, id);
   const build = readJson(path.join(base, 'agent-brain.build.json'));
   const done = [];
   let overwritten = 0;
@@ -100,12 +118,33 @@ for (const id of targets) {
     if (action === 'overwrite') overwritten++;
     else console.log(`  ${dryRun ? '[dry-run] ' : ''}${action.padEnd(12)} ${rel}`);
   }
+  if (build.commands && build.commands.scope === 'global') {
+    const dest = resolveHome(build.commands);
+    for (const rel of done.filter(r => r.startsWith(`${build.commands.dir}/`))) {
+      globalCommands.push({ id, rel, from: path.join(sourceDir, id, rel), to: dest ? path.join(dest, path.basename(rel)) : null, why: build.commands.why });
+    }
+  }
   summary.targets[id] = { builtAt: build.builtAt, files: done };
   console.log(`  ${id}: ${done.length} file(s)${overwritten ? `, ${overwritten} overwritten` : ''}${kept ? `, ${kept} seed(s) kept as-is` : ''}`);
 }
 if (!dryRun) {
-  const first = targets[0] && readJson(path.join(DIST_DIR, targets[0], 'agent-brain.build.json'));
+  const first = targets[0] && readJson(path.join(sourceDir, targets[0], 'agent-brain.build.json'));
   const orgDir = first ? first.orgDir : '.agent-brain';
   writeJson(path.join(repoAbs, orgDir, 'injected.json'), summary);
 }
 console.log(`\n${dryRun ? 'would inject' : 'injected'} ${count} file(s) into ${repoAbs} for: ${targets.join(', ')}`);
+
+if (globalCommands.length) {
+  console.log(`\nharness-global commands (${globalCommands[0].why})`);
+  for (const c of globalCommands) {
+    if (!c.to) { console.log(`  ${c.id}: cannot resolve the harness home directory; copy ${c.rel} there yourself`); continue; }
+    if (installCommands && !dryRun) {
+      ensureDir(path.dirname(c.to));
+      fs.copyFileSync(c.from, c.to);
+      console.log(`  installed     ${c.to}`);
+    } else {
+      console.log(`  ${dryRun ? '[dry-run] ' : ''}not installed: ${c.to}`);
+      console.log(`    re-run with --install-commands, or: mkdir -p ${path.dirname(c.to)} && cp ${path.join(repoAbs, c.rel)} ${c.to}`);
+    }
+  }
+}

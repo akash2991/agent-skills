@@ -96,6 +96,7 @@
       "properties": {
         "input_tokens": { "type": "integer", "minimum": 0 },
         "output_tokens": { "type": "integer", "minimum": 0 },
+        "thinking_tokens": { "type": "integer", "minimum": 0 },
         "cache_read_input_tokens": { "type": "integer", "minimum": 0 },
         "cache_write_input_tokens": { "type": "integer", "minimum": 0 },
         "cost_usd": { "type": "number", "minimum": 0 },

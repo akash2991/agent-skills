@@ -309,6 +309,110 @@ test('the CLI refuses control without a Herdr binding and without confirmation',
   assert.match(cli(dbFile, ['control', 'focus', '--agent-id', 'staff-1']).err, /no Herdr runtime binding/);
 });
 
+test('a Herdr binding can be completed after registration, not only at register time', () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-bind-')), 'brain.db');
+  cli(dbFile, ['agent', 'register', '--agent-id', 'staff-1', '--role', 'backend-staff-engineer', '--actor', 'ceo']);
+  // An agent is usually registered before its terminal exists, so the runtime and its reference must
+  // both be settable later. Setting only the reference would leave control permanently refused.
+  cli(dbFile, ['agent', 'set', '--agent-id', 'staff-1', '--runtime', 'herdr', '--runtime-ref', 'w1:p2', '--actor', 'ceo']);
+  const row = JSON.parse(cli(dbFile, ['agent', 'list', '--json']).out).agents.find(a => a.agent_id === 'staff-1');
+  assert.equal(row.runtime, 'herdr');
+  assert.equal(row.runtime_ref, 'w1:p2');
+  assert.doesNotMatch(cli(dbFile, ['control', 'focus', '--agent-id', 'staff-1']).err || '', /no Herdr runtime binding/);
+});
+
+test('a claimed role is bound to the harness session, so hook usage lands on the role', () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-bind2-')), 'brain.db');
+  const harnessSession = 'abc12345-harness-session';
+  cli(dbFile, ['context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'm', '--effort', 'high',
+               '--harness-session', harnessSession, '--actor', 'user']);
+  const db = database.open(dbFile);
+  // The hook only ever knows the harness's session id. Without this binding it cannot find the role
+  // and invents a synthetic agent, which is how a role ends up spending with an empty budget.
+  assert.equal(db.prepare('SELECT agent_id FROM agents WHERE session_id = ?').get(harnessSession).agent_id, 'ceo');
+  assert.equal(db.prepare('SELECT harness_session_id FROM sessions WHERE role = ?').get('ceo').harness_session_id, harnessSession);
+  db.close();
+});
+
+test('usage observed before a role claimed the session is adopted, not stranded', () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-adopt-')), 'brain.db');
+  const harnessSession = 'def67890-harness-session';
+  const db = database.open(dbFile);
+  // A hook fires before anyone claims a role: usage is recorded against a synthetic agent.
+  db.prepare(`INSERT INTO agents(agent_id, role, session_id, harness, status, started_at, last_heartbeat)
+              VALUES('session-def6789', 'unregistered', ?, 'claude-code', 'RUNNING', ?, ?)`)
+    .run(harnessSession, '2026-09-13T10:00:00.000Z', '2026-09-13T10:00:00.000Z');
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'pre:1', type: 'model.completed', agent_id: 'session-def6789',
+    session_id: harnessSession, model: 'm', usage: { input_tokens: 10, output_tokens: 20, source: 'runtime' } }, { db });
+  db.close();
+
+  cli(dbFile, ['context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'm',
+               '--harness-session', harnessSession, '--actor', 'user']);
+
+  const after = database.open(dbFile);
+  assert.equal(after.prepare("SELECT agent_id FROM events WHERE event_id = 'pre:1'").get().agent_id, 'ceo');
+  assert.equal(after.prepare("SELECT status FROM agents WHERE agent_id = 'session-def6789'").get().status, 'CLOSED');
+  after.close();
+});
+
+// ─── observability export ────────────────────────────────────────────────────
+
+const langfuse = require(path.join(ROOT, 'langfuse'));
+
+test('the Langfuse export nests the organization tree and never carries content', () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lf-')), 'brain.db');
+  const db = database.open(dbFile);
+  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, model, status, started_at, last_heartbeat)
+              VALUES('ceo', 'ceo', 'user', 's1', 'claude-code', 'm', 'RUNNING', ?, ?)`).run('2026-09-13T10:00:00.000Z', '2026-09-13T10:05:00.000Z');
+  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, model, status, started_at, last_heartbeat)
+              VALUES('staff-1', 'backend-staff-engineer', 'ceo', 's2', 'claude-code', 'm', 'RUNNING', ?, ?)`).run('2026-09-13T10:01:00.000Z', '2026-09-13T10:04:00.000Z');
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'model.completed', agent_id: 'staff-1', session_id: 's2',
+    model: 'claude-opus-5', effort: 'high',
+    usage: { input_tokens: 5, output_tokens: 7, thinking_tokens: 3, source: 'runtime' } }, { db });
+
+  const events = langfuse.pending(db, {});
+  const payload = langfuse.buildPayload(db, events, 'test');
+  const spans = payload.resourceSpans[0].scopeSpans[0].spans;
+  const byName = n => spans.find(s => s.name === n);
+  const get = (span, key) => span.attributes.find(a => a.key === key)?.value;
+
+  // The staff engineer's own span hangs off the CEO's, which is what draws the org chart.
+  assert.equal(byName('backend-staff-engineer').parentSpanId, byName('ceo').spanId);
+  // A model call is a generation, so Langfuse can price it and compare models.
+  const gen = byName('generate-response');
+  assert.equal(get(gen, 'langfuse.observation.type').stringValue, 'generation');
+  assert.equal(get(gen, 'langfuse.observation.model.name').stringValue, 'claude-opus-5');
+  assert.match(get(gen, 'langfuse.observation.usage_details').stringValue, /"reasoning":3/);
+  // Names must not embed the model or a run-specific value, or every saved view breaks on a swap.
+  assert.ok(!spans.some(s => /claude-opus-5|staff-1|turn \d/.test(s.name)), 'span names must stay stable and low-cardinality');
+  // The privacy boundary: nothing in the payload can carry prompt, response or file content.
+  const serialized = JSON.stringify(payload);
+  for (const forbidden of ['gen_ai.prompt', 'gen_ai.completion', 'input.value', 'output.value']) {
+    assert.ok(!serialized.includes(forbidden), `payload must not carry ${forbidden}`);
+  }
+  db.close();
+});
+
+test('an exported event is not exported twice', async () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lf2-')), 'brain.db');
+  const db = database.open(dbFile);
+  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, status, started_at, last_heartbeat)
+              VALUES('ceo', 'ceo', 'user', 's1', 'claude-code', 'RUNNING', ?, ?)`).run('2026-09-13T10:00:00.000Z', '2026-09-13T10:05:00.000Z');
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'turn.completed', agent_id: 'ceo', session_id: 's1',
+    turn: { number: 1, outcome: 'success' } }, { db });
+  const envFile = path.join(path.dirname(dbFile), '.env');
+  fs.writeFileSync(envFile, ['LANGFUSE_PUBLIC_KEY=pk', 'LANGFUSE_SECRET_KEY=sk', 'LANGFUSE_BASE_URL=https://example.invalid'].join('\n'));
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return { ok: true, status: 207, text: async () => '' }; };
+
+  const first = await langfuse.send(db, { envFile, fetchImpl });
+  const second = await langfuse.send(db, { envFile, fetchImpl });
+  assert.equal(first.sent, 1);
+  assert.equal(second.sent, 0);
+  assert.equal(calls, 1, 'the second run must not post anything');
+  db.close();
+});
+
 // ─── automatic usage capture ─────────────────────────────────────────────────
 // The hook turns real runtime facts into events. These tests pin the two properties that matter:
 // usage is never double-counted, and the cache-aware budget basis is honest about what it counts.

@@ -330,3 +330,47 @@ like, control plane should be outisde. report folder should be named agents-repo
 
 since my repo is taking over the original repo now. Delete relics of original repo which are not relevant
 and replace it with the details about my repo.
+
+
+----- update 16 ---
+this repo must be developed according to the ethos of the org that i am building
+like it should be a recursive self impriving loop. Org is using itself to improve itself
+
+So skills, rules, agents, interventions, which are used to improve the brain specifically will not be injectable into other repo. Right? So those repos will... get the final organization that they can work with. But this repo since it's... itself heals and improves the org, so it will have some extra things. So those needs to be, you know, excluded.
+
+itself it will not use the mobile engineer, the perfume engineer, the security engineer, right? because it's it's an internal tool. So it will be okay if it does not have some of the skills. Right?
+
+The back end can be in node (but needs to be typed using typescript)
+That's fine. It does not have to be  Python and go. but  the ui needs to be in React and TypeScript.
+database can be SQL
+
+Also, by there are two folders called build and dist, why they cannot be one.
+
+
+we can also do away with the requirements of HLD. I mean, a small LLD is fine.
+there won't be many APIs and such. 
+So, basically, the brain itself can skip some of the flows, uh, while working on itself, but, uh, while being injected, all these steps needs to be followed.
+
+your UI is shit. Can we use any existing tool and its UI?
+also why are you not able to capture any data? neither tokens nor thinking effort.
+
+
+----- update 17 ---
+the db of each project should be different
+if starting fresh, db will be populated by the actual model usage values (like claude session limit is 15%, while weekly lmit is 60%...similarly for other models)
+/brain not working in codex.
+every custom command should be namespased...maybe like /brain-init
+
+langfuse tracing didnt work in test project
+remove herdr
+
+UI is shifting as more data keeps added. At least create separate tab for each component
+
+Correct Observability is very important.
+Context should be very precise. So let's say PM should not get the, like, how the code is structured or the coding practices. 
+Similarly, CEO and PM and should have very high level idea what's going on in the org maybe via architecture doc. So a global architecture doc will just contain very high level ideas so that anyone understands what needs to be done and where
+
+Not everything needs to go through  full the hierarchy
+let's say for a small implementation PM can directly bypass to the EM that they... my work is not required. And EM can directly give to the doctor staff engineer. So the hierarchy is, like, context dependent. It's not like every small team needs to go through the hierarchy
+
+each agent should be name spaced by the project name and the session ID so that in in the langfuse and in the UI screen ...where this agent got spawned and in which session.

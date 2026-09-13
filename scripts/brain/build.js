@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 'use strict';
-// Transform build/skills + agents/ + templates/ + references/ + docs/ into one directory per tool under dist/<target>/.
+// Transform build/skills + agents/ + templates/ + references/ + docs/ into one directory per tool under build/{product,self}/<target>/.
 const fs = require('fs');
 const path = require('path');
-const { SELECTED_DIR, TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, DOCS_DIR, DIST_DIR, exists, rmrf, ensureDir, copyTree, render, readJson, writeJson, loadManifest, splitList } = require('./lib/fs-utils');
+const ROOT_REL = process.cwd();
+const { SELECTED_DIR, SELECTED_SELF_DIR, TEMPLATES_DIR, ORG_DIR_SRC, REPORTS_DIR, CONTROL_PLANE_DIR, REFERENCES_DIR, DOCS_DIR, DIST_DIR, DIST_SELF_DIR, exists, rmrf, ensureDir, copyTree, render, readJson, writeJson, loadManifest, splitList } = require('./lib/fs-utils');
 const { TARGETS } = require('./lib/targets');
 const { indexPersonas } = require('./lib/personas');
 const fm = require('./lib/frontmatter');
@@ -14,9 +15,12 @@ const PERSONA_ONLY_KEYS = ['skills', 'extends', 'abstract'];
 // Links from a skill to the repo-root references/ (any number of ../). Rewritten to the injected copy.
 const REF_LINK = /(?<![A-Za-z0-9._/-])((?:\.\.\/)+references\/([A-Za-z0-9._-]+\.md))/g;
 
-const manifest = loadManifest();
-const indexPath = path.join(SELECTED_DIR, 'INDEX.json');
-if (!exists(indexPath)) { console.error('build/skills/INDEX.json not found: run `npm run select` first'); process.exit(1); }
+const selfBuild = process.argv.includes('--self');
+const manifest = loadManifest({ selfBuild });
+const selectedDir = selfBuild ? SELECTED_SELF_DIR : SELECTED_DIR;
+const distDir = selfBuild ? DIST_SELF_DIR : DIST_DIR;
+const indexPath = path.join(selectedDir, 'INDEX.json');
+if (!exists(indexPath)) { console.error(`${path.relative(ROOT_REL, indexPath)} not found: run \`npm run select${selfBuild ? ' -- --self' : ''}\` first`); process.exit(1); }
 const { skills } = readJson(indexPath);
 const personas = indexPersonas(manifest.personas).filter(p => !p.missing && !p.problems.length);
 const targets = manifest.targets.filter(t => TARGETS[t]);
@@ -56,7 +60,7 @@ function personaBody(p, vars) {
 
 for (const id of targets) {
   const target = TARGETS[id];
-  const out = path.join(DIST_DIR, id);
+  const out = path.join(distDir, id);
   rmrf(out);
   ensureDir(out);
   const O = manifest.orgDir;
@@ -82,7 +86,7 @@ for (const id of targets) {
   // 1. Skills: flat <skillsDir>/<name>/; placeholders rendered; links to repo-root references/ rewritten to the injected copy.
   for (const s of skills) {
     const dest = `${target.skillsDir}/${s.name}`;
-    const written = copyTree(path.join(SELECTED_DIR, s.category, s.name), path.join(out, dest), (rel, buf) => {
+    const written = copyTree(path.join(selectedDir, s.category, s.name), path.join(out, dest), (rel, buf) => {
       if (rel === 'mcp.json') return null;
       if (!rel.endsWith('.md')) return buf;
       const fileDir = path.posix.join(dest, path.posix.dirname(rel));
@@ -142,7 +146,7 @@ for (const id of targets) {
   if (target.mcp) {
     const servers = {};
     for (const s of skills) {
-      const p = path.join(SELECTED_DIR, s.category, s.name, 'mcp.json');
+      const p = path.join(selectedDir, s.category, s.name, 'mcp.json');
       if (exists(p)) Object.assign(servers, readJson(p).mcpServers || {});
     }
     if (Object.keys(servers).length) {
@@ -160,8 +164,15 @@ for (const id of targets) {
     target: id, builtAt: new Date().toISOString(), orgDir: O,
     alwaysOn: target.alwaysOn.path, mcpFile: target.mcp ? target.mcp.file : null, mcpKey: target.mcp ? target.mcp.key : null,
     hooksFile: target.hooks ? target.hooks.file : null, hooksKey: target.hooks ? target.hooks.key : null,
+    // A harness that only discovers commands under a home directory needs one extra install step
+    // after injection; injection reads this to perform or print it.
+    commands: target.commands ? {
+      dir: target.commands.dir, scope: target.commands.scope || 'repo',
+      homeEnv: target.commands.homeEnv || null, home: target.commands.home || null,
+      installDir: target.commands.installDir || null, why: target.commands.why || null,
+    } : null,
     files: [...new Set(files)].sort(), seeds: [...new Set(seeds)].sort(),
   });
-  console.log(`  ${id.padEnd(12)} ${files.length} files + ${seeds.length} seeds → dist/${id}/`);
+  console.log(`  ${id.padEnd(12)} ${files.length} files + ${seeds.length} seeds → ${path.relative(ROOT_REL, path.join(distDir, id))}/`);
 }
-console.log(`\nbuilt ${targets.length} target(s) · ${skills.length} skills · ${personas.length} personas`);
+console.log(`\nbuilt ${targets.length} target(s) · ${skills.length} skills · ${personas.length} personas${selfBuild ? ' (self build: includes the brain-development artifacts)' : ''}`);

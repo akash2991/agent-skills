@@ -19,6 +19,7 @@ const database = require('./db');
 const state = require('./state');
 const quota = require('./quota');
 const control = require('./control');
+const langfuse = require('./langfuse');
 const { emitEvent } = require('./emit');
 
 const AGENT_STATUS = new Set(['PLANNED', 'RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'UNKNOWN']);
@@ -39,6 +40,19 @@ const out = (args, data, human) => process.stdout.write(has(args, 'json') ? `${J
 // heartbeat is older than session_stale_minutes is reclaimable rather than blocking forever.
 const EXCLUSIVE_ROLES = new Set(['ceo']);
 
+// What the harness tells us about itself. A claimed role must be bound to the harness's own session
+// identifier, because that is the only id a runtime hook reports; without the binding, captured
+// usage is attributed to a synthetic agent and the role's budget stays empty while it spends.
+// Flags always win, so a harness that exposes nothing can still be bound explicitly.
+const HARNESS_ENV = {
+  session: ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CODEX_SESSION_ID', 'BRAIN_HARNESS_SESSION'],
+  effort: ['CLAUDE_EFFORT', 'BRAIN_EFFORT'],
+};
+function fromEnv(kind) {
+  for (const name of HARNESS_ENV[kind]) if (process.env[name]) return process.env[name];
+  return null;
+}
+
 function claimSession(db, args, actor) {
   const role = flag(args, 'role') || 'ceo';
   const id = flag(args, 'id') || `${role}-${crypto.randomUUID().slice(0, 8)}`;
@@ -58,10 +72,12 @@ function claimSession(db, args, actor) {
     reclaimed = { id: held.id, age_minutes: age };
   }
   const at = now();
-  db.prepare(`INSERT INTO sessions(id, role, harness, model, effort, pid, cwd, claimed_at, last_heartbeat)
-              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, role, flag(args, 'harness') || UNKNOWN, flag(args, 'model') || null, flag(args, 'effort') || null,
-         int(flag(args, 'pid')) ?? process.ppid, flag(args, 'cwd') || process.cwd(), at, at);
+  const harnessSession = flag(args, 'harness-session') || fromEnv('session');
+  const effort = flag(args, 'effort') || fromEnv('effort');
+  db.prepare(`INSERT INTO sessions(id, role, harness, model, effort, pid, cwd, claimed_at, last_heartbeat, harness_session_id)
+              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, role, flag(args, 'harness') || UNKNOWN, flag(args, 'model') || null, effort || null,
+         int(flag(args, 'pid')) ?? process.ppid, flag(args, 'cwd') || process.cwd(), at, at, harnessSession || null);
   database.record(db, actor, 'session', id, 'claimed', null, role, flag(args, 'harness') || null);
   return { ok: true, session: db.prepare('SELECT * FROM sessions WHERE id = ?').get(id), reclaimed };
 }
@@ -133,7 +149,7 @@ function agentCommand(db, args, actor) {
     const id = need(flag(args, 'agent-id'), 'agent-id');
     const row = db.prepare('SELECT * FROM agents WHERE agent_id = ?').get(id);
     if (!row) { out(args, { ok: false, reason: 'unknown_agent' }, `unknown agent ${id}`); process.exitCode = 1; return; }
-    const fields = { model: 'model', effort: 'effort', status: 'status', ticket: 'ticket', operation: 'current_operation', blocker: 'blocker', paths: 'owned_paths', 'runtime-ref': 'runtime_ref' };
+    const fields = { model: 'model', effort: 'effort', status: 'status', ticket: 'ticket', operation: 'current_operation', blocker: 'blocker', paths: 'owned_paths', runtime: 'runtime', 'runtime-ref': 'runtime_ref' };
     const applied = [];
     for (const [name, column] of Object.entries(fields)) {
       const value = flag(args, name);
@@ -274,6 +290,25 @@ function quotaCommand(db, args) {
 
 
 // One command an agent runs at session start: claims its role, then prints everything it needs.
+// A hook can observe a session before any role claims it, and records that usage against a
+// synthetic `session-*` agent. When the role claims the same harness session, that work was always
+// the role's: move the events and close the placeholder, so spend is not split across two rows.
+function adoptObservedAgent(db, harnessSession, role, actor) {
+  if (!harnessSession || role === 'unregistered') return null;
+  const observed = db.prepare(
+    "SELECT agent_id FROM agents WHERE session_id = ? AND role = 'unregistered' AND agent_id <> ?").all(harnessSession, role);
+  let moved = 0;
+  for (const row of observed) {
+    const n = db.prepare('SELECT COUNT(*) c FROM events WHERE agent_id = ?').get(row.agent_id).c;
+    db.prepare('UPDATE events SET agent_id = ? WHERE agent_id = ?').run(role, row.agent_id);
+    db.prepare("UPDATE agents SET status = 'CLOSED', current_operation = ? WHERE agent_id = ?")
+      .run(`adopted by ${role}`, row.agent_id);
+    database.record(db, actor, 'agent', row.agent_id, 'adopted', row.agent_id, role, `${n} event(s) re-attributed to ${role}`);
+    moved += n;
+  }
+  return observed.length ? { agents: observed.map(r => r.agent_id), events: moved } : null;
+}
+
 function contextCommand(db, args, actor) {
   const role = flag(args, 'role') || 'ceo';
   const claim = claimSession(db, args, actor);
@@ -287,12 +322,16 @@ function contextCommand(db, args, actor) {
     return;
   }
   const session = claim.session;
+  // Bind the agent row to the harness's session id when there is one. Runtime hooks only know that
+  // id, so this is what makes captured usage land on the role instead of a synthetic agent.
+  const bindTo = session.harness_session_id || session.id;
   // The session's own model and effort become this role's current values in the registry.
   db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, model, effort, status, started_at, last_heartbeat, current_operation)
               VALUES(?, ?, 'user', ?, ?, ?, ?, 'RUNNING', ?, ?, 'session start')
               ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id, harness=excluded.harness,
                 model=excluded.model, effort=excluded.effort, status='RUNNING', last_heartbeat=excluded.last_heartbeat`)
-    .run(role, role, session.id, session.harness, session.model, session.effort, now(), now());
+    .run(role, role, bindTo, session.harness, session.model, session.effort, now(), now());
+  const adopted = adoptObservedAgent(db, bindTo, role, actor);
   database.record(db, actor, 'agent', role, 'session_start', null, `${session.model || UNKNOWN}/${session.effort || UNKNOWN}`, `session ${session.id}`);
   emitEvent({ schema_version: '1.0', type: 'agent.started', agent_id: role, session_id: session.id, role,
     model: session.model || undefined, effort: session.effort || undefined }, { db });
@@ -302,6 +341,10 @@ function contextCommand(db, args, actor) {
   out(args, data, [
     `You are the ${role}. Session ${session.id} on ${session.harness}; your model is ${session.model || UNKNOWN} at ${session.effort || UNKNOWN} effort, recorded as the ${role}'s current values.`,
     `You hold the ${role} lock: no other session may act as ${role} until this one is released.`,
+    ...(session.harness_session_id
+      ? [`Usage capture is bound to harness session ${session.harness_session_id}: tokens land on ${role}.`]
+      : ['WARNING: this harness exposed no session id, so captured usage cannot be attributed to you. Pass --harness-session <id> or set BRAIN_HARNESS_SESSION.']),
+    ...(adopted ? [`Adopted ${adopted.events} event(s) already observed on this session from ${adopted.agents.join(', ')}.`] : []),
     '',
     state.renderStatus(snapshot),
     '',
@@ -312,6 +355,32 @@ function contextCommand(db, args, actor) {
     'Heartbeat this session while you work: brain.js session heartbeat --id ' + session.id,
     'Release it when you stop: brain.js session release --id ' + session.id
   ].join('\n'));
+}
+
+// ─── observability export (Langfuse) ─────────────────────────────────────────
+// The local UI answers "what is happening now". Langfuse answers "what happened, in what order,
+// and what did it cost", with trace timelines and dashboards it would be wasteful to rebuild.
+async function exportCommand(db, args, actor) {
+  const backend = args[1];
+  if (backend !== 'langfuse') { console.error('usage: brain.js export langfuse [--limit N] [--all] [--dry-run]'); process.exitCode = 2; return; }
+  const result = await langfuse.send(db, {
+    limit: int(flag(args, 'limit')) ?? 500,
+    all: has(args, 'all'),
+    dryRun: has(args, 'dry-run'),
+    envFile: flag(args, 'env-file'),
+  });
+  if (!result.ok) {
+    const why = result.reason === 'missing_credentials'
+      ? `set ${result.missing.join(' and ')} (a .env file in this directory is read too)`
+      : `${result.status}: ${result.body}`;
+    out(args, result, `export to ${result.baseUrl} failed: ${why}`);
+    process.exitCode = 5;
+    return;
+  }
+  if (result.sent) database.record(db, actor, 'export', 'langfuse', 'sent', null, String(result.sent), `${result.spans} span(s)`);
+  out(args, result, result.dryRun
+    ? `[dry-run] ${result.events} event(s) would become ${result.spans} span(s) at ${result.baseUrl}`
+    : `exported ${result.sent} event(s) as ${result.spans} span(s) to ${result.baseUrl}${result.note ? ` (${result.note})` : ''}`);
 }
 
 // ─── runtime control (Herdr) ─────────────────────────────────────────────────
@@ -328,7 +397,9 @@ function controlCommand(db, args, actor) {
 }
 
 // ─── entry ───────────────────────────────────────────────────────────────────
-function main(args = process.argv.slice(2)) {
+// Async because one command (export) performs network I/O. Every other command stays synchronous;
+// the await below is what keeps the database open until an async command has finished with it.
+async function main(args = process.argv.slice(2)) {
   const group = args[0];
   const actor = flag(args, 'actor') || process.env.BRAIN_ACTOR || 'cli';
   if (!group || group === 'help' || group === '--help') {
@@ -339,6 +410,7 @@ function main(args = process.argv.slice(2)) {
       '  budget   show|allocate|ask|decide',
       '  quota    [--provider claude,codex,...]', '  status', "  event    --event '<json>'", '  serve    [--port 4173]',
       '  control  focus|steer|interrupt|stop --agent-id A [--text "..."] [--confirm]   (requires a Herdr runtime binding)',
+      '  export   langfuse [--limit N] [--all] [--dry-run]   ship events to Langfuse as OTLP spans',
       '  config   show|set --key K --value V'].join('\n') + '\n');
     return;
   }
@@ -351,6 +423,7 @@ function main(args = process.argv.slice(2)) {
     if (group === 'budget') return budgetCommand(db, args, actor);
     if (group === 'quota') return quotaCommand(db, args);
     if (group === 'control') return controlCommand(db, args, actor);
+    if (group === 'export') return await exportCommand(db, args, actor);
     if (group === 'status') { const s = state.statusData(db); return out(args, s, state.renderStatus(s)); }
     if (group === 'event') {
       const raw = flag(args, 'event') || require('node:fs').readFileSync(0, 'utf8');
@@ -369,5 +442,5 @@ function main(args = process.argv.slice(2)) {
 module.exports = { main, claimSession };
 
 if (require.main === module) {
-  try { main(); } catch (error) { process.stderr.write(`ERROR ${error.message}\n`); process.exitCode = 1; }
+  main().catch(error => { process.stderr.write(`ERROR ${error.message}\n`); process.exitCode = 1; });
 }

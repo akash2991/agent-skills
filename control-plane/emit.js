@@ -23,7 +23,7 @@ const NESTED_FIELDS = {
   runtime: new Set(['name', 'session_ref', 'agent_ref', 'state_source']),
   artifact: new Set(['kind', 'name', 'path', 'sha256', 'bytes', 'tokens', 'token_measurement']),
   context: new Set(['input_tokens', 'window_tokens', 'token_measurement', 'sources']),
-  usage: new Set(['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_write_input_tokens', 'cost_usd', 'source']),
+  usage: new Set(['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_input_tokens', 'cache_write_input_tokens', 'cost_usd', 'source']),
   turn: new Set(['number', 'duration_ms', 'outcome']),
   tool: new Set(['name', 'outcome', 'duration_ms']),
   control: new Set(['action', 'target', 'outcome']),
@@ -104,7 +104,7 @@ function validateEvent(event) {
     }
   }
   if (event.usage) {
-    for (const key of ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_write_input_tokens']) nonNegativeNumber(event.usage[key], `usage.${key}`, true);
+    for (const key of ['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_input_tokens', 'cache_write_input_tokens']) nonNegativeNumber(event.usage[key], `usage.${key}`, true);
     nonNegativeNumber(event.usage.cost_usd, 'usage.cost_usd');
     if (!event.usage.source) throw new Error('usage.source is required');
     if (!USAGE_SOURCES.has(event.usage.source)) throw new Error(`unsupported usage source "${event.usage.source}"`);
@@ -162,6 +162,7 @@ const COLUMNS = {
   error_type: e => e.error_type,
   input_tokens: e => e.usage?.input_tokens,
   output_tokens: e => e.usage?.output_tokens,
+  thinking_tokens: e => e.usage?.thinking_tokens,
   cache_read_tokens: e => e.usage?.cache_read_input_tokens,
   cache_write_tokens: e => e.usage?.cache_write_input_tokens,
   cost_usd: e => e.usage?.cost_usd,
