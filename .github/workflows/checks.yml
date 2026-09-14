@@ -53,18 +53,15 @@ jobs:
             const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
             const selfOnly = [...(manifest.self?.skills ?? []), ...(manifest.self?.personas ?? [])];
             const skills = fs.readdirSync("build/product/claude-code/.claude/skills");
-            const agents = fs.readdirSync("build/product/claude-code/.claude/agents").map(f => f.replace(/\.md$/, ""));
-            const leaked = selfOnly.filter(n => skills.includes(n) || agents.includes(n));
+            const leaked = selfOnly.filter(n => skills.includes(n));
             if (leaked.length) { console.error("leaked into the product build: " + leaked.join(", ")); process.exit(1); }
             const omitted = [...(manifest.self?.omit?.personas ?? []), ...(manifest.self?.omit?.skills ?? [])];
             const s2 = fs.readdirSync("build/self/claude-code/.claude/skills");
-            const a2 = fs.readdirSync("build/self/claude-code/.claude/agents").map(f => f.replace(/\.md$/, ""));
-            const notOmitted = omitted.filter(n => s2.includes(n) || a2.includes(n));
+            const notOmitted = omitted.filter(n => s2.includes(n));
             if (notOmitted.length) { console.error("should be omitted from the self build: " + notOmitted.join(", ")); process.exit(1); }
             const missing = selfOnly.filter(n => {
               const s = fs.readdirSync("build/self/claude-code/.claude/skills");
-              const a = fs.readdirSync("build/self/claude-code/.claude/agents").map(f => f.replace(/\.md$/, ""));
-              return !s.includes(n) && !a.includes(n);
+              return !s.includes(n);
             });
             if (missing.length) { console.error("missing from the self build: " + missing.join(", ")); process.exit(1); }
             console.log(selfOnly.length + " added artifacts absent from the product build and present in the self build; " + omitted.length + " omitted from the self build");
@@ -75,6 +72,7 @@ jobs:
           mkdir -p /tmp/target
           node scripts/brain/inject.js /tmp/target --targets claude-code
           cd /tmp/target
-          node .agent-brain/control-plane/brain.js context --role ceo --harness ci --model ci-model --effort high
+          test ! -d .claude/agents
+          node .agent-brain/control-plane/brain.js event --event '{"schema_version":"1.0","type":"model.completed","agent_id":"ci","session_id":"ci","usage":{"input_tokens":1,"output_tokens":2,"source":"runtime"}}'
           node .agent-brain/control-plane/brain.js status
-          node .agent-brain/control-plane/brain.js budget
+          node .agent-brain/control-plane/brain.js export langfuse --dry-run || test $? -eq 5

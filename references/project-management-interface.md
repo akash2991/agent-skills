@@ -16,14 +16,13 @@ The organization needs these operations from a project-management tool. The curr
 | Link pull request | Staff engineer | The task carries its PR link; review verdicts (changes requested, approved, merged) are mirrored as structured status updates |
 | Mark blocker | Anyone | Task state `blocked` plus a "blocked by" relation, a status update whose blocker block defines type, dependency, requirement, owner, and escalation, and the Escalation block as a comment |
 | Comment | Anyone | All reports and escalations are posted as comments on the task |
-| Link agent | Owner | The task carries the `agent_id` of whoever is on it, matching the registry |
+| Link agent | Owner | The task carries the firstmate task id of whoever is on it |
 
 ## Mapping conventions
 
 - Task title: `<goal in one sentence>`.
-- Task description: goal, epic and milestone, points (1, 2, 3, 5, 8), acceptance criteria, owned paths, interfaces consumed and provided, verification command, tier/model/effort, review path, links to HLD/LLD, dependencies.
+- Task description: goal, epic and milestone, points (1, 2, 3, 5, 8), acceptance criteria, owned paths, interfaces consumed and provided, verification command, tier, review path, links to HLD/LLD, dependencies.
 - Labels: `role:<role>`, `tier:T0..T3`, `blast:small|reviewed`, `service:<name>`.
-- Registry `ticket` = the tracker's issue identifier.
 
 ## Structure
 

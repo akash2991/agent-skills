@@ -7,13 +7,14 @@
 // application that already has a package manager; here it would break the zero-install guarantee.
 //
 // Shape sent to Langfuse (https://langfuse.com/integrations/native/opentelemetry):
-//   one trace per agent      → root span, langfuse.observation.type=agent
+//   one trace per agent id   → root span, langfuse.observation.type=agent
 //   model.completed          → child span, type=generation, with model, usage and cost
 //   tool.completed           → child span, type=tool
 //   turn.completed           → child span, type=span
 //   everything else          → child span, type=event
-// The organization's parent/child tree is reproduced with OTLP parentSpanId, so Langfuse renders the
-// CEO → PM → EM → engineer hierarchy as its agent graph.
+// When an agent's events name a parent (parent_agent_id), the nesting is reproduced with OTLP
+// parentSpanId, so it shows in Langfuse's agent graph. There is no registry: everything known about
+// an agent comes from its own events.
 //
 // Privacy: events are metadata only by contract, and this exporter can only read those columns. No
 // prompt, response, reasoning, file content, tool argument, or tool result is representable here.
@@ -98,11 +99,9 @@ const OBSERVATION_TYPE = {
   'turn.completed': 'span',
   'skill.loaded': 'event',
   'document.loaded': 'event',
-  'budget.changed': 'event',
   'agent.status_changed': 'event',
   'agent.started': 'event',
   'agent.completed': 'event',
-  'control.completed': 'event',
 };
 
 // Names are an API: evaluators, dashboards and saved views target them, so they must be stable and
@@ -114,11 +113,9 @@ const SPAN_NAME = {
   'turn.completed': 'run-turn',
   'skill.loaded': 'load-skill',
   'document.loaded': 'load-document',
-  'budget.changed': 'change-budget',
   'agent.status_changed': 'change-status',
   'agent.started': 'start-agent',
   'agent.completed': 'complete-agent',
-  'control.completed': 'control-agent',
 };
 function spanName(e) {
   // A tool name is stable and low-cardinality, so it earns a place in the name; everything else
@@ -133,16 +130,13 @@ function spanName(e) {
 // read or wrote.
 function agentIO(agent) {
   const input = {
-    role: agent.role,
+    role: agent.role || null,
     agent_id: agent.agent_id,
     ticket: agent.ticket || null,
     assigned_by: agent.parent || null,
-    owned_paths: agent.owned_paths || null,
   };
   const output = {
-    status: agent.status,
-    operation: agent.current_operation || null,
-    blocker: agent.blocker || null,
+    status: agent.status || 'UNKNOWN',
     model: agent.model || 'UNKNOWN',
     effort: agent.effort || 'UNKNOWN',
   };
@@ -163,63 +157,54 @@ function eventIO(e) {
     input: JSON.stringify({ turn: e.turn_number ?? null }),
     output: JSON.stringify({ outcome: e.turn_outcome || 'UNKNOWN' }),
   };
-  if (e.type === 'budget.changed') return {
-    input: JSON.stringify({ action: e.budget_action, holder: e.budget_holder, granted_by: e.budget_granted_by, request: e.budget_request_id }),
-    output: JSON.stringify({ input_tokens: e.input_tokens ?? null, output_tokens: e.output_tokens ?? null }),
-  };
   if (e.type === 'skill.loaded' || e.type === 'document.loaded') return {
     input: JSON.stringify({ kind: e.artifact_kind, name: e.artifact_name, path: e.artifact_path }),
     output: JSON.stringify({ tokens: e.artifact_tokens ?? null, bytes: e.artifact_bytes ?? null, measurement: e.artifact_measurement || 'unknown' }),
   };
   return {
     input: JSON.stringify({ event: e.type }),
-    output: JSON.stringify({ status: e.status || null, outcome: e.control_outcome || null }),
+    output: JSON.stringify({ status: e.status || null }),
   };
+}
+
+// A trace is named for its role when an event carried one; otherwise for the agent id when that id
+// means something, such as the task id firstmate exports into a crew pane; and only as a last resort
+// for the harness session. A list where every trace reads the same placeholder is no list at all.
+function traceName(agent) {
+  if (agent.role) return agent.role;
+  if (agent.agent_id && !agent.agent_id.startsWith('session-')) return agent.agent_id;
+  const session = (agent.session_id || agent.agent_id || '').replace(/^session-/, '').slice(0, 8);
+  return `session${session ? ` ${session}` : ''}`;
 }
 
 // Every span carries the trace-level attributes. Langfuse aggregates across observations rather
 // than only the root, so an attribute set once on the root is not filterable on the children.
-// An agent observed by a hook before any role was claimed has the placeholder role `unregistered`.
-// Naming the trace after it produces a list where every entry reads "unregistered", which is the
-// same as having no names at all. Fall back to what is actually known: the harness and the session.
-const UNNAMED_ROLE = 'unregistered';
-function traceName(agent) {
-  if (agent.role && agent.role !== UNNAMED_ROLE) return agent.role;
-  const session = (agent.session_id || agent.agent_id || '').slice(0, 8);
-  return `${agent.harness || 'session'}${session ? ` ${session}` : ''}`;
-}
-
 function traceLevel(agent, environment) {
-  const named = agent.role && agent.role !== UNNAMED_ROLE;
   return [
     ['langfuse.trace.name', traceName(agent)],
     ['langfuse.session.id', agent.session_id || agent.agent_id],
-    // A role is a meaningful thing to filter and group by; the placeholder is not, and setting it
-    // would fill the users view with one entry called "unregistered".
-    ...(named ? [['langfuse.user.id', agent.role]] : []),
-    ['langfuse.trace.tags', JSON.stringify([agent.harness, named ? agent.role : 'no-role'].filter(Boolean))],
+    // A role is a meaningful thing to filter and group by; an unnamed session is not, and setting
+    // one would fill the users view with meaningless entries.
+    ...(agent.role ? [['langfuse.user.id', agent.role]] : []),
+    ['langfuse.trace.tags', JSON.stringify([agent.role || 'no-role'])],
     ['langfuse.environment', environment],
     ['langfuse.trace.metadata.role', agent.role],
     ['langfuse.trace.metadata.agent_id', agent.agent_id],
     ['langfuse.trace.metadata.parent', agent.parent || 'none'],
-    ['langfuse.trace.metadata.harness', agent.harness],
     ['langfuse.trace.metadata.ticket', agent.ticket],
     ['langfuse.trace.metadata.status', agent.status],
   ];
 }
 
-function rootSpan(agent, environment) {
+function rootSpan(agent, environment, known) {
   const started = agent.started_at || new Date().toISOString();
-  const ended = agent.status === 'CLOSED' ? (agent.last_heartbeat || started) : (agent.last_heartbeat || started);
+  const ended = agent.last_at || started;
   return {
     traceId: traceIdFor(agent.agent_id),
     spanId: spanIdFor(`agent:${agent.agent_id}`),
-    // An agent reports to its parent, so its span nests under the parent's root span. This is what
-    // draws the organization chart in Langfuse rather than a flat list of traces.
-    ...(agent.parent && agent.parent !== 'user' ? { parentSpanId: spanIdFor(`agent:${agent.parent}`) } : {}),
-    // The role is the stable, low-cardinality identity of this run, and the agent id varies per run
-    // so it belongs in metadata. Where no role was ever claimed, name it for the harness session
-    // rather than for the placeholder, so the trace list is readable.
+    // An agent nests under its parent only when the parent's span is in this payload, so a child
+    // never points at a span that was never sent.
+    ...(agent.parent && known.has(agent.parent) ? { parentSpanId: spanIdFor(`agent:${agent.parent}`) } : {}),
     name: traceName(agent),
     kind: 1,
     startTimeUnixNano: nano(started),
@@ -230,8 +215,6 @@ function rootSpan(agent, environment) {
       ['langfuse.observation.output', agentIO(agent).output],
       ['langfuse.observation.metadata.model', agent.model],
       ['langfuse.observation.metadata.effort', agent.effort],
-      ['langfuse.observation.metadata.owned_paths', agent.owned_paths],
-      ['langfuse.observation.metadata.blocker', agent.blocker],
       ...traceLevel(agent, environment),
     ]),
   };
@@ -279,8 +262,6 @@ function eventSpan(e, agent, environment) {
       ['langfuse.observation.metadata.turn_outcome', e.turn_outcome],
       ['langfuse.observation.metadata.artifact_path', e.artifact_path],
       ['langfuse.observation.metadata.artifact_tokens', e.artifact_tokens],
-      ['langfuse.observation.metadata.budget_action', e.budget_action],
-      ['langfuse.observation.metadata.budget_holder', e.budget_holder],
       ['langfuse.observation.metadata.status', e.status],
       ...(agent ? traceLevel(agent, environment) : []),
     ]),
@@ -294,19 +275,27 @@ function pending(db, { limit = 500, all = false } = {}) {
   return db.prepare(`SELECT e.* FROM events e ${where} ORDER BY e.timestamp LIMIT ?`).all(limit);
 }
 
-// Every agent whose events are in this batch, plus its ancestors. Without the ancestors a child's
-// parentSpanId points at a span that was never sent, and the tree renders flat.
+// What the events say about each agent in this batch, plus its ancestors. Role, parent, ticket,
+// model, effort, and status are whatever the agent's own events last reported. Without the ancestors
+// a child's parentSpanId would point at a span that was never sent, and the tree renders flat.
 function agentsWithAncestors(db, ids) {
   const byId = new Map();
   const queue = [...ids];
-  const get = db.prepare('SELECT * FROM agents WHERE agent_id = ?');
+  const span = db.prepare('SELECT MIN(timestamp) AS started_at, MAX(timestamp) AS last_at FROM events WHERE agent_id = ?');
+  const latest = column => db.prepare(`SELECT ${column} AS v FROM events WHERE agent_id = ? AND ${column} IS NOT NULL ORDER BY timestamp DESC, rowid DESC LIMIT 1`);
+  const fields = {
+    role: latest('role'), parent: latest('parent_agent_id'), session_id: latest('session_id'),
+    ticket: latest('ticket'), model: latest('model'), effort: latest('effort'), status: latest('status'),
+  };
   while (queue.length) {
     const id = queue.shift();
-    if (!id || id === 'user' || byId.has(id)) continue;
-    const row = get.get(id);
-    if (!row) continue;
-    byId.set(id, row);
-    if (row.parent) queue.push(row.parent);
+    if (!id || byId.has(id)) continue;
+    const times = span.get(id);
+    if (!times || !times.started_at) continue;
+    const agent = { agent_id: id, started_at: times.started_at, last_at: times.last_at };
+    for (const [name, query] of Object.entries(fields)) agent[name] = query.get(id)?.v ?? null;
+    byId.set(id, agent);
+    if (agent.parent) queue.push(agent.parent);
   }
   return byId;
 }
@@ -314,9 +303,9 @@ function agentsWithAncestors(db, ids) {
 function buildPayload(db, events, environment) {
   const agentIds = [...new Set(events.map(e => e.agent_id).filter(Boolean))];
   const byId = agentsWithAncestors(db, agentIds);
-  const agents = [...byId.values()];
+  const known = new Set(byId.keys());
   const spans = [];
-  for (const a of agents) spans.push(rootSpan(a, environment));
+  for (const a of byId.values()) spans.push(rootSpan(a, environment, known));
   for (const e of events) spans.push(eventSpan(e, byId.get(e.agent_id), environment));
   return {
     resourceSpans: [{

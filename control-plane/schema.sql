@@ -1,7 +1,7 @@
--- Agent Brain control plane. One SQLite database holds every piece of mutable runtime state:
--- sessions, the agent registry, observability events, provider quota, and an
--- audit trail of runtime changes. Durable *documents* (ORG.md, CONVENTIONS.md, HLD/LLD, DECISIONS)
--- stay as markdown; only state that changes while agents work lives here.
+-- Agent Brain control plane. One SQLite database holds recorded agent-work usage: the metadata-only
+-- events that harness hooks capture, and which of them have been exported. Who is running, in which
+-- pane, on which model and effort, is firstmate's state and is not duplicated here. Durable
+-- documents (ORG.md, CONVENTIONS.md, HLD/LLD, DECISIONS) stay as markdown.
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
@@ -17,49 +17,6 @@ CREATE TABLE IF NOT EXISTS config (
   updated_at TEXT NOT NULL,
   updated_by TEXT
 );
-
--- Harness sessions. A partial unique index enforces one live CEO across all terminals.
-CREATE TABLE IF NOT EXISTS sessions (
-  id             TEXT PRIMARY KEY,
-  role           TEXT NOT NULL,
-  harness        TEXT NOT NULL,
-  model          TEXT,
-  effort         TEXT,
-  pid            INTEGER,
-  cwd            TEXT,
-  claimed_at     TEXT NOT NULL,
-  last_heartbeat TEXT NOT NULL,
-  released_at    TEXT,
-  -- The harness's own session identifier, which is what runtime hooks report. Without it, hook
-  -- usage cannot be matched to the role this session claimed and lands on a synthetic agent.
-  harness_session_id TEXT
-);
-
--- The agent registry. `model` and `effort` are current values, mutable at runtime; there is no
--- per-persona allowlist. Every change is recorded in `changes`.
-CREATE TABLE IF NOT EXISTS agents (
-  agent_id          TEXT PRIMARY KEY,
-  role              TEXT NOT NULL,
-  parent            TEXT,
-  session_id        TEXT,
-  harness           TEXT,
-  runtime           TEXT,
-  runtime_ref       TEXT,
-  model             TEXT,
-  effort            TEXT,
-  ticket            TEXT,
-  status            TEXT NOT NULL DEFAULT 'PLANNED',
-  owned_paths       TEXT,
-  current_operation TEXT,
-  blocker           TEXT,
-  started_at        TEXT NOT NULL,
-  last_heartbeat    TEXT,
-  completed_at      TEXT,
-  result            TEXT,
-  report            TEXT
-);
-CREATE INDEX IF NOT EXISTS agents_parent ON agents(parent);
-CREATE INDEX IF NOT EXISTS agents_status ON agents(status);
 
 -- Observability events. Columns mirror the metadata-only event contract in event.schema.json;
 -- `raw` keeps the original JSON so nothing is lost when the contract grows.
@@ -103,29 +60,10 @@ CREATE TABLE IF NOT EXISTS events (
   turn_outcome            TEXT,
   tool_name               TEXT,
   tool_outcome            TEXT,
-  control_action          TEXT,
-  control_target          TEXT,
-  control_outcome         TEXT,
   raw                     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_agent ON events(agent_id, timestamp);
 CREATE INDEX IF NOT EXISTS events_type  ON events(type, timestamp);
-
-
-
--- Audit trail for every runtime mutation made through the CLI or the UI.
-CREATE TABLE IF NOT EXISTS changes (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  at        TEXT NOT NULL,
-  actor     TEXT NOT NULL,
-  entity    TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  field     TEXT NOT NULL,
-  old_value TEXT,
-  new_value TEXT,
-  reason    TEXT
-);
-CREATE INDEX IF NOT EXISTS changes_entity ON changes(entity, entity_id, at);
 
 -- Which events have been shipped to an external observability backend. The marker lives here rather
 -- than as a column on events so a second backend can be added without another migration, and so an
@@ -136,25 +74,3 @@ CREATE TABLE IF NOT EXISTS exports (
   exported_at TEXT NOT NULL,
   PRIMARY KEY (event_id, backend)
 );
-
--- What each provider said was left on the plan, snapshotted every time quota is read. A fresh
--- database is seeded with one snapshot at the first session claim, so routing starts from the real
--- account rather than from a guess, and a later reading can be compared against it.
-CREATE TABLE IF NOT EXISTS provider_quota (
-  read_at              TEXT NOT NULL,
-  provider             TEXT NOT NULL,
-  scope                TEXT NOT NULL,
-  plan                 TEXT,
-  status               TEXT,
-  percent_remaining    REAL,
-  spend_priority       REAL,
-  runway_status        TEXT,
-  runway_seconds       REAL,
-  projected_exhausted_at TEXT,
-  pace_status          TEXT,
-  burn_multiple        REAL,
-  provider_state       TEXT,
-  stale                INTEGER,
-  PRIMARY KEY (read_at, provider, scope)
-);
-CREATE INDEX IF NOT EXISTS provider_quota_latest ON provider_quota(provider, scope, read_at DESC);

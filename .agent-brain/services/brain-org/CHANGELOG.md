@@ -4,6 +4,8 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-54 — roles no longer choose their model or spawn each other: firstmate dispatches each as its own session with the harness, model, and effort set per task. Rule 1 stops asking for model and effort, rule 4 becomes "do not spawn subagents", the roster says firstmate runs the crew, the `quota-axi` skill is archived, and registry and routing-record wording is gone from the personas, `delivery-status`, `linear`, the EM report, and the references — direct session, on the owner's instruction
+
 - F-self-50 — an explicit user instruction is honoured for the session it is given in and recorded, and nothing more. The standing-instruction mechanism is gone: no entry binds a later session, and no agent reads the file to decide how to behave. Anything meant to apply from now on goes into `CONVENTIONS.md`, a persona, or a skill, where it is enforced and reviewable, rather than accumulating as rules nobody agreed to — org-staff-engineer
 
 - F-self-49 — `USER-EXPLICIT.md` and `WORK.md` ship to every repository as local bookkeeping only: a correction that outlives the session, and a record of what was run. How those records are read back to refine the brain moved into the self-only `self-improvement` skill, since a consuming repository has no brain to refine — org-staff-engineer

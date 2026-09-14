@@ -4,6 +4,8 @@ Newest first. One line per merged task, written by the staff engineer, checked b
 
 ## Unreleased
 
+- F-self-53 — firstmate runs the crew, so the control plane stops duplicating it. The session claim, agent registry, quota adapter and its table, local UI, and terminal-control event are gone; `brain.js` keeps `status`, `event`, `export`, and `config`, and an old command prints where it went instead of failing silently. The usage hook attributes tokens to the `FM_TASK_ID` firstmate exports into every crew pane, and the Langfuse export builds each trace from the agent's own events. No target emits persona subagent files any more. CI's smoke step called `brain.js budget`, which no longer existed, and now exercises the remaining commands. Archived under `deprecated/removed-for-firstmate/` — direct session, on the owner's instruction
+
 - F-self-51 — the usage hook read only the last 40 transcript messages, so a session that produced more than that between firings lost the difference permanently. In a real injected project 452 of 499 messages were never recorded and token and cost figures were understated roughly tenfold. It now reads the whole transcript, which is safe because ingestion is idempotent by deterministic id, and self-healing: a gap is filled on the next firing. A test pins both halves — org-staff-engineer
 - F-self-52 — every Langfuse trace was named `unregistered`, the placeholder role a hook-observed session carries now that agents do not register, which made the trace list unreadable and filled the users dimension with one meaningless value. A trace with no claimed role is now named for its harness and session, and no user id is set at all — org-staff-engineer
 

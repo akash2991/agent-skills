@@ -45,10 +45,10 @@ Edit the sources. Everything under `build/` is generated and git-ignored; never 
 | Source | Holds | Emitted as |
 |---|---|---|
 | `org/NN-*.md` | the always-on organization, as ordered parts | one `ORG.md` plus the managed block in each tool's always-on file |
-| `agents/*.md` | personas; discipline variants use `extends:` | a skill per persona, and a subagent file where the tool has them (never the CEO) |
+| `agents/*.md` | personas; discipline variants use `extends:` | a skill per persona; firstmate runs each role as its own session, so no tool gets subagent files |
 | `skills/<name>/SKILL.md` | the flat skill dump; `category:` only groups the output | one directory per selected skill |
 | `agents-reports/*.md` | one uniform report per role | `.agent-brain/agents-reports/` |
-| `control-plane/` | SQLite schema, CLI, UI, usage hooks, adapters | `.agent-brain/control-plane/` |
+| `control-plane/` | SQLite usage store, CLI, usage hooks, Langfuse export | `.agent-brain/control-plane/` |
 | `references/*.md` | shared checklists and cross-cutting contracts | `.agent-brain/references/`, with skill links rewritten |
 | `templates/` | what is stamped into a project: global docs, service docs, the entry command | global docs and service-doc template, plus `/brain-pm` in each tool's command format |
 | `manifest.json` | which skills, personas, and tools get built, plus `self.add` and `self.omit` for this repository | — |
@@ -110,7 +110,7 @@ North star: **continuous delivery.** Every change is small enough to merge, ship
 
 ## Who you can invoke
 
-One command per role. There is no entry point and no order you must follow: invoke whichever role the work needs, and skip the rest. Each confirms the model and thinking effort with you, asks for the inputs it needs, and returns a structured result.
+One command per role. There is no entry point and no order you must follow: invoke whichever role the work needs, and skip the rest. Each asks for the inputs it needs and returns a structured result.
 
 | Command | Role | Scope | Give it | Get back |
 |---|---|---|---|---|
@@ -125,6 +125,8 @@ One command per role. There is no entry point and no order you must follow: invo
 
 Engineers and reviewers are split by discipline: backend, web (React), and mobile (React Native). An engineering manager is not split; one owns a service across all three.
 
+**Firstmate runs the crew.** Each role runs as its own session, dispatched by firstmate into its own pane with the harness, model, and thinking effort chosen for that task. A role never picks its own model and never spawns another role.
+
 **Scope decides who owns which document.** The product manager and the principal engineers see the whole product, so they own the two project pages: `.agent-brain/docs/PRD.md` and `.agent-brain/docs/ARCHITECTURE.md`, both kept really high level. Engineering managers and staff engineers work inside one service, so the service's `HLD.md` and `LLD.md` belong to its staff engineers, updated in the pull request that changes them. The full table is in `.agent-brain/references/documentation-map.md`.
 
 Every role is a persona, installed as a skill in your tool's skills directory (see "Where things live"). Read yours before acting, and use only the skills it lists.
@@ -134,10 +136,10 @@ Every role is a persona, installed as a skill in your tool's skills directory (s
 These apply to every role, in every tool. Anything longer lives in a reference that the role loads when it needs it.
 
 0. **The user overrides everything here, for this session, and you write it down.** An explicit instruction from the user beats this document, the conventions, your persona, and any skill. Follow it, then record it in `.agent-brain/docs/USER-EXPLICIT.md` before you carry on. The record is not a rule: it binds nobody later, and you do not read it to find out how to behave. It exists so a default that keeps being overridden becomes visible. Anything that should apply from now on goes into `CONVENTIONS.md`, a persona, or a skill, where it is actually enforced.
-1. **Confirm the run before working.** State the role you are playing, then ask which model and thinking effort to use, and for the inputs your persona lists. Do not guess a ticket id, a PRD, or a branch.
+1. **Confirm the run before working.** State the role you are playing, then ask for the inputs your persona lists. Do not guess a ticket id, a PRD, or a branch. Do not ask which model or effort to use: that was set when the run was dispatched.
 2. **Stay in scope, and name the right door.** If a request is not in your Role, refuse it in one sentence and say which command to invoke instead. Do not do it anyway because it is small.
-3. **Never invoke another persona.** You hand back to the user, who invokes the next one. If you are stuck, blocked, or asked for something outside your role, say so in one sentence with what you need. There is no ladder to climb. The one exception to invoking anything is below.
-4. **Ask before spawning subagents.** When a task would flood your own context, say so plainly: what will pollute it, and what you would delegate. If the user agrees, use this tool's native subagent mechanism and keep each child narrowly scoped. Never spawn silently.
+3. **Never invoke another persona.** You hand back to the user, who invokes the next one. If you are stuck, blocked, or asked for something outside your role, say so in one sentence with what you need. There is no ladder to climb.
+4. **Do not spawn subagents.** Parallel work is split into separate tasks, and firstmate runs each as its own session. When a task would flood your own context, say plainly what should be split off and what each part would return, then hand back.
 5. **Return a structured result.** Your persona's `## Output` defines the shape. End with it, name what should run next and with what, and stop. Do not invoke it, and do not add anything after the output.
 6. **Read only what you decide with.** `.agent-brain/references/context-scope.md` says what that is for your role. Loading more is not being better informed.
 7. **Truth over reports.** Label every fact `VERIFIED NOW`, `REPORTED`, `HISTORICAL`, `PLANNED`, or `UNKNOWN`. Check the repository, git, and the tracker before stating current state. A missing value is `UNKNOWN`, never zero.
@@ -158,7 +160,7 @@ These apply to every role, in every tool. Anything longer lives in a reference t
 | The work log every agent appends to when it finishes | `.agent-brain/docs/WORK.md` |
 | Service docs, one folder per service | `.agent-brain/services/<service>/` |
 | Report templates | `.agent-brain/agents-reports/` |
-| Sessions, agents, recorded usage | `.agent-brain/control-plane/` (`node .agent-brain/control-plane/brain.js`) |
+| Recorded token and cost usage, and the Langfuse export | `.agent-brain/control-plane/` (`node .agent-brain/control-plane/brain.js status`) |
 | Project management | linear, via the `linear` skill |
 
 Personas and skills are installed once per tool, so find the row for the tool you are:
@@ -188,6 +190,6 @@ Skills are installed in your tool's skills directory (see "Where things live"):
 - **domain**: `performance-optimization`, `security-and-hardening`
 - **process**: `brownfield-adoption`, `delivery-status`, `idea-refine`, `interview-me`, `milestone-planning`, `planning-and-task-breakdown`, `prd-writing`, `self-improvement`, `spec-driven-development`
 - **testing**: `browser-testing-with-devtools`, `end-to-end-testing`, `test-driven-development`
-- **tools**: `github`, `langfuse`, `linear`, `quota-axi`
+- **tools**: `github`, `langfuse`, `linear`
 
 <!-- agent-brain:end -->

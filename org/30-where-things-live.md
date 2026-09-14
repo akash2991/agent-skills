@@ -10,7 +10,7 @@
 | The work log every agent appends to when it finishes | `{{ORG_DIR}}/docs/WORK.md` |
 | Service docs, one folder per service | `{{ORG_DIR}}/services/<service>/` |
 | Report templates | `{{ORG_DIR}}/agents-reports/` |
-| Sessions, agents, recorded usage | `{{ORG_DIR}}/control-plane/` (`node {{ORG_DIR}}/control-plane/brain.js`) |
+| Recorded token and cost usage, and the Langfuse export | `{{ORG_DIR}}/control-plane/` (`node {{ORG_DIR}}/control-plane/brain.js status`) |
 | Project management | {{PM_TOOL}}, via the `{{PM_TOOL}}` skill |
 
 Personas and skills are installed once per tool, so find the row for the tool you are:

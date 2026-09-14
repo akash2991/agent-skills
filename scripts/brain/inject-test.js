@@ -43,6 +43,8 @@ test('injection is idempotent and leaves a project runnable', () => {
   assert.ok(!commands.includes('brain-ceo.md'), 'there is no entry-point role');
   assert.ok(commands.every(c => c.startsWith('brain-')),
     'every command is namespaced brain- so it cannot collide with another tool');
+  assert.ok(!fs.existsSync(path.join(repo, '.claude', 'agents')),
+    'personas ship as skills only: firstmate runs each role as its own session, so there are no subagent files');
 });
 
 test('a file the brain no longer produces is retired, not left behind', () => {
@@ -138,11 +140,16 @@ test('each project gets its own control plane', () => {
   inject(b);
   const dbOf = repo => path.join(repo, '.agent-brain', 'control-plane', 'brain.db');
   const brain = repo => path.join(repo, '.agent-brain', 'control-plane', 'brain.js');
-  execFileSync('node', [brain(a), 'context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'm'], { cwd: a, encoding: 'utf8' });
-  // Two projects must not share state: a CEO claimed in one cannot block the other, and neither
-  // can see the other's agents or spend.
-  const out = execFileSync('node', [brain(b), 'context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'm'], { cwd: b, encoding: 'utf8' });
-  assert.match(out, /You are the ceo/);
+  const event = JSON.stringify({ schema_version: '1.0', type: 'model.completed', agent_id: 't-1', session_id: 's',
+    usage: { input_tokens: 1, output_tokens: 2, source: 'runtime' } });
+  const env = { ...process.env };
+  delete env.BRAIN_DB;
+  execFileSync('node', [brain(a), 'event', '--event', event], { cwd: a, encoding: 'utf8', env });
+  // Two projects must not share state: usage recorded in one is invisible in the other.
+  const other = JSON.parse(execFileSync('node', [brain(b), 'status', '--json'], { cwd: b, encoding: 'utf8', env }));
+  assert.equal(other.usage.length, 0);
+  const own = JSON.parse(execFileSync('node', [brain(a), 'status', '--json'], { cwd: a, encoding: 'utf8', env }));
+  assert.equal(own.usage[0].agent_id, 't-1');
   assert.ok(fs.existsSync(dbOf(a)) && fs.existsSync(dbOf(b)));
   assert.notEqual(fs.realpathSync(dbOf(a)), fs.realpathSync(dbOf(b)));
 });
@@ -158,7 +165,6 @@ test('every built skill and persona parses under a strict YAML parser', () => {
     const f = path.join(root, 'skills', d, 'SKILL.md');
     if (fs.existsSync(f)) files.push(f);
   }
-  for (const f of fs.readdirSync(path.join(root, 'agents'))) files.push(path.join(root, 'agents', f));
   assert.ok(files.length > 20, 'expected a built organization to check');
   const broken = files
     .map(f => [path.relative(root, f), strictProblems(fs.readFileSync(f, 'utf8'))])

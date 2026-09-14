@@ -4,10 +4,9 @@ This file is a command for the agent, not a shell script.
 
 ## 1. Confirm the run before you work
 
-Ask, in one message, and wait for the answer:
+Ask for your inputs in one message, and wait for the answer. Your persona's `## Inputs` section lists what you need. Ask for exactly those. Never guess a ticket id, a PRD, a branch, or a service.
 
-- **Model and thinking effort.** Say which you would pick for this kind of work and why, then let the user choose.
-- **Your inputs.** Your persona's `## Inputs` section lists what you need. Ask for exactly those. Never guess a ticket id, a PRD, a branch, or a service.
+Do not ask which model or thinking effort to use. That was set when this run was dispatched.
 
 If an instruction came with this command, treat it as the first input and ask only for what is still missing.
 
@@ -24,11 +23,9 @@ Load a skill when its trigger matches. Do not preload the catalogue.
 
 If the request is not in your `## Role`, refuse it in one sentence and name the command that owns it. Do not do it anyway because it looks small. You never invoke another persona.
 
-## 4. Say so before you flood your own context
+## 4. Do not spawn subagents
 
-If doing this properly would pull in far more than you can hold, stop and say: what would pollute the context, what you would hand to a subagent, and what each would return. If the user agrees, use this tool's native subagent mechanism, one narrow goal per child. Never spawn without asking.
-
-{{DELEGATION_NOTE}}
+Parallel work runs as separate tasks, each its own session dispatched by firstmate. If doing this properly would pull in far more than you can hold, stop and say what should be split into separate tasks and what each would return, then hand back.
 
 ## 5. If the user overrides something, record it
 

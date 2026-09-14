@@ -15,7 +15,7 @@ skills: test-driven-development, lld, escalation, linear   # the ONLY skills thi
 
 `skills` is validated: every name must resolve to a selected skill in `manifest.json` (the flat `skills/` dump), and the build lists them in the persona body. A persona must not invoke a skill it does not list.
 
-A persona carries **no model and no effort**. Any agent may run any model at any thinking effort: the engineering manager chooses per task from complexity, the remaining budget allocation, and live provider quota (`model-routing`), the spawner passes that choice to the harness, and the control plane records what actually ran. The linter rejects `model`, `effort`, and `allowed` in frontmatter so a per-persona allowlist cannot creep back. Current policy: planning and coding personas (principal engineers, engineering manager, staff engineers) default to `claude-fable-5-1` at `high`; every other persona defaults to `claude-opus-5` at `high`. Change the policy by editing the base personas; specializations inherit.
+A persona carries **no model and no effort**. Any role may run on any model at any thinking effort: the choice is made when the work is dispatched, in firstmate's crew dispatch profile or as a per-task override, and the control plane records what actually ran. The linter rejects `model`, `effort`, and `allowed` in frontmatter so a per-persona allowlist cannot creep back.
 
 Every persona is a specialist: its `## Authorization` ends with a refusal of work outside its Role. A task no persona covers is a hiring request to the CEO (`references/hiring.md`), never an improvised assignment.
 
@@ -29,7 +29,7 @@ Every persona is a specialist: its `## Authorization` ends with a refusal of wor
 | `## Inputs` | Exactly what the coordinator must supply before this role can start. The role asks for these and never guesses one. |
 | `## Output` | The structured result the role ends with, and what should be invoked next. This is the whole handover: there is no separate protocol section, because the protocol is the same for every role and lives in the org rules. |
 | `## Success Criteria` | Measurable checks the role is judged on. |
-| `## Tools` | Tool access: tracker, repository, shell, subagents, external services. |
+| `## Tools` | Tool access: tracker, repository, shell, external services. |
 | `## Authorization` | Three lists: may do alone, must ask (and whom), never. |
 | `## Way of Working` | Numbered, repeatable process for a unit of work. |
 | `## Quality Non-negotiables` | Rules this role never trades away. |
@@ -70,6 +70,5 @@ Base personas carry `abstract: true` and are never emitted; only the specializat
 
 ## How personas are emitted per tool
 
-- Tools with subagents (Claude Code, Gemini CLI, OpenCode, Copilot): one subagent file per persona except the CEO, who is always the main session.
-- Every tool: one skill directory per persona so a single session can adopt the role.
-- `model` and `effort` feed subagent frontmatter where the tool supports it and are stripped elsewhere.
+- Every tool: one skill directory per persona, which the session dispatched for that role reads.
+- No tool gets persona subagent files. Firstmate runs each role as its own session with the harness, model, and effort set for that task, so a role never spawns another.

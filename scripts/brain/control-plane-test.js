@@ -1,39 +1,26 @@
 #!/usr/bin/env node
 'use strict';
-// Tests for the control plane: event ingestion and its privacy boundary, the single-CEO session
-// registry, runtime mutation with an audit trail, and the
-// quota-axi adapter's normalization. Every test runs against a throwaway database.
+// Tests for the control plane: event ingestion and its privacy boundary, usage capture from harness
+// transcripts and its attribution, the usage summary, the CLI, and the Langfuse export. Every test
+// runs against a throwaway database. Sessions, the agent registry, and quota belong to firstmate and
+// have no tests here.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..', '..', 'control-plane');
 const database = require(path.join(ROOT, 'db'));
 const emitter = require(path.join(ROOT, 'emit'));
-const state = require(path.join(ROOT, 'state'));
-const brain = require(path.join(ROOT, 'brain'));
-const quota = require(path.join(ROOT, 'quota'));
+const langfuse = require(path.join(ROOT, 'langfuse'));
+const hook = require(path.join(ROOT, 'hook'));
 
 function fresh() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-cp-'));
-  return { db: database.open(path.join(dir, 'brain.db')), dir };
-}
-
-const usage = (db, agent, input, output, cost) => emitter.emitEvent({
-  schema_version: '1.0', type: 'model.completed', agent_id: agent, session_id: 's',
-  usage: { input_tokens: input, output_tokens: output, ...(cost === undefined ? {} : { cost_usd: cost }), source: 'provider' }
-}, { db });
-
-function org(db) {
-  const args = (id, role, parent, extra = {}) => ({ agent_id: id, role, parent, ...extra });
-  for (const a of [args('ceo', 'ceo', 'user'), args('em-api-1', 'engineering-manager', 'ceo'),
-    args('staff-1', 'backend-staff-engineer', 'em-api-1'), args('staff-2', 'backend-staff-engineer', 'em-api-1')]) {
-    db.prepare(`INSERT INTO agents(agent_id, role, parent, status, started_at, last_heartbeat)
-                VALUES(?, ?, ?, 'RUNNING', ?, ?)`).run(a.agent_id, a.role, a.parent, new Date().toISOString(), new Date().toISOString());
-  }
+  return { db: database.open(path.join(dir, 'brain.db')), dir, file: path.join(dir, 'brain.db') };
 }
 
 // ─── events ──────────────────────────────────────────────────────────────────
@@ -60,93 +47,59 @@ test('content payloads are rejected and nothing is stored', () => {
   assert.equal(db.prepare('SELECT COUNT(*) n FROM events').get().n, 0);
 });
 
-test('an observed model or effort updates the registry and is audited', () => {
+test('terminal control is firstmate\'s, so a control event is not representable', () => {
   const { db } = fresh();
-  org(db);
-  db.prepare("UPDATE agents SET model = 'claude-sonnet-5' WHERE agent_id = 'staff-1'").run();
-  emitter.emitEvent({ schema_version: '1.0', type: 'turn.completed', agent_id: 'staff-1', session_id: 's',
-    model: 'claude-fable-5-1', turn: { number: 1, outcome: 'success' } }, { db });
-  assert.equal(db.prepare("SELECT model FROM agents WHERE agent_id = 'staff-1'").get().model, 'claude-fable-5-1');
-  const change = db.prepare("SELECT * FROM changes WHERE field = 'model' ORDER BY id DESC").get();
-  assert.equal(change.old_value, 'claude-sonnet-5');
-  assert.equal(change.new_value, 'claude-fable-5-1');
+  assert.throws(() => emitter.emitEvent({
+    schema_version: '1.0', type: 'control.completed', agent_id: 'a', session_id: 's',
+    control: { action: 'stop', target: 'a', outcome: 'success' }
+  }, { db }), /unsupported (field|event type)/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM events').get().n, 0);
 });
 
-// ─── sessions: the single-CEO lock ───────────────────────────────────────────
-
-// ─── status and conflicts ────────────────────────────────────────────────────
-
-test('two running agents owning one path is reported as a conflict', () => {
+test('an event for an agent nobody registered is recorded as reported', () => {
   const { db } = fresh();
-  org(db);
-  db.prepare("UPDATE agents SET owned_paths = 'backend/orders/**' WHERE agent_id IN ('staff-1','staff-2')").run();
-  const conflicts = state.pathConflicts(db);
-  assert.equal(conflicts.length, 1);
-  assert.deepEqual(conflicts[0].agents.sort(), ['staff-1', 'staff-2']);
+  emitter.emitEvent({ schema_version: '1.0', type: 'turn.completed', agent_id: 'fm-task-7', session_id: 's',
+    model: 'claude-fable-5-1', effort: 'high', turn: { number: 1, outcome: 'success' } }, { db });
+  const row = db.prepare("SELECT agent_id, model, effort FROM events WHERE type = 'turn.completed'").get();
+  assert.deepEqual({ ...row }, { agent_id: 'fm-task-7', model: 'claude-fable-5-1', effort: 'high' });
 });
 
-test('status reports stale running agents and renders without throwing', () => {
+// ─── config and usage ────────────────────────────────────────────────────────
+
+test('a config change is stored with who made it', () => {
   const { db } = fresh();
-  org(db);
-  db.prepare("UPDATE agents SET last_heartbeat = ? WHERE agent_id = 'staff-1'").run(new Date(Date.now() - 60 * 60000).toISOString());
-  const s = state.statusData(db);
-  assert.deepEqual(s.stale.map(a => a.agent_id), ['staff-1']);
-  assert.match(state.renderStatus(s), /staff-1/);
+  database.setConfig(db, 'langfuse_export', 'off', 'user');
+  assert.equal(database.config(db).langfuse_export, 'off');
+  assert.equal(db.prepare("SELECT updated_by FROM config WHERE key = 'langfuse_export'").get().updated_by, 'user');
 });
 
-test('the agent tree nests children under their parent', () => {
+const usage = (db, agent, session, u) => emitter.emitEvent({
+  schema_version: '1.0', type: 'model.completed', agent_id: agent, session_id: session, model: 'claude-opus-5',
+  usage: { source: 'provider', ...u }
+}, { db });
+
+test('usage is summarized per agent and session, with every input component visible', () => {
   const { db } = fresh();
-  org(db);
-  const tree = state.tree(db);
-  assert.equal(tree.length, 1);
-  assert.equal(tree[0].agent_id, 'ceo');
-  assert.deepEqual(tree[0].children[0].children.map(c => c.agent_id).sort(), ['staff-1', 'staff-2']);
-});
+  usage(db, 't-1', 's1', { input_tokens: 10, cache_write_input_tokens: 200, cache_read_input_tokens: 5000, output_tokens: 100, cost_usd: 0.5 });
+  usage(db, 't-1', 's1', { input_tokens: 5, output_tokens: 50 });
+  usage(db, 't-2', 's2', { input_tokens: 1, output_tokens: 1 });
 
-// ─── audit ───────────────────────────────────────────────────────────────────
-
-test('config changes and mutations are recorded with actor and reason', () => {
-  const { db } = fresh();
-  database.setConfig(db, 'agent_stale_minutes', '45', 'ceo', 'long-running tasks on this project');
-  const change = db.prepare("SELECT * FROM changes WHERE entity = 'config' ORDER BY id DESC").get();
-  assert.equal(change.actor, 'ceo');
-  assert.equal(change.old_value, '20');
-  assert.equal(change.new_value, '45');
-  assert.equal(change.reason, 'long-running tasks on this project');
-  assert.equal(database.config(db).agent_stale_minutes, '45');
-});
-
-// ─── quota-axi adapter ───────────────────────────────────────────────────────
-
-test('quota-axi output is normalized to one row per scope and ranked by spend priority', () => {
-  const payload = {
-    generatedAt: '2026-09-12T16:00:00Z', schemaVersion: 5,
-    providers: [
-      { provider: 'claude', plan: 'max', state: { status: 'fresh', stale: false, authStatus: 'usable' },
-        quotaSemantics: { status: 'known', effectiveAvailability: [
-          { scope: 'session', status: 'known', effectivePercentRemaining: 62, selection: { spendPriority: 18 }, runway: { status: 'through_reset' }, pace: { status: 'ahead', burnMultiple: 0.8 } },
-          { scope: 'weekly', status: 'known', effectivePercentRemaining: 12, selection: { spendPriority: -40 }, runway: { status: 'projected_exhaustion' }, pace: { status: 'behind' } }] } },
-      { provider: 'codex', plan: 'pro', state: { status: 'fresh' },
-        quotaSemantics: { effectiveAvailability: [{ scope: 'weekly', status: 'known', effectivePercentRemaining: 88, selection: { spendPriority: 55 }, runway: { status: 'through_reset' } }] } }
-    ]
-  };
-  const normalized = quota.normalize(payload);
-  assert.equal(normalized.scopes.length, 3);
-  assert.deepEqual(quota.preferred(normalized.scopes).map(s => `${s.provider}/${s.scope}`), ['codex/weekly', 'claude/session', 'claude/weekly']);
-  assert.equal(normalized.providers.find(p => p.provider === 'claude').auth, 'usable');
-});
-
-test('an exhausted scope is never preferred', () => {
-  const scopes = quota.normalize({ providers: [{ provider: 'kimi', quotaSemantics: { effectiveAvailability: [
-    { scope: 'weekly', status: 'known', effectivePercentRemaining: 0, selection: { spendPriority: 90 } }] } }] }).scopes;
-  assert.deepEqual(quota.preferred(scopes), []);
+  const summary = database.usage(db);
+  assert.equal(summary.input_basis, 'new');
+  const t1 = summary.rows.find(r => r.agent_id === 't-1');
+  assert.equal(t1.input_tokens, 215, 'new = fresh input plus cache writes');
+  assert.equal(t1.fresh_input_tokens, 15);
+  assert.equal(t1.cache_read_tokens, 5000);
+  assert.equal(t1.output_tokens, 150);
+  assert.equal(t1.cost_usd, 0.5);
+  assert.equal(t1.usage_events, 2);
+  assert.equal(database.usage(db, 'billable').rows.find(r => r.agent_id === 't-1').input_tokens, 5215);
+  assert.equal(summary.rows.length, 2);
 });
 
 // ─── the CLI itself ──────────────────────────────────────────────────────────
 // These drive brain.js as a subprocess. The unit tests above exercise the modules directly, which
 // would not have caught a broken SQL string inside a command handler.
-
-const { spawnSync } = require('node:child_process');
 
 function cli(dbFile, args) {
   const run = spawnSync(process.execPath, [path.join(ROOT, 'brain.js'), ...args, '--db', dbFile],
@@ -154,138 +107,89 @@ function cli(dbFile, args) {
   return { code: run.status, out: run.stdout, err: run.stderr };
 }
 
-test('the CLI runs the whole session, register, and status path', () => {
+test('the CLI records an event and reports it in status', () => {
   const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-cli-')), 'brain.db');
-
-  const context = cli(dbFile, ['context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'claude-opus-5', '--effort', 'high']);
-  assert.equal(context.code, 0, context.err);
-  assert.match(context.out, /You are the ceo/);
-  assert.match(context.out, /claude-opus-5 at high effort/);
-
-  // A role is not exclusive: the coordinator decides who runs, so a second session claiming the
-  // same role is a normal thing to do and must not be refused.
-  const second = cli(dbFile, ['context', '--role', 'ceo', '--harness', 'codex', '--model', 'gpt-5-codex', '--effort', 'high']);
-  assert.equal(second.code, 0, 'claiming a role a second time must be allowed');
-  assert.match(second.out, /You are the ceo/);
-
-  const register = cli(dbFile, ['agent', 'register', '--agent-id', 'staff-1', '--role', 'backend-staff-engineer',
-    '--parent', 'em-api-1', '--ticket', 'ENG-42', '--model', 'claude-sonnet-5', '--effort', 'medium', '--paths', 'backend/orders/**', '--actor', 'em-api-1']);
-  assert.equal(register.code, 0, register.err);
-  assert.match(register.out, /registered staff-1/);
-
-  cli(dbFile, ['event', '--event', JSON.stringify({ schema_version: '1.0', type: 'model.completed', agent_id: 'staff-1',
+  const recorded = cli(dbFile, ['event', '--event', JSON.stringify({ schema_version: '1.0', type: 'model.completed', agent_id: 't-42',
     session_id: 's', usage: { input_tokens: 39000, output_tokens: 1000, cost_usd: 1.2, source: 'provider' } })]);
-
-  const set = cli(dbFile, ['agent', 'set', '--agent-id', 'staff-1', '--model', 'claude-fable-5-1', '--effort', 'max', '--reason', 'T3', '--actor', 'em-api-1']);
-  assert.match(set.out, /model=claude-fable-5-1 effort=max/);
+  assert.equal(recorded.code, 0, recorded.err);
+  assert.match(recorded.out, /recorded model.completed for t-42/);
 
   const status = JSON.parse(cli(dbFile, ['status', '--json']).out);
-  assert.equal(status.tree[0].agent_id, 'ceo');
-  assert.ok(status.recent_changes.some(c => c.field === 'model' && c.new_value === 'claude-fable-5-1'));
+  assert.equal(status.usage[0].agent_id, 't-42');
+  assert.equal(status.usage[0].output_tokens, 1000);
+  assert.equal(status.event_counts['model.completed'], 1);
+
+  const human = cli(dbFile, ['status']);
+  assert.equal(human.code, 0, human.err);
+  assert.match(human.out, /t-42/);
+  assert.match(human.out, /Langfuse tracing:/, 'status must say whether tracing is on');
 });
 
-test('a claimed role is bound to the harness session, so hook usage lands on the role', () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-bind2-')), 'brain.db');
-  const harnessSession = 'abc12345-harness-session';
-  cli(dbFile, ['context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'm', '--effort', 'high',
-               '--harness-session', harnessSession, '--actor', 'user']);
-  const db = database.open(dbFile);
-  // The hook only ever knows the harness's session id. Without this binding it cannot find the role
-  // and invents a synthetic agent, so the spend never lands on the role that did the work.
-  assert.equal(db.prepare('SELECT agent_id FROM agents WHERE session_id = ?').get(harnessSession).agent_id, 'ceo');
-  assert.equal(db.prepare('SELECT harness_session_id FROM sessions WHERE role = ?').get('ceo').harness_session_id, harnessSession);
-  db.close();
-});
-
-test('usage observed before a role claimed the session is adopted, not stranded', () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-adopt-')), 'brain.db');
-  const harnessSession = 'def67890-harness-session';
-  const db = database.open(dbFile);
-  // A hook fires before anyone claims a role: usage is recorded against a synthetic agent.
-  db.prepare(`INSERT INTO agents(agent_id, role, session_id, harness, status, started_at, last_heartbeat)
-              VALUES('session-def6789', 'unregistered', ?, 'claude-code', 'RUNNING', ?, ?)`)
-    .run(harnessSession, '2026-09-13T10:00:00.000Z', '2026-09-13T10:00:00.000Z');
-  emitter.emitEvent({ schema_version: '1.0', event_id: 'pre:1', type: 'model.completed', agent_id: 'session-def6789',
-    session_id: harnessSession, model: 'm', usage: { input_tokens: 10, output_tokens: 20, source: 'runtime' } }, { db });
-  db.close();
-
-  cli(dbFile, ['context', '--role', 'ceo', '--harness', 'claude-code', '--model', 'm',
-               '--harness-session', harnessSession, '--actor', 'user']);
-
-  const after = database.open(dbFile);
-  assert.equal(after.prepare("SELECT agent_id FROM events WHERE event_id = 'pre:1'").get().agent_id, 'ceo');
-  assert.equal(after.prepare("SELECT status FROM agents WHERE agent_id = 'session-def6789'").get().status, 'CLOSED');
-  after.close();
+test('a command firstmate now owns points there instead of failing silently', () => {
+  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-moved-')), 'brain.db');
+  for (const group of ['context', 'session', 'agent', 'quota', 'serve']) {
+    const run = cli(dbFile, [group]);
+    assert.equal(run.code, 2, `${group} must exit non-zero`);
+    assert.match(run.err, /firstmate/, `${group} must name where it went`);
+  }
 });
 
 // ─── observability export ────────────────────────────────────────────────────
 
-const langfuse = require(path.join(ROOT, 'langfuse'));
+const spansOf = db => langfuse.buildPayload(db, langfuse.pending(db, {}), 'test').resourceSpans[0].scopeSpans[0].spans;
+const attrOf = (span, key) => span.attributes.find(a => a.key === key)?.value;
+const roots = spans => spans.filter(s => attrOf(s, 'langfuse.observation.type')?.stringValue === 'agent');
 
-test('the Langfuse export nests the organization tree and never carries content', () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lf-')), 'brain.db');
-  const db = database.open(dbFile);
-  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, model, status, started_at, last_heartbeat)
-              VALUES('ceo', 'ceo', 'user', 's1', 'claude-code', 'm', 'RUNNING', ?, ?)`).run('2026-09-13T10:00:00.000Z', '2026-09-13T10:05:00.000Z');
-  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, model, status, started_at, last_heartbeat)
-              VALUES('staff-1', 'backend-staff-engineer', 'ceo', 's2', 'claude-code', 'm', 'RUNNING', ?, ?)`).run('2026-09-13T10:01:00.000Z', '2026-09-13T10:04:00.000Z');
+test('the Langfuse export nests an agent under the parent its events name, and never carries content', () => {
+  const { db } = fresh();
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'a1', type: 'agent.started', agent_id: 'em-1', session_id: 's1',
+    role: 'engineering-manager', timestamp: '2026-09-13T10:00:00.000Z' }, { db });
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'a2', type: 'agent.started', agent_id: 'staff-1', session_id: 's2',
+    role: 'backend-staff-engineer', parent_agent_id: 'em-1', timestamp: '2026-09-13T10:01:00.000Z' }, { db });
   emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'model.completed', agent_id: 'staff-1', session_id: 's2',
     model: 'claude-opus-5', effort: 'high',
     usage: { input_tokens: 5, output_tokens: 7, thinking_tokens: 3, source: 'runtime' } }, { db });
 
-  const events = langfuse.pending(db, {});
-  const payload = langfuse.buildPayload(db, events, 'test');
-  const spans = payload.resourceSpans[0].scopeSpans[0].spans;
+  const spans = spansOf(db);
   const byName = n => spans.find(s => s.name === n);
-  const get = (span, key) => span.attributes.find(a => a.key === key)?.value;
-
-  // The staff engineer's own span hangs off the CEO's, which is what draws the org chart.
-  assert.equal(byName('backend-staff-engineer').parentSpanId, byName('ceo').spanId);
-  // A model call is a generation, so Langfuse can price it and compare models.
+  assert.equal(byName('backend-staff-engineer').parentSpanId, byName('engineering-manager').spanId);
   const gen = byName('generate-response');
-  assert.equal(get(gen, 'langfuse.observation.type').stringValue, 'generation');
-  assert.equal(get(gen, 'langfuse.observation.model.name').stringValue, 'claude-opus-5');
-  assert.match(get(gen, 'langfuse.observation.usage_details').stringValue, /"reasoning":3/);
-  // Names must not embed the model or a run-specific value, or every saved view breaks on a swap.
+  assert.equal(attrOf(gen, 'langfuse.observation.type').stringValue, 'generation');
+  assert.equal(attrOf(gen, 'langfuse.observation.model.name').stringValue, 'claude-opus-5');
+  assert.match(attrOf(gen, 'langfuse.observation.usage_details').stringValue, /"reasoning":3/);
   assert.ok(!spans.some(s => /claude-opus-5|staff-1|turn \d/.test(s.name)), 'span names must stay stable and low-cardinality');
-  // The privacy boundary: nothing in the payload can carry prompt, response or file content.
-  const serialized = JSON.stringify(payload);
+  const serialized = JSON.stringify(spans);
   for (const forbidden of ['gen_ai.prompt', 'gen_ai.completion', 'input.value', 'output.value']) {
     assert.ok(!serialized.includes(forbidden), `payload must not carry ${forbidden}`);
   }
-  db.close();
 });
 
-test('a trace is named for what is known, never for the unregistered placeholder', () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lfname-')), 'brain.db');
-  const db = database.open(dbFile);
-  // A hook observes a session before any role is claimed, which is the normal case now that agents
-  // do not register. Naming the trace after the placeholder makes every entry in Langfuse read
-  // "unregistered", which is indistinguishable from having no names.
-  db.prepare(`INSERT INTO agents(agent_id, role, session_id, harness, status, started_at, last_heartbeat)
-              VALUES('session-778cf7e2', 'unregistered', '778cf7e2-c6ae', 'claude-code', 'RUNNING', ?, ?)`)
-    .run('2026-09-14T10:00:00.000Z', '2026-09-14T10:05:00.000Z');
-  emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'turn.completed', agent_id: 'session-778cf7e2',
-    session_id: '778cf7e2-c6ae', turn: { number: 1, outcome: 'success' } }, { db });
+test('an agent whose parent sent no events is not nested under a span that was never sent', () => {
+  const { db } = fresh();
+  emitter.emitEvent({ schema_version: '1.0', type: 'turn.completed', agent_id: 'child', session_id: 's',
+    parent_agent_id: 'ghost', turn: { number: 1, outcome: 'success' } }, { db });
+  const [root] = roots(spansOf(db));
+  assert.equal(root.parentSpanId, undefined);
+});
 
-  const spans = langfuse.buildPayload(db, langfuse.pending(db, {}), 'test').resourceSpans[0].scopeSpans[0].spans;
-  const root = spans.find(s => s.attributes.some(a => a.key === 'langfuse.observation.type' && a.value.stringValue === 'agent'));
-  assert.ok(!/unregistered/.test(root.name), `trace name must not be the placeholder, got "${root.name}"`);
-  assert.match(root.name, /claude-code/, 'fall back to the harness and session, which are known');
-  // userId is a filter dimension; filling it with the placeholder pollutes it for every session.
-  assert.ok(!root.attributes.some(a => a.key === 'langfuse.user.id'),
-    'no user id rather than a meaningless one');
-  db.close();
+test('a trace is named for what is known, never for a placeholder', () => {
+  const { db } = fresh();
+  emitter.emitEvent({ schema_version: '1.0', type: 'turn.completed', agent_id: 'session-778cf7e2',
+    session_id: '778cf7e2-c6ae', turn: { number: 1, outcome: 'success' } }, { db });
+  emitter.emitEvent({ schema_version: '1.0', type: 'turn.completed', agent_id: 'login-fix',
+    session_id: 'aaaa1111', turn: { number: 1, outcome: 'success' } }, { db });
+  const names = roots(spansOf(db)).map(r => r.name).sort();
+  assert.deepEqual(names, ['login-fix', 'session 778cf7e2'], 'a firstmate task id names its trace; a bare session falls back to its id');
+  for (const r of roots(spansOf(db))) {
+    assert.ok(!r.attributes.some(a => a.key === 'langfuse.user.id'), 'no user id rather than a meaningless one');
+  }
 });
 
 test('an exported event is not exported twice', async () => {
-  const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'agent-brain-lf2-')), 'brain.db');
-  const db = database.open(dbFile);
-  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, status, started_at, last_heartbeat)
-              VALUES('ceo', 'ceo', 'user', 's1', 'claude-code', 'RUNNING', ?, ?)`).run('2026-09-13T10:00:00.000Z', '2026-09-13T10:05:00.000Z');
-  emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'turn.completed', agent_id: 'ceo', session_id: 's1',
+  const { db, dir } = fresh();
+  emitter.emitEvent({ schema_version: '1.0', event_id: 'e1', type: 'turn.completed', agent_id: 't-1', session_id: 's1',
     turn: { number: 1, outcome: 'success' } }, { db });
-  const envFile = path.join(path.dirname(dbFile), '.env');
+  const envFile = path.join(dir, '.env');
   fs.writeFileSync(envFile, ['LANGFUSE_PUBLIC_KEY=pk', 'LANGFUSE_SECRET_KEY=sk', 'LANGFUSE_BASE_URL=https://example.invalid'].join('\n'));
   let calls = 0;
   const fetchImpl = async () => { calls++; return { ok: true, status: 207, text: async () => '' }; };
@@ -295,14 +199,11 @@ test('an exported event is not exported twice', async () => {
   assert.equal(first.sent, 1);
   assert.equal(second.sent, 0);
   assert.equal(calls, 1, 'the second run must not post anything');
-  db.close();
 });
 
 // ─── automatic usage capture ─────────────────────────────────────────────────
-// The hook turns real runtime facts into events. These tests pin the two properties that matter:
-// usage is never double-counted, and the cache-aware input basis is honest about what it counts.
-
-const hook = require(path.join(ROOT, 'hook'));
+// The hook turns real runtime facts into events. These tests pin the properties that matter: usage is
+// never double-counted, it lands on the task that spent it, and a hook never loses a gap.
 
 function transcript(dir, messages) {
   const file = path.join(dir, 'transcript.jsonl');
@@ -319,7 +220,6 @@ function transcript(dir, messages) {
 
 test('the hook ingests transcript usage and never double-counts it', () => {
   const { db, dir } = fresh();
-  org(db);
   const file = transcript(dir, [
     { uuid: 'a', input: 10, output: 100, cacheRead: 5000, cacheWrite: 200 },
     { uuid: 'b', input: 20, output: 200, cacheRead: 6000, cacheWrite: 300 }
@@ -337,7 +237,6 @@ test('the hook ingests transcript usage and never double-counts it', () => {
 
 test('an appended message is picked up without re-counting the earlier ones', () => {
   const { db, dir } = fresh();
-  org(db);
   const file = transcript(dir, [{ uuid: 'a', input: 10, output: 100 }]);
   hook.ingest(db, { transcript: file, sessionId: 's1', agentId: 'staff-1' });
   fs.appendFileSync(file, JSON.stringify({ type: 'assistant', uuid: 'b',
@@ -349,7 +248,6 @@ test('an appended message is picked up without re-counting the earlier ones', ()
 
 test('context size is recorded as fresh input plus cache traffic, marked exact', () => {
   const { db, dir } = fresh();
-  org(db);
   const file = transcript(dir, [{ uuid: 'a', input: 10, output: 100, cacheRead: 5000, cacheWrite: 200 }]);
   hook.ingest(db, { transcript: file, sessionId: 's1', agentId: 'staff-1' });
   const row = db.prepare("SELECT context_input_tokens c, context_measurement m FROM events WHERE type = 'model.completed'").get();
@@ -359,43 +257,48 @@ test('context size is recorded as fresh input plus cache traffic, marked exact',
 
 test('a tool hook records the call and its outcome without capturing arguments', () => {
   const { db } = fresh();
-  org(db);
-  const before = db.prepare('SELECT COUNT(*) n FROM events').get().n;
   emitter.emitEvent({ schema_version: '1.0', type: 'tool.completed', agent_id: 'staff-1', session_id: 's1',
     tool: { name: 'Bash', outcome: 'error' } }, { db });
   const row = db.prepare("SELECT tool_name, tool_outcome, raw FROM events WHERE type = 'tool.completed'").get();
   assert.equal(row.tool_name, 'Bash');
   assert.equal(row.tool_outcome, 'error');
   assert.ok(!row.raw.includes('tool_input'), 'a tool event must not carry its arguments');
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM events').get().n, before + 1);
 });
 
-test('the hook attributes usage to the agent bound to the session', () => {
-  const { db, dir } = fresh();
-  org(db);
-  db.prepare("UPDATE agents SET session_id = 'sess-x' WHERE agent_id = 'staff-2'").run();
-  assert.equal(hook.resolveAgent(db, 'sess-x'), 'staff-2');
-  // With no binding and several agents running, it must not guess: usage goes to a synthetic agent
-  // named for the session rather than being charged to whichever row happened to be first.
-  assert.match(hook.resolveAgent(db, 'sess-unknown'), /^session-/);
-  // With exactly one agent running, that one is the only thing it can be.
-  db.prepare("UPDATE agents SET status = 'CLOSED' WHERE agent_id != 'staff-2'").run();
-  assert.equal(hook.resolveAgent(db, 'sess-other'), 'staff-2');
+test('usage is attributed to an explicit id, then the firstmate task, then the harness session', () => {
+  assert.equal(hook.agentFor('abcdef123456', {}), 'session-abcdef12');
+  assert.equal(hook.agentFor('abcdef123456', { FM_TASK_ID: 'login-fix' }), 'login-fix');
+  assert.equal(hook.agentFor('abcdef123456', { FM_TASK_ID: 'login-fix', BRAIN_AGENT_ID: 'explicit' }), 'explicit');
+});
+
+test('a turn hook fired inside a firstmate pane records usage against that task', () => {
+  const { db, dir, file: dbFile } = fresh();
+  // Keep the hook from shipping anything anywhere, whatever credentials this machine has.
+  database.setConfig(db, 'langfuse_export', 'off', 'test');
+  db.close();
+  const file = transcript(dir, [{ uuid: 'a', input: 1, output: 10 }, { uuid: 'b', input: 2, output: 20 }]);
+  const env = { ...process.env, BRAIN_DB: dbFile, FM_TASK_ID: 'login-fix' };
+  delete env.BRAIN_AGENT_ID;
+  const run = spawnSync(process.execPath, [path.join(ROOT, 'hook.js'), 'turn'],
+    { encoding: 'utf8', env, input: JSON.stringify({ session_id: 'sess-1234abcd', transcript_path: file }) });
+  assert.equal(run.status, 0, run.stderr);
+  const after = database.open(dbFile);
+  assert.deepEqual(after.prepare('SELECT DISTINCT agent_id FROM events').all().map(r => r.agent_id), ['login-fix']);
+  assert.equal(after.prepare("SELECT SUM(output_tokens) s FROM events WHERE type = 'model.completed'").get().s, 30);
+  after.close();
 });
 
 test('a hook that fell behind catches up instead of losing the gap forever', () => {
   const { db, dir } = fresh();
-  org(db);
   // The hook used to read only the last 40 messages. A session that produced more than that between
   // firings lost the difference permanently, because a skipped message is never revisited: a real
   // session recorded 47 of 499. Ingestion must be self-healing, not window-bound.
   const many = Array.from({ length: 120 }, (_, i) => ({ uuid: `m${i}`, input: 1, output: 10 }));
   const file = transcript(dir, many);
-  const first = hook.ingest(db, { transcript: file, sessionId: 'sess-x', agentId: 'ceo' });
+  const first = hook.ingest(db, { transcript: file, sessionId: 'sess-x', agentId: 't-1' });
   assert.equal(first.recorded, 120, 'every message in the transcript is recorded, however far back');
 
-  // And a second run adds nothing, so catching up never double-counts.
-  const second = hook.ingest(db, { transcript: file, sessionId: 'sess-x', agentId: 'ceo' });
+  const second = hook.ingest(db, { transcript: file, sessionId: 'sess-x', agentId: 't-1' });
   assert.equal(second.recorded, 0);
   assert.equal(second.skipped, 120);
   assert.equal(db.prepare("SELECT SUM(output_tokens) s FROM events WHERE type = 'model.completed'").get().s, 1200);
@@ -403,7 +306,6 @@ test('a hook that fell behind catches up instead of losing the gap forever', () 
 
 test('a malformed or missing transcript yields no events instead of throwing', () => {
   const { db, dir } = fresh();
-  org(db);
   assert.deepEqual(hook.transcriptMessages(path.join(dir, 'nope.jsonl'), 10), []);
   const bad = path.join(dir, 'bad.jsonl');
   fs.writeFileSync(bad, 'not json\n{"type":"assistant"}\n');

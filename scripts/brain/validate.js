@@ -55,8 +55,8 @@ for (const f of ['README.md', 'pm-report.md', 'em-report.md',
   'principal-engineer-design-report.md', 'design-review.md', 'staff-engineer-report.md', 'merge-review.md', 'qa-report.md']) {
   if (!exists(path.join(REPORTS_DIR, f))) errors.push(`agents-reports/${f} is missing`);
 }
-for (const f of ['README.md', 'schema.sql', 'db.js', 'state.js', 'brain.js', 'emit.js', 'quota.js', 'langfuse.js',
-  'server.js', 'ui.html', 'hook.js', 'event.schema.json', '.gitignore']) {
+for (const f of ['README.md', 'schema.sql', 'db.js', 'brain.js', 'emit.js', 'langfuse.js',
+  'hook.js', 'event.schema.json', '.gitignore']) {
   if (!exists(path.join(CONTROL_PLANE_DIR, f))) errors.push(`control-plane/${f} is missing`);
 }
 for (const f of ['global-docs/ARCHITECTURE.md', 'global-docs/PRD.md', 'global-docs/USER-EXPLICIT.md', 'global-docs/WORK.md', 'global-docs/CONVENTIONS.md', 'global-docs/DECISIONS.md', 'global-docs/CHANGELOG.md',
@@ -78,7 +78,7 @@ for (const f of fs.readdirSync(path.join(TEMPLATES_DIR, 'commands')).filter(n =>
 
 // Runtime state must never reach a build. `control-plane/brain.db` is created by running the CLI
 // from the source directory, and shipping it would hand every consuming project this repository's
-// sessions, agents, budgets and events.
+// recorded usage and events.
 for (const dir of [DIST_DIR, DIST_SELF_DIR]) {
   if (!exists(dir)) continue;
   const leaked = [];

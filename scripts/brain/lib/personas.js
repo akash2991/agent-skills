@@ -73,11 +73,11 @@ function lint(p) {
   else if (p.data.name !== p.name) problems.push(`frontmatter name "${p.data.name}" != file name "${p.name}"`);
   if (!d.description) problems.push('frontmatter missing `description`');
   else if (!/\buse (this )?when\b/i.test(d.description)) problems.push('description has no "Use when" trigger');
-  // Model and effort are runtime decisions recorded in the control plane, never persona frontmatter:
-  // any agent may run any model at any effort, chosen per task by the EM from complexity, budget, and
-  // the coordinator when the role is invoked. Reject the old keys so a per-persona allowlist cannot creep back.
+  // Model and effort are never persona frontmatter: any role may run any model at any effort, set when
+  // firstmate dispatches the task, and the control plane records what actually ran. Reject the old
+  // keys so a per-persona allowlist cannot creep back.
   for (const key of ['model', 'effort', 'allowed', 'allowed-models', 'allowed-efforts']) {
-    if (p.data[key] !== undefined) problems.push(`frontmatter must not set \`${key}\`: model and effort are chosen per task and recorded in the control plane, not fixed on the persona`);
+    if (p.data[key] !== undefined) problems.push(`frontmatter must not set \`${key}\`: model and effort are set per task when the work is dispatched, not fixed on the persona`);
   }
   if (!d.skills) problems.push('frontmatter missing `skills` (comma-separated list this persona may use)');
   const prose = p.resolvedBody.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm, '');

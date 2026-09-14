@@ -15,6 +15,18 @@ Exact copies from the fork point, recovered from git. Every file here can be ver
 | `ci/` | the plugin-install workflow and the skill-gap issue template | Replaced by `.github/workflows/checks.yml`, which runs this repository's own checks |
 | `scripts/` | `validate-commands.js` and `validate-versions.js` with their tests | They policed the deleted command directories and the deleted plugin manifests |
 
+## removed-for-firstmate/
+
+Retired on 2026-09-14 when the crew moved to [firstmate](https://github.com/kunchenguid/firstmate), which spawns each role as its own worker in a herdr or tmux pane, sets its harness, model, and effort per task, supervises it, and reads provider quota. The brain kept usage capture, the event store, and the Langfuse export, because firstmate records none of those.
+
+| File | What it held | What replaces it |
+|---|---|---|
+| `state.js` | the agent registry's read side: tree, path conflicts, stale heartbeats, combined status | firstmate's crew state and fleet view |
+| `quota.js`, `skill-quota-axi/`, `eval-quota-axi.json` | the quota-axi adapter, the provider quota snapshot table, and the skill that told a role to read quota before routing | firstmate's quota-based dispatch |
+| `server.js`, `ui.html` | the loopback page showing the agent tree with editable model, effort, and status | firstmate and the herdr panes it creates |
+
+Removed in place, and recoverable from git history: the session claim and agent registry commands and tables, the terminal-control event, the persona subagent files per tool, the per-target spawn and routing notes, and the "confirm model and effort" and "ask before spawning subagents" steps.
+
 ## restored-from-transcript/
 
 Files that were untracked when deleted, rebuilt from complete copies captured in the session that removed them. See that directory's README for what is faithful and what could not be recovered at all.

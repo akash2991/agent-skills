@@ -38,28 +38,13 @@ function payload() {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-// The agent these events belong to: whoever is bound to this harness session, else the role the
-// session claimed, else a synthetic agent so usage is never silently dropped on the floor.
-function resolveAgent(db, sessionId, { harness, cwd } = {}) {
-  if (sessionId) {
-    const bound = db.prepare('SELECT agent_id FROM agents WHERE session_id = ? ORDER BY started_at DESC').get(sessionId);
-    if (bound) return bound.agent_id;
-    const session = db.prepare('SELECT role FROM sessions WHERE id = ? OR id LIKE ?').get(sessionId, `%${String(sessionId).slice(0, 8)}%`);
-    if (session) {
-      const byRole = db.prepare("SELECT agent_id FROM agents WHERE role = ? AND status = 'RUNNING' ORDER BY started_at DESC").get(session.role);
-      if (byRole) return byRole.agent_id;
-    }
-  }
-  // Otherwise the single running agent, if there is exactly one: an unbound session almost always
-  // belongs to it. With none or several, fall through rather than guess wrong.
-  const running = db.prepare("SELECT agent_id FROM agents WHERE status = 'RUNNING'").all();
-  if (running.length === 1) return running[0].agent_id;
-  const id = `session-${String(sessionId || 'unknown').slice(0, 8)}`;
-  db.prepare(`INSERT INTO agents(agent_id, role, parent, session_id, harness, status, started_at, last_heartbeat, current_operation)
-              VALUES(?, 'unregistered', NULL, ?, ?, 'RUNNING', ?, ?, 'observed by a runtime hook before registering')
-              ON CONFLICT(agent_id) DO UPDATE SET last_heartbeat = excluded.last_heartbeat`)
-    .run(id, sessionId || null, harness || null, new Date().toISOString(), new Date().toISOString());
-  return id;
+// Whose usage this is. An explicit id wins; then the task id firstmate exports into every crew pane,
+// which is what lines usage up with the task that spent it; otherwise the harness session, so usage
+// is never silently dropped on the floor. There is no registry to look anyone up in.
+function agentFor(sessionId, env = process.env) {
+  if (env.BRAIN_AGENT_ID) return env.BRAIN_AGENT_ID;
+  if (env.FM_TASK_ID) return env.FM_TASK_ID;
+  return `session-${String(sessionId || 'unknown').slice(0, 8)}`;
 }
 
 // Assistant messages carrying usage, oldest first. Claude Code writes one JSON object per line with
@@ -78,8 +63,8 @@ function transcriptMessages(file, limit) {
     out.push({
       uuid: entry.uuid || crypto.createHash('sha256').update(line).digest('hex').slice(0, 32),
       model: message.model || entry.model || undefined,
-      // The harness records the thinking effort it actually ran with. Reading it here is the only
-      // way the registry shows what ran rather than what somebody typed at session start.
+      // The harness records the thinking effort it actually ran with. Reading it here is what makes
+      // the recorded effort the one that ran rather than the one somebody asked for.
       effort: entry.effort || message.effort || undefined,
       sidechain: Boolean(entry.isSidechain),
       timestamp: entry.timestamp || undefined,
@@ -125,8 +110,8 @@ function ingest(db, { transcript, sessionId, agentId, harness, all }) {
   for (const [index, m] of messages.entries()) {
     const usageId = `msg:${m.uuid}`;
     if (alreadyRecorded(db, usageId)) { skipped++; continue; }
-    // A sidechain message is a subagent's turn. The hook cannot know which registered agent it was,
-    // so it is attributed to the session's agent and marked, rather than guessed or dropped.
+    // A sidechain message is a subagent's turn. The hook cannot tell which child it was, so it is
+    // attributed to the session's agent rather than guessed or dropped.
     const owner = agentId;
     emitEvent({
       schema_version: '1.0', event_id: usageId, type: 'model.completed',
@@ -155,7 +140,6 @@ function ingest(db, { transcript, sessionId, agentId, harness, all }) {
       turns++;
     }
   }
-  if (recorded) db.prepare('UPDATE agents SET last_heartbeat = ? WHERE agent_id = ?').run(new Date().toISOString(), agentId);
   return { recorded, skipped, turns, considered: messages.length };
 }
 
@@ -167,7 +151,7 @@ async function main(args = process.argv.slice(2)) {
     const sessionId = flag(args, 'session') || hook.session_id || hook.sessionId;
     const harness = flag(args, 'harness') || process.env.BRAIN_HARNESS || 'claude-code';
     const transcript = flag(args, 'transcript') || hook.transcript_path;
-    const agentId = flag(args, 'agent-id') || process.env.BRAIN_AGENT_ID || resolveAgent(db, sessionId, { harness, cwd: hook.cwd });
+    const agentId = flag(args, 'agent-id') || agentFor(sessionId);
 
     if (action === 'tool') {
       const name = hook.tool_name || flag(args, 'tool') || 'unknown';
@@ -194,8 +178,6 @@ async function main(args = process.argv.slice(2)) {
     if (action === 'session-start') {
       emitEvent({ schema_version: '1.0', type: 'agent.status_changed', agent_id: agentId, session_id: sessionId || 'unknown',
         status: 'RUNNING' }, { db });
-      db.prepare('UPDATE agents SET session_id = COALESCE(session_id, ?), harness = COALESCE(harness, ?), last_heartbeat = ? WHERE agent_id = ?')
-        .run(sessionId || null, harness, new Date().toISOString(), agentId);
       return process.stdout.write(`${JSON.stringify({ ok: true, agent_id: agentId })}\n`);
     }
 
@@ -203,13 +185,6 @@ async function main(args = process.argv.slice(2)) {
       if (transcript) ingest(db, { transcript, sessionId, agentId, harness });
       await autoExport(db, 'session-end');
       emitEvent({ schema_version: '1.0', type: 'agent.completed', agent_id: agentId, session_id: sessionId || 'unknown' }, { db });
-      if (sessionId) {
-        const live = db.prepare('SELECT id FROM sessions WHERE (id = ? OR id LIKE ?) AND released_at IS NULL').get(sessionId, `%${String(sessionId).slice(0, 8)}%`);
-        if (live) {
-          db.prepare('UPDATE sessions SET released_at = ? WHERE id = ?').run(new Date().toISOString(), live.id);
-          database.record(db, 'hook', 'session', live.id, 'released_at', null, new Date().toISOString(), 'harness session ended');
-        }
-      }
       return process.stdout.write(`${JSON.stringify({ ok: true, agent_id: agentId })}\n`);
     }
 
@@ -219,7 +194,7 @@ async function main(args = process.argv.slice(2)) {
   }
 }
 
-module.exports = { main, ingest, transcriptMessages, resolveAgent };
+module.exports = { main, ingest, transcriptMessages, agentFor };
 
 if (require.main === module) {
   // A hook must never break the session it observes: report the problem and exit 0.

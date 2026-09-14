@@ -200,7 +200,7 @@ Product telemetry and agent-work telemetry answer different questions. When oper
 | "Alert on everything important, we'll tune later" | A noisy pager trains people to ignore it. The tuning never happens; the missed real page does. |
 | "User ID as a metric label makes debugging easier" | It also makes your metrics backend fall over. High-cardinality lookups belong in logs and traces. |
 | "Tracing is overkill for our two services" | Two services already means cross-service latency questions logs can't answer. Auto-instrumentation makes the cost trivial. |
-| "The registry row is enough agent observability" | It shows reported current state, not which skills/docs entered context, how many turns/tools ran, or where tokens and cost went. |
+| "The crew state is enough agent observability" | It shows current state, not which skills/docs entered context, how many turns/tools ran, or where tokens and cost went. |
 | "No usage event means zero cost" | Missing instrumentation proves only that the value is unavailable. Report `UNKNOWN`. |
 
 ## Red Flags

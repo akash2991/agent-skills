@@ -29,7 +29,7 @@
 
 
 ### Agent observability
-- Runtime/registry reconciliation: <checked at time, drift or none>
+- Crew state (from firstmate) against the tracker: <checked at time, drift or none>
 - Usage: <agent — turns — tools/failures — skill/doc context — model tokens — elapsed — cost; each measured/estimated/unknown>
 - Context or loop risks: <agent and next action, or none>
 

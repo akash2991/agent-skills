@@ -1,18 +1,17 @@
 # Agent Observability and Control
 
-This is the architecture decision for complete visibility into Agent Brain work. It was researched against the live project documentation on 2026-09-12 and revised on 2026-09-13 when the store moved to SQLite and quota-axi was adopted.
+This is the architecture decision for visibility into Agent Brain work. It was researched on 2026-09-12, revised on 2026-09-13 when the store moved to SQLite, and revised again on 2026-09-14 when the crew moved to firstmate.
 
 ## Decision
 
-Use a composed stack. Nothing off the shelf models the organization's own semantics (the user → PM → EM → engineer tree, and per-agent model and effort changeable at runtime), so that part is ours and everything else is borrowed.
+Use a composed stack, and build only the part nobody else provides.
 
-1. **quota-axi for provider tokens, quota, and cost.** [quota-axi](https://github.com/kunchenguid/quota-axi) (MIT) reports percent remaining, reset time, burn pace, usable runway, and a comparative `spendPriority` per provider scope across Claude, Codex, Cursor, Copilot, Grok, Kimi, Z.AI, Alibaba, OpenCode, and Antigravity. It reads local credential stores and calls first-party endpoints, and it explicitly does not route. We shell out to it, so it is optional and its absence degrades to `UNKNOWN` rather than failing. This is the authoritative answer to "how much is left on the plan", which no amount of local instrumentation can infer.
-2. **A SQLite control plane for the organization semantics.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds harness sessions, the agent registry with parentage and current model and effort, metadata-only observability events, provider quota snapshots, and an audit trail of every mutation. The CLI and the local UI are two faces of the same store, so an edit in either is the same audited change.
-3. **No terminal control.** Controlling live agent terminals was tried with Herdr and removed; see "Terminal control, tried and dropped" below. Nothing replaces it, because the question it answered was not the one the organization needs answered.
-4. **OpenTelemetry GenAI as the interoperability baseline.** Standard agent, workflow, model, and tool concepts and the `gen_ai.usage.*` fields map onto our events; Agent Brain additions use an `agent_brain.*` namespace in exporters.
-5. **Langfuse as the trace UI, shipped and wired.** Self-hostable, accepts OpenTelemetry or custom instrumentation, and gives trace trees, agent graphs, sessions, and token and cost dashboards. This is where a human looks at what happened and what it cost; the local page only answers what is running right now.
+1. **firstmate runs and shows the crew.** [firstmate](https://github.com/kunchenguid/firstmate) spawns each role as its own worker in a herdr or tmux pane with its own worktree, sets the harness, model, and effort per task from its crew dispatch profile or a per-task override, supervises and steers the worker, lands its work, and reads provider quota through quota-axi when choosing where to dispatch. Who is running, where, on what, and whether it is stuck is firstmate's crew state. The brain keeps no second copy of any of it.
+2. **A SQLite control plane for recorded usage.** One database (`control-plane/brain.db`, Node's built-in `node:sqlite`, no dependencies) holds the metadata-only events that harness hooks capture: tokens including cache and reasoning, cost where reported, turns, tool outcomes, and the skills and documents that entered context. firstmate records none of this, which is why it stays here.
+3. **OpenTelemetry GenAI as the interoperability baseline.** Standard agent, workflow, model, and tool concepts and the `gen_ai.usage.*` fields map onto our events; Agent Brain additions use an `agent_brain.*` namespace in exporters.
+4. **Langfuse as the trace UI, shipped and wired.** Self-hostable, accepts OpenTelemetry, and gives trace trees, agent graphs, sessions, and token and cost dashboards. This is where a human looks at what happened and what it cost.
 
-Do not build a terminal runtime, a provider quota reader, or a full web observability platform. The local UI exists only as the zero-dependency view of our own semantics, which none of the borrowed tools can provide; it answers "what is happening right now", and nothing more should be invested in it.
+Do not build a terminal runtime, a fleet view, a provider quota reader, or a web observability platform. Each already exists in the stack above.
 
 ### How the Langfuse export works
 
@@ -20,85 +19,86 @@ Do not build a terminal runtime, a provider quota reader, or a full web observab
 
 | Control plane | Langfuse |
 |---|---|
-| an agent, plus its ancestors | root span, `observation.type=agent`, named by **role** so the name stays stable |
-| `agents.parent` | `parentSpanId`, which is what draws the organization as an agent graph |
+| an agent id: a firstmate task id, an explicit `BRAIN_AGENT_ID`, or the harness session | root span, `observation.type=agent`, named by **role** when an event carried one, otherwise by the agent id |
+| `parent_agent_id` on an agent's events | `parentSpanId`, when the parent's span is in the same payload |
 | `model.completed` | `generation` with model, `usage_details` including cache and reasoning tokens, and cost |
 | `tool.completed` | `tool`, named `call-tool: <name>` |
 | `turn.completed` | `span` named `run-turn`, with the number in metadata |
 | everything else | `event` |
 
+There is no registry: role, parent, ticket, model, effort, and status on the root span are whatever the agent's own events last reported.
+
 Three rules this follows, from Langfuse's own best-practice guidance:
 
-- **Names are an API.** Never the model and never a run-specific value, because every evaluator, dashboard and saved view targets the name. The model lives in its own attribute, the turn number and agent id in metadata.
+- **Names are an API.** Never the model and never a run-specific value, because every evaluator, dashboard and saved view targets the name. The model lives in its own attribute, the turn number in metadata.
 - **Specific observation types.** A generic span renders but tells you less; the type is what drives per-model analytics and the agent graph.
 - **Input and output on every observation**, built only from metadata: the assignment on the way in, the status and counts on the way out. The event contract has no field that can carry content, so the privacy boundary holds by construction rather than by discipline.
 
 Span and trace ids are derived from event and agent ids, so a re-export updates the same spans instead of duplicating them. `exports` records what has shipped, so an interrupted run resumes. Automatic shipping is controlled by `langfuse_export` (`off`, `session-end`, `turn`), and nothing leaves the machine unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set.
 
-### Terminal control, tried and dropped
+### Attribution
 
-Herdr was adopted for runtime control (focus, steer, interrupt, stop) and removed on 2026-09-13 by the owner's decision. The reason is structural: Herdr manages terminal panes and the agent processes inside them, and a subagent runs inside its parent's process with no pane to attach to. The hierarchy the organization cares about was therefore invisible in it, and no configuration would have changed that.
+The usage hook attributes each event to `--agent-id` or `BRAIN_AGENT_ID` when set, then to `FM_TASK_ID`, which firstmate exports into every crew pane, and otherwise to `session-<first 8 characters of the harness session id>`. Under firstmate, tokens therefore line up with the task that spent them.
 
-Nothing replaced it. Terminal control is out of scope. Subagents are visible where they were always going to be visible: in the control plane, because they register, and in Langfuse, where each is a trace nested under its parent. The archived adapter and the reasoning are in `deprecated/removed-integrations/`.
+One gap remains: a sidechain turn in a Claude Code transcript is attributed to the session's agent, because the hook cannot tell which child produced it. Roles no longer spawn subagents, so this only affects delegation a harness does on its own.
 
-One gap remains: a sidechain turn in a Claude Code transcript is attributed to the session's agent, because the hook cannot tell which registered child produced it. Per-subagent token attribution is therefore `UNKNOWN` until the harness exposes the child's identity in the transcript.
+### History
+
+Herdr was adopted for runtime control on 2026-09-12 and removed on 2026-09-13, because a subagent runs inside its parent's process with no pane to attach to, so the hierarchy was invisible in it. It returned on 2026-09-14 as firstmate's backend: every role is now its own session in its own pane, so the objection no longer applies. The same day, the brain's own session claim, agent registry, quota adapter, and local UI were archived under `deprecated/removed-for-firstmate/`, because firstmate covers each of them.
 
 ### Considered and not adopted
 
-**[Mission Control](https://github.com/builderz-labs/mission-control)** (MIT, alpha) is the closest existing fit: a self-hosted control plane with SQLite, a web UI, REST, MCP, and a CLI, covering agent registration, presence, sessions, configuration, cost analysis, and runtime adapters for Claude Code and Codex. It was not adopted as the primary store for three reasons: it is alpha with changing schemas, it needs pnpm and a Next.js service where our constraint is that an injected repository runs with no dependencies, and its task board would compete with the tracker, which is the single source of truth for work. It remains a reasonable **optional fleet UI**: mirror registrations and usage to its REST API (`POST /api/agents/register` and the endpoints in its OpenAPI document) and use its dashboards for agent tracking only, never for tasks.
+**[Mission Control](https://github.com/builderz-labs/mission-control)** (MIT, alpha) is a self-hosted fleet UI with agent registration, presence, and cost analysis. It was not adopted because it needs pnpm and a Next.js service where an injected repository must run with nothing installed, and its task board would compete with the tracker. firstmate now covers the fleet view it would have provided.
 
-**[axi](https://github.com/kunchenguid/axi)** is a design framework for agent-native CLIs, not a runtime library, so there is nothing to depend on. Its principles (content-first output, no help banners in normal output, token-efficient formats) are applied to our own CLI instead, and its authoring skill can be imported if agents are asked to write new CLIs.
+**[axi](https://github.com/kunchenguid/axi)** is a design framework for agent-native CLIs, not a runtime library. Its principles (content-first output, no help banners in normal output, token-efficient formats) are applied to our own CLI.
 
 ## Requirement ownership
 
 | Requirement | Owner | Notes |
 |---|---|---|
-| Provider quota, reset, pace, runway, spend priority | quota-axi | `brain.js quota`. The authoritative account-level figure; degrades to `UNKNOWN` when the CLI is absent. |
-| Parent/child organization tree | Control plane `agents.parent` | Reproduced as span nesting in Langfuse, so the organization renders as an agent graph. |
-| Current model and effort per agent | Control plane, mutable | Changed by `agent set` or the UI, audited in `changes`; also corrected from observed events. |
-| Skills and documents used, and their context cost | Control-plane events | Record name, path, bytes, hash, and token count with its measurement, never content. |
-| Context input and window | Host or provider hook → event | Exact only when the host exposes it. Otherwise `UNKNOWN`. |
-| Turns | Control-plane events | One `turn.completed` per agent turn. |
-| Tool calls, failures, duration | Host hook → event | Arguments and results are excluded by design. |
-| Model tokens and cost per agent and per model | Provider or runtime → `model.completed` | Provider values win; a calculated cost names its pricing source. |
-| Local live view and runtime editing | Control plane UI (`brain.js serve`) | Zero dependencies, loopback only; every edit is an audited mutation. |
-| Trace timeline, graph, filtering, retention, cost dashboards | Langfuse | `brain.js export langfuse`, automatic per `langfuse_export`. The local database stays fully usable without it. |
-| Thinking effort and reasoning tokens | Harness → hook → event | Claude Code exposes `CLAUDE_EFFORT` and `output_tokens_details.thinking_tokens`; both are recorded rather than guessed. |
-| Binding captured usage to a role | `sessions.harness_session_id` | A hook only knows the harness's session id. Without the binding, usage lands on a synthetic agent instead of the role that spent it. |
-| Hosted fleet dashboards | Mission Control | Optional mirror for agent tracking only; the tracker stays the source of truth for work. |
+| Spawning a role, with its own pane and worktree | firstmate | herdr or tmux backend |
+| Harness, model, and effort per task | firstmate crew dispatch profile, or a per-task override | A persona carries none; the hook records what actually ran |
+| Running, waiting, stuck, or done | firstmate crew state and fleet view | Label it `REPORTED` unless you checked the pane or branch yourself |
+| Steering, supervision, landing | firstmate | |
+| Provider quota, reset, pace, runway, spend priority | firstmate, through quota-axi | Consulted when dispatching |
+| Skills and documents used, and their context cost | Control-plane events | Record name, path, bytes, hash, and token count with its measurement, never content |
+| Context input and window | Host or provider hook → event | Exact only when the host exposes it. Otherwise `UNKNOWN` |
+| Turns | Control-plane events | One `turn.completed` per agent turn |
+| Tool calls, failures, duration | Host hook → event | Arguments and results are excluded by design |
+| Model tokens and cost per agent and per model | Provider or runtime → `model.completed` | Provider values win; a calculated cost names its pricing source |
+| Thinking effort and reasoning tokens | Harness → hook → event | Claude Code exposes `CLAUDE_EFFORT` and `output_tokens_details.thinking_tokens`; both are recorded rather than guessed |
+| Binding captured usage to a task | `FM_TASK_ID` in the crew pane | Falls back to the harness session |
+| Trace timeline, graph, filtering, retention, cost dashboards | Langfuse | `brain.js export langfuse`, automatic per `langfuse_export`. The local database stays fully usable without it |
 
-## Why Langfuse is the UI rather than the control plane
+## Why Langfuse is the UI
 
-Langfuse supplies the mature telemetry views that would be wasteful to rebuild: trace trees, agent graphs, sessions, model generations, tool observations, dashboards, token/cost tracking, and self-hosting. Its core is MIT-licensed; enterprise governance features have separate licensing.
+Langfuse supplies the mature telemetry views that would be wasteful to rebuild: trace trees, agent graphs, sessions, model generations, tool observations, dashboards, token and cost tracking, and self-hosting. Its core is MIT-licensed; enterprise governance features have separate licensing.
 
-Langfuse observes executions that send it traces. It has no concept of the user → PM → EM tree or of which role was playing at the time, which is why that stays in the control plane and is projected into Langfuse as span nesting and metadata.
+Langfuse observes executions that send it traces. It has no concept of which role or task an execution belonged to, so events carry `role`, `ticket`, and `parent_agent_id` where they are known, and the export projects them as names, metadata, and nesting.
 
 ## Event and trace mapping
 
 | Agent Brain event | OTel/Langfuse representation |
 |---|---|
 | `agent.started` … `agent.completed` | Agent invocation span; `gen_ai.operation.name=invoke_agent`, `gen_ai.agent.name`, `gen_ai.agent.id` where supported. |
-| Root orchestration session | Workflow span; `gen_ai.operation.name=invoke_workflow`, `gen_ai.workflow.name=agent_brain_delivery`. |
 | `model.completed` | Generation/model span with `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and cache-token fields. |
 | `tool.completed` | Execute-tool span/observation; bounded tool name, outcome, duration, and `error.type`. |
 | `skill.loaded` | Span event/observation with `agent_brain.artifact.kind=skill`, name/path/hash/bytes/tokens. |
 | `document.loaded` | Span event/observation with `agent_brain.artifact.kind`, path/hash/bytes/tokens. |
 | `turn.completed` | Child span with `agent_brain.turn.number`, outcome, duration, and context/window measurements. |
-| `control.completed` | Span event with action, target, outcome, and actor identity when available. |
-| Organization parent | Span parent when execution nesting matches; always also `agent_brain.parent_agent_id`. |
+| Parent | Span parent when an agent's events name `parent_agent_id` and the parent was exported; always also `agent_brain.parent_agent_id`. |
 
-OpenTelemetry's GenAI agent conventions are still marked Development. Keep this mapping in one adapter so changes do not leak into personas, registry files, or dashboards.
+OpenTelemetry's GenAI agent conventions are still marked Development. Keep this mapping in one adapter so changes do not leak into personas or dashboards.
 
 ## Measurement rules
 
 - `exact`: supplied by the tokenizer/provider/runtime for the actual model request.
-- `estimated`: calculated by a named tokenizer or documented approximation. The UI must retain this label.
+- `estimated`: calculated by a named tokenizer or documented approximation. Any view must retain this label.
 - `unknown`: the source cannot expose the value. Omit the numeric field.
 - Provider-reported billed token counts take precedence over local estimates.
 - Provider-reported cost takes precedence; calculated cost requires a versioned pricing source.
 - Context contribution counts describe what entered a turn, not merely the bytes read from disk. A file read is not automatically proof it reached the model context.
-- A dashboard must never turn missing events into zero usage. A holder with no usage events reports `NO_USAGE_RECORDED`, not `0%`.
-- Provider quota is a burn-down against a reset clock: a figure is current only when just read, and `HISTORICAL` afterwards.
+- A view must never turn missing events into zero usage. An agent with no usage events reports `NO_USAGE_RECORDED`, not `0`.
 
 ## Privacy and security defaults
 
@@ -110,23 +110,16 @@ OpenTelemetry's GenAI agent conventions are still marked Development. Keep this 
 
 ## Operating flow
 
-1. Claim the session and load the organization with the harness's entry command, which runs `brain.js context`. It refuses if the role is already held by a live session.
-2. Register each agent before it acts, with `--parent` set to whoever assigned the work and the model and effort actually in use.
-3. Emit `skill.loaded` and `document.loaded` only when the content actually entered the working context, not when a file was merely read.
-4. Emit turn, model-usage, and tool-completion events from runtime or provider measurements. Heartbeat at every meaningful step.
-5. Read provider quota before routing or reporting, and record the figures with their read time.
-6. Reconcile the control plane against git and the tracker before claiming any state is current (`delivery-status`).
-7. Export to Langfuse automatically per `langfuse_export`, or on demand with `brain.js export langfuse`. Nothing leaves the machine until the credentials are set.
+1. firstmate dispatches a role into its own session. The injected hooks start capturing usage with no command run.
+2. Emit `skill.loaded` and `document.loaded` only when the content actually entered the working context, not when a file was merely read.
+3. Turn, model-usage, and tool-completion events come from the hook reading the transcript. Never self-report a number.
+4. Read recorded usage with `brain.js status`, and crew state from firstmate. Label each by freshness.
+5. Reconcile both against git and the tracker before claiming any state is current (`delivery-status`).
+6. Export to Langfuse automatically per `langfuse_export`, or on demand with `brain.js export langfuse`. Nothing leaves the machine until the credentials are set.
 
 ## Sources
 
-- quota-axi (provider quota, pace, runway, spend priority): https://github.com/kunchenguid/quota-axi
+- firstmate (crew spawning, supervision, dispatch, fleet state): https://github.com/kunchenguid/firstmate
+- quota-axi (provider quota, used by firstmate): https://github.com/kunchenguid/quota-axi
 - axi design principles for agent-native CLIs: https://github.com/kunchenguid/axi
 - Mission Control (considered as an optional fleet UI): https://github.com/builderz-labs/mission-control
-- Node.js built-in SQLite: https://nodejs.org/api/sqlite.html
-- OpenTelemetry GenAI agent/workflow semantics: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md
-- Langfuse observability capabilities: https://langfuse.com/docs
-- Langfuse trace-tree guidance: https://langfuse.com/docs/observability/best-practices
-- Langfuse agent graphs: https://langfuse.com/docs/observability/features/agent-graphs
-- Langfuse token and cost tracking: https://langfuse.com/docs/observability/features/token-and-cost-tracking
-- Langfuse self-hosting: https://langfuse.com/self-hosting

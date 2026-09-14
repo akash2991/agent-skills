@@ -17,8 +17,8 @@
     ],
     "negative": [
       {
-        "prompt": "How much subscription quota is left on Codex before I route this task",
-        "owner": "quota-axi"
+        "prompt": "Report what works right now in this service, what is blocked, and what is next",
+        "owner": "delivery-status"
       },
       {
         "prompt": "Add metrics and logs to the checkout service so we can see it working in production",

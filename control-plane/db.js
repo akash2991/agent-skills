@@ -21,8 +21,6 @@ const SCHEMA_VERSION = '1';
 const DEFAULT_CONFIG = {
   // See INPUT_BASIS below: fresh | new | billable.
   usage_input_basis: 'new',
-  session_stale_minutes: '30',
-  agent_stale_minutes: '20',
   // When captured events are shipped to Langfuse: off | session-end | turn. `turn` keeps the trace
   // view live while you work, which is the point of using it as the UI. Nothing is sent unless
   // LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are present, so this default is inert without them.
@@ -32,7 +30,6 @@ const DEFAULT_CONFIG = {
 // Columns added after a database already exists. `CREATE TABLE IF NOT EXISTS` never adds a column
 // to a live table, so every additive change is listed here and applied once, in order.
 const ADDED_COLUMNS = [
-  ['sessions', 'harness_session_id', 'TEXT'],
   ['events', 'thinking_tokens', 'INTEGER'],
 ];
 
@@ -59,23 +56,9 @@ function config(db) {
   return Object.fromEntries(db.prepare('SELECT key, value FROM config').all().map(r => [r.key, r.value]));
 }
 
-function setConfig(db, key, value, actor = 'cli', reason = null) {
-  const now = new Date().toISOString();
-  const old = db.prepare('SELECT value FROM config WHERE key = ?').get(key);
+function setConfig(db, key, value, actor = 'cli') {
   db.prepare('INSERT INTO config(key, value, updated_at, updated_by) VALUES(?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by')
-    .run(key, String(value), now, actor);
-  record(db, actor, 'config', key, 'value', old ? old.value : null, String(value), reason);
-}
-
-function record(db, actor, entity, entityId, field, oldValue, newValue, reason = null) {
-  db.prepare('INSERT INTO changes(at, actor, entity, entity_id, field, old_value, new_value, reason) VALUES(?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(new Date().toISOString(), actor, entity, entityId, field, oldValue === undefined ? null : oldValue, newValue === undefined ? null : newValue, reason);
-}
-
-function minutesSince(iso, now = Date.now()) {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? null : Math.round((now - t) / 60000);
+    .run(key, String(value), new Date().toISOString(), actor);
 }
 
 // How `input_tokens` is counted when usage is reported. Prompt caching makes this a real choice rather
@@ -93,17 +76,17 @@ const INPUT_BASIS = {
   billable: 'COALESCE(e.input_tokens, 0) + COALESCE(e.cache_write_tokens, 0) + COALESCE(e.cache_read_tokens, 0)'
 };
 
-// Subtree token spend per holder, following agents.parent, from model.completed usage events.
-function spend(db, holder, basis) {
+// Recorded token and cost usage per agent and session, newest first, from model.completed events.
+// An agent here is whatever id the event carried: a firstmate task id, an explicit BRAIN_AGENT_ID,
+// or the harness session. Nothing is rolled up a hierarchy, because the brain no longer keeps one.
+function usage(db, basis) {
   const chosen = basis || config(db).usage_input_basis || 'new';
   const expression = INPUT_BASIS[chosen] || INPUT_BASIS.new;
-  const row = db.prepare(`
-    WITH RECURSIVE subtree(agent_id) AS (
-      SELECT ?
-      UNION
-      SELECT a.agent_id FROM agents a JOIN subtree s ON a.parent = s.agent_id
-    )
+  const rows = db.prepare(`
     SELECT
+      e.agent_id, e.session_id,
+      MIN(e.timestamp)                       AS first_at,
+      MAX(e.timestamp)                       AS last_at,
       COALESCE(SUM(${expression}), 0)        AS input_tokens,
       COALESCE(SUM(e.input_tokens), 0)       AS fresh_input_tokens,
       COALESCE(SUM(e.cache_write_tokens), 0) AS cache_write_tokens,
@@ -111,11 +94,13 @@ function spend(db, holder, basis) {
       COALESCE(SUM(e.output_tokens), 0)      AS output_tokens,
       SUM(e.cost_usd)                        AS cost_usd,
       COUNT(*)                               AS usage_events,
-      (SELECT COUNT(*) FROM subtree)         AS agents
+      GROUP_CONCAT(DISTINCT e.model)         AS models
     FROM events e
-    WHERE e.type = 'model.completed' AND e.agent_id IN (SELECT agent_id FROM subtree)
-  `).get(holder);
-  return { ...row, input_basis: chosen };
+    WHERE e.type = 'model.completed'
+    GROUP BY e.agent_id, e.session_id
+    ORDER BY last_at DESC
+  `).all().map(r => ({ ...r }));
+  return { input_basis: chosen, rows };
 }
 
-module.exports = { open, config, setConfig, record, minutesSince, spend, INPUT_BASIS, DEFAULT_DB, DEFAULT_CONFIG, SCHEMA_VERSION };
+module.exports = { open, config, setConfig, usage, INPUT_BASIS, DEFAULT_DB, DEFAULT_CONFIG, SCHEMA_VERSION };

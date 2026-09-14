@@ -36,7 +36,7 @@ The organization's standing gates, used by the EM at every phase and by staff en
 - [ ] Service `CHANGELOG.md` and `LLD.md` updated where contracts or schema changed
 - [ ] QA engineer verified independently (`QA VERIFIED`)
 - [ ] User pinged that the story is ready to verify; independent work continues
-- [ ] Tracker state and registry row updated
+- [ ] Tracker state updated
 
 ## After each sprint (EM)
 
@@ -60,6 +60,6 @@ The organization's standing gates, used by the EM at every phase and by staff en
 3. Integration verification passed where the story crosses boundaries.
 4. QA independently verified against the acceptance criteria.
 5. The user can verify the flow; the user has been told it is ready.
-6. The change is committed and the tracker and registry reflect it.
+6. The change is committed and the tracker reflects it.
 
 Anything short of this is `PARTIAL` or `BLOCKED`. Never round up.

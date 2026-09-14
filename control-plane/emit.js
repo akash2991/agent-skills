@@ -11,12 +11,12 @@ const EVENT_TYPES = new Set([
   'agent.started', 'agent.status_changed', 'agent.completed',
   'skill.loaded', 'document.loaded',
   'turn.started', 'turn.completed', 'model.completed',
-  'tool.completed', 'control.completed', ]);
+  'tool.completed', ]);
 const TOP_LEVEL_FIELDS = new Set([
   'schema_version', 'event_id', 'timestamp', 'type', 'agent_id', 'parent_agent_id',
   'session_id', 'trace_id', 'span_id', 'parent_span_id', 'role', 'ticket', 'status',
   'model', 'effort', 'duration_ms', 'error_type', 'runtime', 'artifact', 'context',
-  'usage', 'turn', 'tool', 'control'
+  'usage', 'turn', 'tool'
 ]);
 const NESTED_FIELDS = {
   runtime: new Set(['name', 'session_ref', 'agent_ref', 'state_source']),
@@ -25,7 +25,6 @@ const NESTED_FIELDS = {
   usage: new Set(['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_input_tokens', 'cache_write_input_tokens', 'cost_usd', 'source']),
   turn: new Set(['number', 'duration_ms', 'outcome']),
   tool: new Set(['name', 'outcome', 'duration_ms']),
-  control: new Set(['action', 'target', 'outcome']),
 };
 const SOURCE_FIELDS = new Set(['kind', 'name', 'bytes', 'tokens', 'token_measurement']);
 const STATUS = new Set(['PLANNED', 'RUNNING', 'WAITING', 'BLOCKED', 'COMPLETED', 'FAILED', 'UNKNOWN']);
@@ -35,8 +34,6 @@ const RUNTIME_STATES = new Set(['hook', 'api', 'screen', 'reported', 'unknown'])
 const USAGE_SOURCES = new Set(['provider', 'runtime', 'calculated', 'unknown']);
 const TURN_OUTCOMES = new Set(['success', 'error', 'blocked', 'interrupted', 'unknown']);
 const TOOL_OUTCOMES = new Set(['success', 'error', 'cancelled', 'unknown']);
-const CONTROL_ACTIONS = new Set(['focus', 'steer', 'interrupt', 'stop']);
-const CONTROL_OUTCOMES = new Set(['success', 'error', 'refused']);
 
 function object(value, name) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} must be an object`);
@@ -117,11 +114,6 @@ function validateEvent(event) {
     if (!TOOL_OUTCOMES.has(event.tool.outcome)) throw new Error(`unsupported tool outcome "${event.tool.outcome}"`);
     nonNegativeNumber(event.tool.duration_ms, 'tool.duration_ms');
   }
-  if (event.control) {
-    if (!event.control.action || !event.control.target || !event.control.outcome) throw new Error('control.action, control.target, and control.outcome are required');
-    if (!CONTROL_ACTIONS.has(event.control.action)) throw new Error(`unsupported control action "${event.control.action}"`);
-    if (!CONTROL_OUTCOMES.has(event.control.outcome)) throw new Error(`unsupported control outcome "${event.control.outcome}"`);
-  }
   return event;
 }
 
@@ -172,9 +164,6 @@ const COLUMNS = {
   turn_outcome: e => e.turn?.outcome,
   tool_name: e => e.tool?.name,
   tool_outcome: e => e.tool?.outcome,
-  control_action: e => e.control?.action,
-  control_target: e => e.control?.target,
-  control_outcome: e => e.control?.outcome,
   raw: e => JSON.stringify(e)
 };
 const NAMES = Object.keys(COLUMNS);
@@ -189,20 +178,6 @@ function emitEvent(input, options = {}) {
       const value = COLUMNS[name](event);
       return value === undefined ? null : value;
     }));
-    // An event that reports a model or effort keeps the registry's current values honest.
-    if (event.model || event.effort) {
-      const agent = db.prepare('SELECT model, effort FROM agents WHERE agent_id = ?').get(event.agent_id);
-      if (agent) {
-        if (event.model && event.model !== agent.model) {
-          db.prepare('UPDATE agents SET model = ? WHERE agent_id = ?').run(event.model, event.agent_id);
-          database.record(db, event.agent_id, 'agent', event.agent_id, 'model', agent.model, event.model, `observed in ${event.type}`);
-        }
-        if (event.effort && event.effort !== agent.effort) {
-          db.prepare('UPDATE agents SET effort = ? WHERE agent_id = ?').run(event.effort, event.agent_id);
-          database.record(db, event.agent_id, 'agent', event.agent_id, 'effort', agent.effort, event.effort, `observed in ${event.type}`);
-        }
-      }
-    }
   } finally {
     if (!options.db) db.close();
   }

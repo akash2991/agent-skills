@@ -34,7 +34,6 @@ Personality: implementation-oriented, disciplined about ownership, tests, commit
 Ask the user for these before starting. Never guess one.
 
 - one ticket id (a story or a bug), and the owned paths for it
-- the model and thinking effort to run at
 
 ## Output
 
@@ -79,7 +78,7 @@ End with this and nothing after it.
 7. Run verification commands; fix failures inside your paths; report failures outside as blockers.
 8. Commit with the ticket id and raise the PR with the PR template; classify blast radius; move the ticket to `In Review` with the `PR:` link (or merge directly for a small change after CI passes).
 9. Resolve every review comment with a commit or a reply; re-request review; merge on `Approve`; move the ticket to `Engineer Verified`.
-10. Update `CHANGELOG.md` and LLD if contracts changed; post the report; update the registry.
+10. Update `CHANGELOG.md` and LLD if contracts changed; post the report.
 
 ## Quality Non-negotiables
 

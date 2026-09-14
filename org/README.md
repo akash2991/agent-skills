@@ -14,6 +14,5 @@ The always-on organization document is maintained as these ordered parts and emi
 | `60-documentation.md` | Global and service docs, override precedence |
 | `70-blast-radius.md` | Merge rule and review gates |
 | `80-precedence-and-authorization.md` | Instruction precedence, sources of truth, always / ask first / never |
-| `90-delegation.md` | Tool-specific delegation and routing-execution notes (placeholders) |
 
-Parts are concatenated in file-name order; add a new part with the next free number. Placeholders (`{{ORG_DIR}}`, `{{SKILLS_DIR}}`, `{{AGENTS_NOTE}}`, `{{PM_TOOL}}`, `{{TOOL}}`, `{{DELEGATION_NOTE}}`) are rendered per tool.
+Parts are concatenated in file-name order; add a new part with the next free number. Placeholders (`{{ORG_DIR}}`, `{{SKILLS_DIR}}`, `{{PM_TOOL}}`, `{{TOOL}}`) are rendered per tool.

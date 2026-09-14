@@ -1,6 +1,6 @@
 ---
 name: delivery-status
-description: Produces a truthful current-state report for a project, service, or milestone by reconciling the tracker, registry, git, and runtime, labeling every fact by freshness, detecting stuck work and agent loops, and accounting for model, token, and cost usage. Use when the user or an EM must report status, answer "what works right now", diagnose why delivery is stuck, or refresh state before resuming a long-running project.
+description: Produces a truthful current-state report for a project, service, or milestone by reconciling the tracker, git, the running system, and firstmate's crew state, labeling every fact by freshness, detecting stuck work and agent loops, and accounting for recorded token and cost usage. Use when the user or an EM must report status, answer "what works right now", diagnose why delivery is stuck, or refresh state before resuming a long-running project.
 category: process
 ---
 
@@ -21,12 +21,11 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 
 ## Process
 
-2. **Label every fact**: `VERIFIED NOW` (checked in this refresh), `REPORTED` (claimed by an agent, not checked), `HISTORICAL` (true at a named time or commit), `PLANNED` (intended), `UNKNOWN` (no evidence). A previously verified fact becomes `HISTORICAL` until re-checked.
-3. **Reconcile the registry with reality**: an agent is `RUNNING`, `COMPLETED`, `BLOCKED`, `FAILED`, or `UNKNOWN`; never `NO AGENT` merely because its report has not arrived. Compare registry rows with their `runtime`/`runtime_ref` binding. Correct rows that disagree with the runtime; write `UNKNOWN` where the runtime cannot be inspected. Preserve both facts when useful: `REPORTED RUNNING; VERIFIED NOW idle` exposes drift instead of hiding it.
-4. **Detect stuck work**: a ticket `Blocked` with no next action; a dependency with no owner; an agent repeating the same command with the same failure; a story missing between plan and tracker. For each, name the evidence, the owner, and the smallest next action, and say plainly which decisions the user has to make.
-5. **Check budgets**: run `node {{ORG_DIR}}/control-plane/brain.js budget`; list holders at `WARN` or `EXHAUSTED`, agents with spend but no allocation, and open budget asks.
-6. **Account for usage**: for each agent and the session, record model, turns, tool calls/failures, skill/document context contribution, total context/window, model input/output/cache tokens, elapsed time, and cost with a source and window. Classify each value `MEASURED`, `ESTIMATED` (with formula), `UNAVAILABLE`, or `UNKNOWN`. A missing event is not zero. Record every model switch. Surface an exhausted or near-exhausted limit instead of degrading silently. Use `{{ORG_DIR}}/references/agent-observability.md` for measurement and privacy rules.
-7. **Write the report** in the format below; the EM folds it into `em-report.md`. Update `CURRENT_MILESTONE.md` and the registry with what changed.
+1. **Label every fact**: `VERIFIED NOW` (checked in this refresh), `REPORTED` (claimed by an agent, not checked), `HISTORICAL` (true at a named time or commit), `PLANNED` (intended), `UNKNOWN` (no evidence). A previously verified fact becomes `HISTORICAL` until re-checked.
+2. **Read crew state from firstmate, do not rebuild it**: which tasks are running, waiting, stuck, or done, and on which model and effort, comes from the first mate's crew state or fleet view. Label it `REPORTED` unless you checked the pane or the branch yourself, and never write `NO AGENT` merely because a report has not arrived.
+3. **Detect stuck work**: a ticket `Blocked` with no next action; a dependency with no owner; an agent repeating the same command with the same failure; a story missing between plan and tracker. For each, name the evidence, the owner, and the smallest next action, and say plainly which decisions the user has to make.
+4. **Account for usage**: read the recorded figures with `node {{ORG_DIR}}/control-plane/brain.js status`; for each agent and the session, record model, turns, tool calls/failures, skill/document context contribution, total context/window, model input/output/cache tokens, elapsed time, and cost with a source and window. Classify each value `MEASURED`, `ESTIMATED` (with formula), `UNAVAILABLE`, or `UNKNOWN`. A missing event is not zero. Record every model switch. Surface an exhausted or near-exhausted limit instead of degrading silently. Use `{{ORG_DIR}}/references/agent-observability.md` for measurement and privacy rules.
+5. **Write the report** in the format below; the EM folds it into `em-report.md`. Update `CURRENT_MILESTONE.md` with what changed.
 
 ## Report format
 
@@ -42,10 +41,8 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 - Open bugs: <count by severity>
 - Deferred: <items and reason>
 - Next: <next executable tickets>
-- Agents: <agent_id — role — model — status — heartbeat>
-- Budgets: <holders at WARN/EXHAUSTED, open asks B-ids, unbudgeted agents>
+- Crew: <task — role — model/effort — state, from firstmate, with its freshness label>
 - Usage: <session and per-agent turns, tools, skill/doc context, model tokens, elapsed, cost — each with classification and source>
-- Runtime controls: <focus/steer/interrupt capability by agent, or UNAVAILABLE>
 - Decisions needed: <Q-ids>
 ```
 
@@ -54,7 +51,7 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 | Rationalization | Reality |
 |---|---|
 | "The EM reported it working an hour ago, so it works." | That is `HISTORICAL`. Run the check or label it as such. |
-| "No agent has reported, so there is no agent." | Background agents run without reporting. Inspect the runtime and registry before saying none exists. |
+| "No agent has reported, so there is no agent." | Background agents run without reporting. Check firstmate's crew state before saying none exists. |
 | "I'll estimate the token cost." | An estimate without a formula and source is a guess. Write `UNKNOWN` or show the calculation. |
 | "Making good progress" is a fine update. | It says nothing. State exactly what works and what does not. |
 | "The retry will probably work this time." | Same action, same failure, no new information is a loop. Stop and escalate. |
@@ -62,7 +59,7 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 ## Red Flags
 
 - A status sentence without a freshness label.
-- A registry row that disagrees with the runtime and was not corrected.
+- Crew state reported as current with no freshness label.
 - A blocked ticket with no owner or next action.
 - A cost or token number with no source.
 - A model switch that nobody recorded.
@@ -70,8 +67,8 @@ Chat memory and old reports are not the current state. This skill rebuilds the t
 ## Verification
 
 - [ ] Every fact in the report carries a freshness label and the commit is `VERIFIED NOW`.
-- [ ] The registry matches observed runtime state or says `UNKNOWN`.
+- [ ] Crew state came from firstmate and carries a freshness label, or says `UNKNOWN`.
 - [ ] Every stuck item has an owner, a next action, and names any decision the user must make.
 - [ ] Usage values are classified with a source, or `UNKNOWN`/`UNAVAILABLE`.
-- [ ] The hierarchy, skill/document loads, turns, tool failures, context usage, and runtime bindings were checked in the observatory.
-- [ ] `CURRENT_MILESTONE.md` and the registry were updated.
+- [ ] Skill and document loads, turns, tool failures, and context usage were checked in the recorded events or in Langfuse.
+- [ ] `CURRENT_MILESTONE.md` was updated.

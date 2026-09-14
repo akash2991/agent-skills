@@ -24,23 +24,22 @@ npm run import -- /path/to/some-skill --category coding   # dump a skill (or wri
 npm run all                                                 # validate + select + build
 npm run inject -- /path/to/repo [--targets claude-code,codex] [--dry-run]
 #  then start a new agent session in that repo and type the slash command /brain
-#  (a shell equivalent exists: node .agent-brain/control-plane/brain.js context --role ceo ...)
 ```
 
 Inject never deletes. It overwrites what the brain owns, merges `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`/`copilot-instructions.md` as a managed block, merges `.mcp.json` by server name, and creates seeds (registry, global docs, services folder) only when missing. Re-running is idempotent.
 
 ## What each tool receives
 
-| Tool | Always-on rules | Skills (incl. one per persona) | Persona subagents | MCP |
-|---|---|---|---|---|
-| Claude Code | `CLAUDE.md` block | `.claude/skills/<name>/` | `.claude/agents/<name>.md` with `model:` and `effort:` | `.mcp.json` (`${VAR}`) |
-| Codex | `AGENTS.md` block | `.agents/skills/<name>/` | none: one session plays each role | global `~/.codex/config.toml`, snippet in `references/tool-auth.md` |
-| Cursor | `.cursor/rules/agent-brain.mdc` | `.cursor/skills/<name>/` | none | `.cursor/mcp.json` (`${env:VAR}`) |
-| Gemini CLI | `GEMINI.md` block | `.gemini/skills/<name>/` | `.gemini/agents/<name>.md` | `.gemini/settings.json` (`$VAR`) |
-| OpenCode | `AGENTS.md` block | `.opencode/skills/<name>/` | `.opencode/agent/<name>.md` with `model:` | `opencode.json` (`{env:VAR}`) |
-| GitHub Copilot | `.github/copilot-instructions.md` block | `.github/skills/<name>/` | `.github/agents/<name>.agent.md` | `.vscode/mcp.json` (`${env:VAR}`) |
+| Tool | Always-on rules | Skills (incl. one per persona) | MCP |
+|---|---|---|---|
+| Claude Code | `CLAUDE.md` block | `.claude/skills/<name>/` | `.mcp.json` (`${VAR}`) |
+| Codex | `AGENTS.md` block | `.agents/skills/<name>/` | global `~/.codex/config.toml`, snippet in `references/tool-auth.md` |
+| Cursor | `.cursor/rules/agent-brain.mdc` | `.cursor/skills/<name>/` | `.cursor/mcp.json` (`${env:VAR}`) |
+| Gemini CLI | `GEMINI.md` block | `.gemini/skills/<name>/` | `.gemini/settings.json` (`$VAR`) |
+| OpenCode | `AGENTS.md` block | `.opencode/skills/<name>/` | `opencode.json` (`{env:VAR}`) |
+| GitHub Copilot | `.github/copilot-instructions.md` block | `.github/skills/<name>/` | `.vscode/mcp.json` (`${env:VAR}`) |
 
-Every tool also receives `.agent-brain/` (configurable): `ORG.md`, `registry/`, `observability/`, `docs/` (global docs), `services/`, `templates/`, `references/` (links from skills to `../../references/` are rewritten to this copy). The CEO is never a subagent. Layouts are entries in `scripts/brain/lib/targets.js`.
+Every tool also receives `.agent-brain/` (configurable): `ORG.md`, `registry/`, `observability/`, `docs/` (global docs), `services/`, `templates/`, `references/` (links from skills to `../../references/` are rewritten to this copy). Layouts are entries in `scripts/brain/lib/targets.js`.
 
 ## The organization
 
@@ -54,7 +53,7 @@ User → CEO → PM (brainstorms the spec with the user; PRD)
                    → Specialists: security-auditor, web-performance-auditor
 ```
 
-Every persona defines role, responsibilities, goals, communication, success criteria, tools, authorization (ending with a refusal of out-of-scope work), way of working, quality non-negotiables, the skills it may use, composition (how it is invoked, never by another persona), and red flags, and no model or effort at all: those are per-task decisions recorded in the control plane. Planning and coding personas default to `claude-fable-5-1` at high; the rest to `claude-opus-5` at high. A task no persona covers becomes a hiring request (`references/hiring.md`). Credentials and per-tool MCP setup are in `references/tool-auth.md`. Discipline personas `extends` a base persona and override or add sections (see `docs/persona-anatomy.md`). The skill list is enforced by `npm run validate`.
+Every persona defines role, responsibilities, goals, communication, success criteria, tools, authorization (ending with a refusal of out-of-scope work), way of working, quality non-negotiables, the skills it may use, composition (how it is invoked, never by another persona), and red flags, and no model or effort at all: those are set per task when firstmate dispatches the work, and the control plane records what ran. A task no persona covers becomes a hiring request (`references/hiring.md`). Credentials and per-tool MCP setup are in `references/tool-auth.md`. Discipline personas `extends` a base persona and override or add sections (see `docs/persona-anatomy.md`). The skill list is enforced by `npm run validate`.
 
 The owner's operating-system notes (`agent-os/AGENT_OPERATING_SYSTEM.md`) are folded in: stack and repository rules in `templates/global-docs/CONVENTIONS.md`; the QA model as the `test-engineer` persona; the TPM function, visibility, token usage, model switching, and current-product-state format as the `delivery-status` skill; story states, INVEST, points, and sprints (with spillover and estimation tracking) in `milestone-planning` and `linear`; delegation prompts in `references/assignment-packet.md`; the execution checklist and definition of done in `references/execution-checklist.md`; blocker types in `escalation`; scope-creep classes and requirement clarity in `prd-writing` and `ORG.md`; the pattern catalog in `lld`; personalities in each persona.
 
@@ -62,7 +61,7 @@ Philosophy and stack: the core philosophy (build-time cost, illegal states unrep
 
 Delivery mechanics: every task ships through a pull request (`references/pull-request.md`) raised by the staff engineer, reviewed with inline comments by the discipline code reviewer, with the Linear ticket mirroring each step; staff engineers instrument what they ship with technical, product, and business metrics and restrained logging (`references/metrics-and-logging.md`).
 
-Agent-work observability: every injected target gets a SQLite control plane under `.agent-brain/control-plane/` holding sessions, the agent registry, metadata-only events, budgets, and an audit trail, with a CLI and a small local page over the same store. Real token and cost figures come from harness hooks reading the transcript; provider quota comes from quota-axi; trace timelines, agent graphs, and cost dashboards come from Langfuse, which the control plane exports to over OTLP with no dependency to install. OpenTelemetry GenAI concepts keep exporters portable. Terminal control was tried and dropped. The architecture, privacy defaults, capability ownership, and sources are in `references/agent-observability.md`. No external tool is installed or contacted by injection.
+Agent-work observability: the crew runs under [firstmate](https://github.com/kunchenguid/firstmate), which spawns each role into its own herdr or tmux pane, sets its model and effort, supervises it, and reads provider quota. The brain does not duplicate any of that. Every injected target gets a SQLite control plane under `.agent-brain/control-plane/` holding only recorded usage: metadata-only events that harness hooks capture from the transcript, attributed to firstmate's task id. Trace timelines and cost dashboards come from Langfuse, which the control plane exports to over OTLP with no dependency to install. The architecture, privacy defaults, capability ownership, and sources are in `references/agent-observability.md`. No external tool is installed or contacted by injection.
 
 The upstream reviewer and auditor personas were reconciled into the same anatomy: `code-reviewer` is the abstract base of the three discipline code reviewers, `test-engineer` merged into `test-engineer`, and `security-auditor` and `web-performance-auditor` joined the organization as specialists with their frameworks under `## Framework`. They are reached through the CEO like every other role: the direct-invocation commands were removed, because a command that starts a specialist bypasses the budget and priority decisions the CEO exists to make.
 

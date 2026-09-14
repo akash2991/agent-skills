@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "agent-brain/observability/event-v1",
   "title": "Agent Brain observability event",
-  "description": "Metadata-only event envelope for agent lifecycle, context composition, model usage, tool calls, and runtime controls. Raw prompt, response, reasoning, document, tool input, and tool output content are intentionally not representable.",
+  "description": "Metadata-only event envelope for agent lifecycle, context composition, model usage, and tool calls. Raw prompt, response, reasoning, document, tool input, and tool output content are intentionally not representable.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -36,8 +36,7 @@
         "turn.started",
         "turn.completed",
         "model.completed",
-        "tool.completed",
-        "control.completed"
+        "tool.completed"
       ]
     },
     "agent_id": {
@@ -331,37 +330,6 @@
         "duration_ms": {
           "type": "number",
           "minimum": 0
-        }
-      }
-    },
-    "control": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "action",
-        "target",
-        "outcome"
-      ],
-      "properties": {
-        "action": {
-          "type": "string",
-          "enum": [
-            "focus",
-            "steer",
-            "interrupt",
-            "stop"
-          ]
-        },
-        "target": {
-          "type": "string"
-        },
-        "outcome": {
-          "type": "string",
-          "enum": [
-            "success",
-            "error",
-            "refused"
-          ]
         }
       }
     }

@@ -1,6 +1,6 @@
 ## Who you can invoke
 
-One command per role. There is no entry point and no order you must follow: invoke whichever role the work needs, and skip the rest. Each confirms the model and thinking effort with you, asks for the inputs it needs, and returns a structured result.
+One command per role. There is no entry point and no order you must follow: invoke whichever role the work needs, and skip the rest. Each asks for the inputs it needs and returns a structured result.
 
 | Command | Role | Scope | Give it | Get back |
 |---|---|---|---|---|
@@ -14,6 +14,8 @@ One command per role. There is no entry point and no order you must follow: invo
 | `/brain-webperf` | Web performance auditor | one surface | a route, component, or URL | measured findings, never invented numbers |
 
 Engineers and reviewers are split by discipline: backend, web (React), and mobile (React Native). An engineering manager is not split; one owns a service across all three.
+
+**Firstmate runs the crew.** Each role runs as its own session, dispatched by firstmate into its own pane with the harness, model, and thinking effort chosen for that task. A role never picks its own model and never spawns another role.
 
 **Scope decides who owns which document.** The product manager and the principal engineers see the whole product, so they own the two project pages: `{{ORG_DIR}}/docs/PRD.md` and `{{ORG_DIR}}/docs/ARCHITECTURE.md`, both kept really high level. Engineering managers and staff engineers work inside one service, so the service's `HLD.md` and `LLD.md` belong to its staff engineers, updated in the pull request that changes them. The full table is in `{{ORG_DIR}}/references/documentation-map.md`.
 

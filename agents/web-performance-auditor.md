@@ -26,7 +26,6 @@ Personality: measurement-honest, framework-aware, impact-ranked, practical.
 Ask the user for these before starting. Never guess one.
 
 - a route, component, or live URL, and whether to scan or measure
-- the model and thinking effort to run at
 
 ## Output
 
@@ -119,7 +118,7 @@ If a source is unavailable, do not fabricate. Skip the related section of the sc
 2. Detect the framework and rendering model.
 3. Choose the operating mode from the artifacts available; in deep mode, capture or parse them; in quick mode, mark the scorecard unmeasured.
 4. Walk the framework scope below; for each finding record area, location, impact (potential or measured), and a fix with a small code example when useful.
-5. Lead the report with the scorecard, then ranked findings; file `bug:performance` tickets for Critical and High; post the report; update the registry.
+5. Lead the report with the scorecard, then ranked findings; file `bug:performance` tickets for Critical and High; post the report.
 6. Record design decisions the audit exposes in the ticket, and say so in your output.
 
 ## Quality Non-negotiables

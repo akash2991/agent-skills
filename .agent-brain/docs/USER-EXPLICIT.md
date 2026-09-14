@@ -20,4 +20,5 @@ Newest first. One row per explicit instruction.
 
 | Date | Session or ticket | The instruction, in the user's words | What it overrode |
 |---|---|---|---|
+| 2026-09-14 | Integrating firstmate: delete overlapping brain functionality | "delete the code / functionality which is taken care by firstmate" | AGENTS.md "Ask first before deleting material that is not clearly a relic of the upstream fork" (the instruction is the ask). Goal.md update 18, which relied on each harness's native subagents and had every role confirm model and effort: firstmate now spawns the crew in herdr panes and sets model and effort per task. The brain-on-itself flow (friction ticket through `/brain-pm`, an `org-*` persona, code review): done directly in the session on the owner's instruction. Removed material is archived under `deprecated/removed-for-firstmate/` per the repository's convention rather than destroyed. |
 | <YYYY-MM-DD> | <ticket, or what you were doing> | <quote them> | <the rule, convention, or persona section it beat, or `nothing, it was new ground`> |

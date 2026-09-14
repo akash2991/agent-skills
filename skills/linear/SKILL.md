@@ -1,6 +1,6 @@
 ---
 name: linear
-description: "Operates Linear as the organization's project-management tool through the Linear MCP server: projects for features, milestones, cycles as sprints with sprint records and reviews, structured story, task, and bug issues, structured status updates on every state change, blocker definitions, labels, and comments. Use when any persona needs to create, update, read, query, or reassign tracker items, file a bug, post a status update, or link a registry ticket id to a Linear issue."
+description: "Operates Linear as the organization's project-management tool through the Linear MCP server: projects for features, milestones, cycles as sprints with sprint records and reviews, structured story, task, and bug issues, structured status updates on every state change, blocker definitions, labels, and comments. Use when any persona needs to create, update, read, query, or reassign tracker items, file a bug, post a status update, or link a task to its Linear issue."
 category: tools
 ---
 
@@ -28,7 +28,7 @@ The build emits this server into each tool's repo-level MCP config (`.mcp.json`,
 1. **Read before write.** Search for the project, milestone, cycle, or issue first. Never create a duplicate.
 2. **Pick the operation** from the interface table and map it with the concept table below.
 3. **Fill the description template** for issues; add labels; set project, milestone, cycle, and dependencies.
-4. **Write, then read back** the created or updated object and quote its identifier in your report and registry row.
+4. **Write, then read back** the created or updated object and quote its identifier in your report.
 5. **Post a structured status update on every state change, reassignment, or re-pointing** (template below); when the new state is `Blocked`, the update contains the blocker block. Attach reports verbatim.
 6. **Query by structure.** Because every ticket uses its template and every change has a status update, answer "what was this ticket about" or "what changed" by reading the description and the status-update comments in order; never reconstruct history from chat.
 
@@ -47,7 +47,7 @@ The build emits this server into each tool's repo-level MCP config (`.mcp.json`,
 | Pull request | Issue attachment / link | Every task issue links its PR; the PR title starts with the issue id so Linear auto-links; review verdicts are mirrored as status updates |
 | Story points | Estimate | 1, 2, 3, 5, 8; split anything larger |
 | Report | Comment on the issue | The uniform report for the role, verbatim |
-| Registry ticket | Issue identifier | e.g. `ENG-42`; `Agent:` line in the description holds the `agent_id` |
+| Ticket id | Issue identifier | e.g. `ENG-42`; the `Agent:` line in the description holds the firstmate task id of whoever is on it |
 | Labels | `role:*`, `tier:*`, `blast:*`, `service:*`, `foundation`, `bug`, `bug:<functional\|regression\|performance\|security\|data\|ux\|flaky-test\|environment>`, `severity:<blocker\|high\|medium\|low>` | Create missing labels once per team |
 
 ## Ticket structures
@@ -148,10 +148,10 @@ RCA required: yes | no (yes when it reached a milestone verification, review, or
 
 | Rationalization | Reality |
 |---|---|
-| "I'll create the issue after the code is done." | Then nobody could see the work in progress, and the routing record never existed. |
+| "I'll create the issue after the code is done." | Then nobody could see the work in progress. |
 | "The comment is long, I'll summarize the report." | The receiver verifies the report. A summary hides what they need to check. |
 | "I'll track this small thing in the PR description." | The tracker is the single place. Small things that live elsewhere get lost. |
-| "The MCP call failed, I'll note the id I expected." | A guessed identifier corrupts the registry. Report the failure and retry once. |
+| "The MCP call failed, I'll note the id I expected." | A guessed identifier corrupts every report that quotes it. Report the failure and retry once. |
 | "A one-line comment is enough for this state change." | Without the structured update nobody can later tell why the ticket moved or what blocked it. |
 | "I'll keep the bug in a notes file for now." | Bugs live only as `bug` tickets. A file cannot be queried, assigned, or linked to the story. |
 
@@ -164,12 +164,12 @@ RCA required: yes | no (yes when it reached a milestone verification, review, or
 - A cycle closed without a sprint review comment.
 - A ticket in `In Review` or `Approved` with no PR link, or a merged PR whose ticket is not `Merged`/`Engineer Verified`.
 - An issue closed without a report comment.
-- A registry row whose ticket does not exist in Linear.
-- Labels missing on a task that has a routing record.
+- A report quoting a ticket that does not exist in Linear.
+- Labels missing on a task that is ready to start.
 
 ## Verification
 
-- [ ] The object exists in Linear and its identifier is quoted in the report and registry.
+- [ ] The object exists in Linear and its identifier is quoted in the report.
 - [ ] Every task has the description template filled, labels, project, milestone, and dependencies.
 - [ ] Every state change, reassignment, or re-pointing has a structured status update; `Blocked` updates carry the blocker block; reports are attached verbatim.
 - [ ] Every bug is a `bug` issue with the full template and labels.

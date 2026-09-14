@@ -11,7 +11,6 @@ const fm = require('./lib/frontmatter');
 
 const START = '<!-- agent-brain:start -->';
 const END = '<!-- agent-brain:end -->';
-const PERSONA_ONLY_KEYS = ['skills', 'extends', 'abstract'];
 // Links from a skill to the repo-root references/ (any number of ../). Rewritten to the injected copy.
 const REF_LINK = /(?<![A-Za-z0-9._/-])((?:\.\.\/)+references\/([A-Za-z0-9._-]+\.md))/g;
 
@@ -65,7 +64,7 @@ function alwaysOnContent(target, vars) {
 function personaBody(p, vars) {
   const d = p.resolvedData;
   const header = (p.skills.length ? `> Skills this persona may use: ${p.skills.map(s => `\`${s}\``).join(', ')} (in \`${vars.SKILLS_DIR}/\`). No others.\n` : '')
-    + `> Model and effort are not fixed for this role: the EM chooses them per task from complexity, budget, and provider quota, and the control plane records what ran (\`${vars.ORG_DIR}/control-plane/\`).\n`;
+    + `> Model and effort are not fixed for this role: they are set when the work is dispatched (firstmate's crew dispatch profile, or a per-task override), and the control plane records what actually ran (\`${vars.ORG_DIR}/control-plane/\`).\n`;
   return header + render(p.resolvedBody, vars);
 }
 
@@ -80,16 +79,8 @@ for (const id of targets) {
     ORG_DIR: O,
     SKILLS_DIR: target.skillsDir,
     SKILLS_DIR_TABLE: skillsDirTable(),
-    AGENTS_DIR: target.agentsDir || '',
-    AGENTS_NOTE: target.agentsDir
-      ? `\`${target.agentsDir}/\` (subagents, one per persona except the CEO) and \`${target.skillsDir}/<persona>/\` (same content as a skill)`
-      : `\`${target.skillsDir}/<persona>/\` (no subagents in this tool; adopt the persona skill in the same session)`,
     PM_TOOL: manifest.projectManagement || 'the configured tracker',
-    DELEGATION_NOTE: '',
-    ROUTING_NOTE: target.routingNote || '',
-    SPAWN_MODE: target.spawn || 'main-only',
   };
-  vars.DELEGATION_NOTE = render(target.delegationNote, vars);
   const files = [];
   const seeds = [];
   const put = (rel, content, seed = false) => { const p = path.join(out, rel); ensureDir(path.dirname(p)); fs.writeFileSync(p, content); (seed ? seeds : files).push(rel); };
@@ -107,15 +98,11 @@ for (const id of targets) {
     for (const rel of written) files.push(`${dest}/${rel}`);
   }
 
-  // 2. Personas: always as a skill directory; additionally as a subagent where the tool has them (never the CEO).
+  // 2. Personas: one skill directory each. Firstmate runs every role as its own session, so no tool
+  // gets persona subagent files and no role spawns another.
   for (const p of personas) {
     const d = p.resolvedData;
     put(`${target.skillsDir}/${p.name}/SKILL.md`, fm.stringify({ name: p.name, description: d.description }, personaBody(p, vars)));
-    if (target.agentsDir && p.name !== 'ceo') {
-      const agentData = target.agentFrontmatter({ ...d, name: p.name });
-      for (const k of PERSONA_ONLY_KEYS) if (!(k in agentData)) delete agentData[k];
-      put(`${target.agentsDir}/${target.agentFile(p.name)}`, fm.stringify(agentData, personaBody(p, vars)));
-    }
   }
 
   // 3. Organization: ORG.md, templates, references, docs, control plane → <orgDir>/. Global docs and services are seeds.
@@ -125,7 +112,7 @@ for (const id of targets) {
   for (const rel of copyTree(path.join(TEMPLATES_DIR, 'global-docs'), path.join(out, O, 'docs'), md(vars))) seeds.push(`${O}/docs/${rel}`);
   // The control plane is code plus a schema. Its SQLite database is live state belonging to whoever
   // ran it, so it must never be copied into a build and from there into somebody else's repository:
-  // that would hand every project this one's sessions, agents, budgets and events. Running the CLI
+  // that would hand every project this one's recorded usage and events. Running the CLI
   // from the source directory creates one right here, so the exclusion is not hypothetical.
   const runtimeState = rel => /(^|\/)brain\.db(-wal|-shm)?$/.test(rel);
   const controlPlane = (rel, buf) => (runtimeState(rel) ? null : md(vars)(rel, buf));
