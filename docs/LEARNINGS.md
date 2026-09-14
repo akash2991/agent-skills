@@ -124,6 +124,7 @@ Both refactor notes also confirm the model-family point in F-slop-8: the EM aske
 9. **Harness environment leaks.** Hermes inherited a `PYTHONPATH` that broke the project venv, Pi's managed worktree could not be resumed, `quota-axi` was not installed so quota was UNKNOWN on every routing decision. Each is a harness adapter concern, not a persona one.
 10. **The seeded project docs were placeholders and stayed that way** until the user ran the PM and a PE in parallel to fill them from twelve service HLDs. `brownfield-adoption` should produce the project PRD and ARCHITECTURE on first injection, or the seed docs should say who fills them and when.
 11. **The harness's own guard held when the org's did not.** Claude Code's "Merge Without Review" permission check blocked the squash-merge the user had authorized. Worth knowing when reasoning about what the org guard actually protects.
+12. **pi could not reach Linear.** pi's MCP adapter reads the project `.mcp.json` and needs `"auth": "oauth"` on the Linear server; the build did not write it, so the owner added it by hand, and a re-inject would have removed it again. Fixed on 2026-09-15 as F-self-55: the key is emitted into `.mcp.json` only and pinned by an inject test.
 
 ### Friction tickets
 

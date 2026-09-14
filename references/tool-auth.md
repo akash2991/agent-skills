@@ -21,6 +21,7 @@ export LINEAR_API_KEY=lin_api_...   # only for CLI/API fallbacks
 | Tool | Repo-level file (emitted by the build) | Variable syntax | Notes |
 |---|---|---|---|
 | Claude Code | `.mcp.json` | `${GITHUB_PAT}` | Also `claude mcp add --transport http github https://api.githubcopilot.com/mcp/ --header "Authorization: Bearer $GITHUB_PAT"` |
+| Pi (`pi-mcp-adapter`) | `.mcp.json`, read from the project | `${GITHUB_PAT}` | Linear needs `"auth": "oauth"` or the adapter does not start the OAuth flow; the build writes it, and Claude Code accepts the key |
 | Cursor | `.cursor/mcp.json` | `${env:GITHUB_PAT}` | Enable the servers in Settings → MCP after opening the repo |
 | Gemini CLI | `.gemini/settings.json` | `$GITHUB_PAT` | `httpUrl` form; or `gemini mcp add --transport http github <url> --header ...` |
 | OpenCode | `opencode.json` | `{env:GITHUB_PAT}` | `type: remote` servers |

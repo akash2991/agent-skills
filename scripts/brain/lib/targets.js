@@ -17,7 +17,9 @@
 
 // Personas ship only as skills. Firstmate runs each role as its own session with the harness, model,
 // and effort chosen for that task, so no target carries subagent files, spawn modes, or routing notes.
-// Canonical server shape from a skill's mcp.json: { type: 'http', url, headers? }.
+// Canonical server shape from a skill's mcp.json: { type: 'http', url, headers?, auth? }. `auth` is
+// carried only into `.mcp.json`: pi's MCP adapter reads that file and needs `"auth": "oauth"` to run the
+// OAuth flow for a server like Linear, and Claude Code accepts the key. Other tools' files never get it.
 // Each tool references environment variables differently inside JSON config.
 const TARGETS = {
   'claude-code': {
@@ -36,7 +38,7 @@ const TARGETS = {
         SessionEnd: [{ hooks: [{ type: 'command', command: `node "$CLAUDE_PROJECT_DIR/${orgDir}/control-plane/hook.js" session-end` }] }]
       })
     },
-    mcp: { file: '.mcp.json', key: 'mcpServers', envRef: v => `\${${v}}`, server: s => ({ type: 'http', url: s.url, ...(s.headers ? { headers: s.headers } : {}) }) },
+    mcp: { file: '.mcp.json', key: 'mcpServers', envRef: v => `\${${v}}`, server: s => ({ type: 'http', url: s.url, ...(s.headers ? { headers: s.headers } : {}), ...(s.auth ? { auth: s.auth } : {}) }) },
   },
   codex: {
     label: 'Codex',

@@ -47,6 +47,20 @@ test('injection is idempotent and leaves a project runnable', () => {
     'personas ship as skills only: firstmate runs each role as its own session, so there are no subagent files');
 });
 
+test('the Linear MCP server asks for OAuth, so pi can connect to it', () => {
+  // pi's MCP adapter reads the project .mcp.json and would not start Linear's OAuth flow without an
+  // explicit "auth": "oauth". Found in a real injected project, where it had to be added by hand and
+  // a re-inject would have silently removed it again.
+  const repo = scratch();
+  inject(repo);
+  const mcp = JSON.parse(fs.readFileSync(path.join(repo, '.mcp.json'), 'utf8'));
+  assert.equal(mcp.mcpServers.linear.auth, 'oauth');
+  assert.equal(mcp.mcpServers.linear.url, 'https://mcp.linear.app/mcp');
+  // Only .mcp.json carries it; a tool with its own config shape must not receive a key it does not define.
+  const cursor = JSON.parse(fs.readFileSync(path.join(ROOT, 'build', 'product', 'cursor', '.cursor', 'mcp.json'), 'utf8'));
+  assert.equal(cursor.mcpServers.linear.auth, undefined);
+});
+
 test('a file the brain no longer produces is retired, not left behind', () => {
   const repo = scratch();
   inject(repo);
