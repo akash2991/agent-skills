@@ -22,7 +22,9 @@ For better management of skills, skills folders need to be divided into subfolde
 - coding skills, such as LLD, HLD, strong typing etc.
 - domain skills such as security
 
+##
 2. since This will be multi-agent support, and each agent requires files in a different format. but we will not duplicate anything. The source of truth will lie in one place, and the script will run and copy and transform those files into desired folders, formats, etc. acc To the requirement
+
 
 3. An organizational structure 
 - where we have a CEO, PMs, and EMs, principal engineers and staff engineers. 
