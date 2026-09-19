@@ -8,6 +8,41 @@ Append a section per intake. Newest first.
 
 ---
 
+## 2026-09-19 — slop, second intake
+
+**Evidence.** `docs/learnings/slop/USER-EXPLICIT.md` and `WORK.md`, re-copied on 2026-09-19: the log has grown to 103 runs and the override record to 120 lines, covering the PostgreSQL-native work (AKA-41), the SQL extraction (AKA-66), the runtime definitions (AKA-28), and two merged pull requests. Read as a review of what the owner's real working style asks of the brain, and published as an interactive report: https://claude.ai/artifact/T7riDDagSxTg1GGNAhg1es
+
+**Headline.** The first intake found the owner overriding the same three defaults. The second finds the shape behind them: the owner works as a **coordinator who dispatches specialists, lands slices onto an integration branch, and reviews once at the end**. The brain has no coordinator role, forbids the dispatch, and gates every slice.
+
+| What the records show | Count |
+|---|---:|
+| Runs logged | 103 (41 done, 23 partial, 8 blocked, 31 free-text) |
+| Runs labelled "coordinator", a role the org does not have | 20 |
+| Rows with no token figures | 100 of 103 |
+| Rows with no effort recorded | 28, and most of the rest record what was requested |
+| Override lines mentioning fan-out, subagents, or a spawn | 49 |
+| Override lines about merges and pull requests | 53 |
+
+**The thirteen proposals**, in the artifact with their evidence:
+
+| Id | Change | Loosens a guard |
+|---|---|---|
+| RD-1 | Make the coordinator a real role, or widen the EM to cover dispatch, integration, and landing | no |
+| RD-2 | Fan-out becomes the default, with disjoint paths and the contract settled first | yes |
+| RD-3 | A routing policy: default family per task class, harness constraints, override on the ticket; never asked at greeting | no |
+| RD-4 | An advisory mode where one session answers as PM and PE and produces no approved artifacts | no |
+| RM-1 | Integration-branch mode: slices merge as they pass, one review covers the candidate | yes |
+| RM-2 | One combined verification; a coordinator inspects worker evidence rather than rerunning it | yes |
+| RM-3 | Critical and required findings block; the rest are filed as bugs and the merge proceeds | yes |
+| RM-4 | Document that GitHub refuses a self-approve, so the reviewer comments and the coordinator merges | no |
+| RC-1 | Cut the work log to role, command, ticket, model, duration, outcome, friction | no |
+| RC-2 | A dispatch record with ticket, worktree, session id, model, status, so pause and resume are ordinary | no |
+| RC-3 | Close and update tickets when work lands | no |
+| ST-1 | Promote repeated instructions (concurrency policy, no relics, typed edges, suite budget, disposable test DB) into recorded decisions | no |
+| ST-2 | A rendered artifact is a legitimate output for a plan or a design discussion | no |
+
+**Next.** The owner's decisions are stored with the artifact, so an implementing session can read them back and file the adopted ones as friction tickets. The four guard items do not move without that decision.
+
 ## 2026-09-14 — slop (ContentOS)
 
 **Evidence.** `docs/learnings/slop/USER-EXPLICIT.md` and `docs/learnings/slop/WORK.md`, copied byte-for-byte from `/Users/akashagarwal/Desktop/slop/.agent-brain/docs/` (working tree after slop commit `5e83e8b`, including rows not yet committed there). `docs/learnings/slop/USER-NOTES.md` holds the owner's own notes from three sessions (login feature, convention-drift refactor, PostgreSQL migration), pasted on 2026-09-14. Slop was injected on 2026-09-13 22:21 UTC from the product build of this repository at `34d1af0`. The records cover 2026-09-13 20:24 UTC to 2026-09-14 19:15 IST: two days, 46 logged runs, 25 override entries, across five harnesses (Pi, Hermes, Codex, OpenCode, Claude Code) and seven model ids.
