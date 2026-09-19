@@ -1,0 +1,4 @@
+# Runtime state. The control plane is live data, never product history.
+brain.db
+brain.db-wal
+brain.db-shm

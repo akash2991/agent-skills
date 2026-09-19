@@ -1,0 +1,22 @@
+## Where things live
+
+| What | Path |
+|---|---|
+| This file | `{{ORG_DIR}}/ORG.md` |
+| Personas and skills | your tool's skills directory, below |
+| References, loaded when a role needs them | `{{ORG_DIR}}/references/` |
+| Global docs: product requirements, architecture, conventions, decisions, changelog | `{{ORG_DIR}}/docs/` |
+| A record of each time the user overrode the organization | `{{ORG_DIR}}/docs/USER-EXPLICIT.md` |
+| The work log every agent appends to when it finishes | `{{ORG_DIR}}/docs/WORK.md` |
+| Service docs, one folder per service | `{{ORG_DIR}}/services/<service>/` |
+| Report templates | `{{ORG_DIR}}/agents-reports/` |
+| Recorded token and cost usage, and the Langfuse export | `{{ORG_DIR}}/control-plane/` (`node {{ORG_DIR}}/control-plane/brain.js status`) |
+| Project management | {{PM_TOOL}}, via the `{{PM_TOOL}}` skill |
+
+Personas and skills are installed once per tool, so find the row for the tool you are:
+
+{{SKILLS_DIR_TABLE}}
+
+Only the directories for tools installed here exist. If yours is missing, the brain was not injected for it.
+
+The references worth knowing by name: `project-flow.md` for the order work moves in, `context-scope.md` for what to read, `merge-and-review.md` for when a change needs a reviewer, `authorization.md` for what you may decide alone, and `documentation-map.md` for which document owns what.

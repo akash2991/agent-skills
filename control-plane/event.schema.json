@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-brain/observability/event-v1",
+  "title": "Agent Brain observability event",
+  "description": "Metadata-only event envelope for agent lifecycle, context composition, model usage, and tool calls. Raw prompt, response, reasoning, document, tool input, and tool output content are intentionally not representable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "timestamp",
+    "type",
+    "agent_id",
+    "session_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "agent.started",
+        "agent.status_changed",
+        "agent.completed",
+        "skill.loaded",
+        "document.loaded",
+        "turn.started",
+        "turn.completed",
+        "model.completed",
+        "tool.completed"
+      ]
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parent_agent_id": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "span_id": {
+      "type": "string"
+    },
+    "parent_span_id": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "ticket": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PLANNED",
+        "RUNNING",
+        "WAITING",
+        "BLOCKED",
+        "COMPLETED",
+        "FAILED",
+        "UNKNOWN"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "effort": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "error_type": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "agent_ref"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "session_ref": {
+          "type": "string"
+        },
+        "agent_ref": {
+          "type": "string"
+        },
+        "state_source": {
+          "type": "string",
+          "enum": [
+            "hook",
+            "api",
+            "screen",
+            "reported",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "token_measurement"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "skill",
+            "document",
+            "spec",
+            "plan",
+            "instructions",
+            "reference"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "token_measurement": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "estimated",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token_measurement"
+      ],
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "window_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "token_measurement": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "estimated",
+            "unknown"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "name",
+              "token_measurement"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "system",
+                  "user",
+                  "history",
+                  "skill",
+                  "document",
+                  "tool",
+                  "other"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "token_measurement": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "estimated",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source"
+      ],
+      "properties": {
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "thinking_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "provider",
+            "runtime",
+            "calculated",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "turn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "outcome"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error",
+            "blocked",
+            "interrupted",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "outcome"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

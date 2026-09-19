@@ -1,0 +1,106 @@
+'use strict';
+// Control-plane database access. Uses Node's built-in SQLite (Node 22.5+), so an injected
+// repository needs no dependencies. Every helper is synchronous, which is what a CLI wants.
+const fs = require('node:fs');
+const path = require('node:path');
+
+// node:sqlite is stable enough for a local control plane but still prints an experimental warning.
+// Agents consume this CLI's output, so suppress that one line and nothing else.
+const emitWarning = process.emitWarning;
+process.emitWarning = (warning, ...rest) => {
+  if (String(warning).includes('SQLite is an experimental feature')) return;
+  return emitWarning.call(process, warning, ...rest);
+};
+const { DatabaseSync } = require('node:sqlite');
+
+const DEFAULT_DB = path.join(__dirname, 'brain.db');
+const SCHEMA = path.join(__dirname, 'schema.sql');
+const SCHEMA_VERSION = '1';
+
+// Defaults, overridable with `brain.js config set`.
+const DEFAULT_CONFIG = {
+  // See INPUT_BASIS below: fresh | new | billable.
+  usage_input_basis: 'new',
+  // When captured events are shipped to Langfuse: off | session-end | turn. `turn` keeps the trace
+  // view live while you work, which is the point of using it as the UI. Nothing is sent unless
+  // LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are present, so this default is inert without them.
+  langfuse_export: 'turn'
+};
+
+// Columns added after a database already exists. `CREATE TABLE IF NOT EXISTS` never adds a column
+// to a live table, so every additive change is listed here and applied once, in order.
+const ADDED_COLUMNS = [
+  ['events', 'thinking_tokens', 'INTEGER'],
+];
+
+function migrate(db) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const has = db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get(table, column);
+    if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
+function open(file = process.env.BRAIN_DB || DEFAULT_DB) {
+  const db = new DatabaseSync(file);
+  db.exec(fs.readFileSync(SCHEMA, 'utf8'));
+  migrate(db);
+  const now = new Date().toISOString();
+  db.prepare('INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)').run('schema_version', SCHEMA_VERSION);
+  const insertConfig = db.prepare('INSERT OR IGNORE INTO config(key, value, updated_at, updated_by) VALUES(?, ?, ?, ?)');
+  for (const [key, value] of Object.entries(DEFAULT_CONFIG)) insertConfig.run(key, value, now, 'default');
+  db.file = file;
+  return db;
+}
+
+function config(db) {
+  return Object.fromEntries(db.prepare('SELECT key, value FROM config').all().map(r => [r.key, r.value]));
+}
+
+function setConfig(db, key, value, actor = 'cli') {
+  db.prepare('INSERT INTO config(key, value, updated_at, updated_by) VALUES(?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by')
+    .run(key, String(value), new Date().toISOString(), actor);
+}
+
+// How `input_tokens` is counted when usage is reported. Prompt caching makes this a real choice rather
+// than a detail: in a measured Claude Code session, 40 assistant messages billed 80 fresh input
+// tokens, 767k cache writes, and 29M cache reads, so the three bases differ by orders of magnitude
+// and a single number would be misleading whichever one it used. The basis is therefore
+// explicit, configurable, and every component is reported alongside the total so nothing is hidden.
+//
+//   fresh    = input_tokens only                                   (what the provider saw as new)
+//   new      = input_tokens + cache writes                         (default: tokens processed at full price)
+//   billable = input_tokens + cache writes + cache reads           (everything the provider counted)
+const INPUT_BASIS = {
+  fresh: 'COALESCE(e.input_tokens, 0)',
+  new: 'COALESCE(e.input_tokens, 0) + COALESCE(e.cache_write_tokens, 0)',
+  billable: 'COALESCE(e.input_tokens, 0) + COALESCE(e.cache_write_tokens, 0) + COALESCE(e.cache_read_tokens, 0)'
+};
+
+// Recorded token and cost usage per agent and session, newest first, from model.completed events.
+// An agent here is whatever id the event carried: a firstmate task id, an explicit BRAIN_AGENT_ID,
+// or the harness session. Nothing is rolled up a hierarchy, because the brain no longer keeps one.
+function usage(db, basis) {
+  const chosen = basis || config(db).usage_input_basis || 'new';
+  const expression = INPUT_BASIS[chosen] || INPUT_BASIS.new;
+  const rows = db.prepare(`
+    SELECT
+      e.agent_id, e.session_id,
+      MIN(e.timestamp)                       AS first_at,
+      MAX(e.timestamp)                       AS last_at,
+      COALESCE(SUM(${expression}), 0)        AS input_tokens,
+      COALESCE(SUM(e.input_tokens), 0)       AS fresh_input_tokens,
+      COALESCE(SUM(e.cache_write_tokens), 0) AS cache_write_tokens,
+      COALESCE(SUM(e.cache_read_tokens), 0)  AS cache_read_tokens,
+      COALESCE(SUM(e.output_tokens), 0)      AS output_tokens,
+      SUM(e.cost_usd)                        AS cost_usd,
+      COUNT(*)                               AS usage_events,
+      GROUP_CONCAT(DISTINCT e.model)         AS models
+    FROM events e
+    WHERE e.type = 'model.completed'
+    GROUP BY e.agent_id, e.session_id
+    ORDER BY last_at DESC
+  `).all().map(r => ({ ...r }));
+  return { input_basis: chosen, rows };
+}
+
+module.exports = { open, config, setConfig, usage, INPUT_BASIS, DEFAULT_DB, DEFAULT_CONFIG, SCHEMA_VERSION };
