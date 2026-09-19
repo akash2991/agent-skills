@@ -7,3 +7,24 @@ node_modules/
 .claude/sdd-cache/
 evals/results/
 __pycache__/
+build/
+
+# The brain injected into itself by `npm run inject:self`. Everything the build owns is derivable
+# from the sources, so it stays out of git to avoid a second committed copy of every skill and rule.
+# .agent-brain/
+.agent-brain/ORG.md
+.agent-brain/agents-reports/
+.agent-brain/references/
+.agent-brain/service-docs-template/
+.agent-brain/docs/library/
+.agent-brain/control-plane/
+.agent-brain/injected.json
+.claude/agents/
+.claude/skills/
+.claude/commands/
+.claude/settings.json
+.mcp.json
+
+# What the build only seeds is real content and is committed: the global docs the organization
+# maintains (.agent-brain/docs/*.md) and the per-service documents its EMs own
+# (.agent-brain/services/**). The live control-plane database is ignored above.

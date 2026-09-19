@@ -1,0 +1,78 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # node:sqlite, which the control plane uses, needs Node 22.5 or newer.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Validate skill anatomy
+        run: node scripts/validate-skills.js
+
+      - name: Validate reference links
+        run: node scripts/validate-reference-links.js
+
+      - name: Validate artifact paths
+        run: node scripts/validate-artifact-paths.js
+
+      - name: Validate the brain sources
+        run: npm run validate
+
+      - name: Skill trigger and routing evals
+        run: node scripts/run-evals.js --min-rank1 80
+
+      - name: Unit tests
+        run: |
+          node --test scripts/brain/control-plane-test.js
+          node --test scripts/brain/inject-test.js
+          node --test scripts/lib/skill-lint-test.js
+          node --test scripts/run-evals-test.js
+          node --test scripts/validate-reference-links-test.js
+          node --test scripts/validate-artifact-paths-test.js
+
+      - name: Product build
+        run: npm run select && npm run build
+
+      - name: Self build
+        run: npm run select:self && npm run build:self
+
+      - name: The product build must not carry the brain-development artifacts
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const selfOnly = [...(manifest.self?.skills ?? []), ...(manifest.self?.personas ?? [])];
+            const skills = fs.readdirSync("build/product/claude-code/.claude/skills");
+            const leaked = selfOnly.filter(n => skills.includes(n));
+            if (leaked.length) { console.error("leaked into the product build: " + leaked.join(", ")); process.exit(1); }
+            const omitted = [...(manifest.self?.omit?.personas ?? []), ...(manifest.self?.omit?.skills ?? [])];
+            const s2 = fs.readdirSync("build/self/claude-code/.claude/skills");
+            const notOmitted = omitted.filter(n => s2.includes(n));
+            if (notOmitted.length) { console.error("should be omitted from the self build: " + notOmitted.join(", ")); process.exit(1); }
+            const missing = selfOnly.filter(n => {
+              const s = fs.readdirSync("build/self/claude-code/.claude/skills");
+              return !s.includes(n);
+            });
+            if (missing.length) { console.error("missing from the self build: " + missing.join(", ")); process.exit(1); }
+            console.log(selfOnly.length + " added artifacts absent from the product build and present in the self build; " + omitted.length + " omitted from the self build");
+          '
+
+      - name: Inject into a scratch repository and exercise the control plane with nothing installed
+        run: |
+          mkdir -p /tmp/target
+          node scripts/brain/inject.js /tmp/target --targets claude-code
+          cd /tmp/target
+          test ! -d .claude/agents
+          node .agent-brain/control-plane/brain.js event --event '{"schema_version":"1.0","type":"model.completed","agent_id":"ci","session_id":"ci","usage":{"input_tokens":1,"output_tokens":2,"source":"runtime"}}'
+          node .agent-brain/control-plane/brain.js status
+          node .agent-brain/control-plane/brain.js export langfuse --dry-run || test $? -eq 5

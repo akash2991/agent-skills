@@ -68,7 +68,7 @@ function main() {
   let checked = 0;
   let errors = 0;
 
-  const skillNames = fs.readdirSync(SKILLS_DIR).sort();
+  const skillNames = fs.readdirSync(SKILLS_DIR).filter(d => !d.endsWith('-original')).sort();
   for (const name of skillNames) {
     const skillDir = path.join(SKILLS_DIR, name);
     const skillFile = path.join(skillDir, 'SKILL.md');

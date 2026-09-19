@@ -28,7 +28,11 @@ function main() {
     process.exit(1);
   }
 
+  // A `-original` directory is an upstream copy kept for side-by-side comparison, not a skill
+  // this organization ships. It is excluded everywhere so a reference copy cannot be selected,
+  // linted against our anatomy, or required to have an eval case.
   const skillDirs = fs.readdirSync(SKILLS_DIR)
+    .filter(d => !d.endsWith('-original'))
     .filter(d => fs.statSync(path.join(SKILLS_DIR, d)).isDirectory())
     .sort();
 

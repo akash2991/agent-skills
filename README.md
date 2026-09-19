@@ -1,430 +1,130 @@
-# Agent Skills
+# Agent Brain
 
-**Production-grade engineering skills for AI coding agents.**
-
-Skills encode the workflows, quality gates, and best practices that senior engineers use when building software. These ones are packaged so AI agents follow them consistently across every phase of development.
-
-<a href="https://trendshift.io/repositories/25200" target="_blank"><img src="https://trendshift.io/api/badge/repositories/25200" alt="addyosmani%2Fagent-skills | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-![Addy's Agent Skills](https://addyosmani.com/assets/images/addys-agent-skills.jpg)
+**An injectable operating brain for agentic coding.** One source of truth becomes the file layout every coding tool expects, so any repository can be run by the same agent personas, enforcing the same conventions, working from the same skills.
 
 ```
-  DEFINE          PLAN           BUILD          VERIFY         REVIEW          SHIP
- ┌──────┐      ┌──────┐      ┌──────┐      ┌──────┐      ┌──────┐      ┌──────┐
- │ Idea │ ───▶ │ Spec │ ───▶ │ Code │ ───▶ │ Test │ ───▶ │  QA  │ ───▶ │  Go  │
- │Refine│      │  PRD │      │ Impl │      │Debug │      │ Gate │      │ Live │
- └──────┘      └──────┘      └──────┘      └──────┘      └──────┘      └──────┘
-  /spec          /plan          /build        /test         /review       /ship
+   you ──▶ /brain-pm            a request becomes a ticket, then a refined idea,
+                                a spec, or a PRD, whichever you pick
+
+   you ──▶ /brain-pe-backend    a PRD becomes a design: domain model, interfaces, plan
+           /brain-pe-web
+
+   you ──▶ /brain-em            a design becomes milestones and ready tickets
+
+   you ──▶ /brain-swe-backend   one ticket, story or bug, becomes a pull request
+           /brain-review-backend · /brain-qa · /brain-security · /brain-webperf
+
+   each role does one step, then hands back and names what could run next.
+   it never invokes the next one. you decide what runs, and what to skip.
 ```
 
----
+There is no entry point. You invoke whichever role the work needs, in any order. A bug can go straight to an engineer with no PRD and no design step.
 
-## Commands
+## Quick start
 
-9 slash commands that map to the development lifecycle. Each one activates the right skills automatically.
-
-| What you're doing | Command | Key principle |
-|-------------------|---------|---------------|
-| Define what to build | `/spec` | Spec before code |
-| Plan how to build it | `/plan` | Small, atomic tasks |
-| Build incrementally | `/build` | One slice at a time |
-| Prove it works | `/test` | Tests are proof |
-| Set the quality bar | `/constraints` | Decide it once, enforce it everywhere |
-| Review before merge | `/review` | Improve code health |
-| Audit web performance | `/webperf` | Measure before you optimize |
-| Simplify the code | `/code-simplify` | Clarity over cleverness |
-| Ship to production | `/ship` | Faster is safer |
-
-Want fewer manual steps once the spec exists? **`/build auto`** generates the plan and implements every task in a single approved pass — you approve the plan once, then it runs autonomously. It removes the human stepping *between* tasks, not the verification: every task is still test-driven and committed individually, and it pauses on failures or risky steps.
-
-Skills also activate automatically based on what you're doing — designing an API triggers `api-and-interface-design`, building UI triggers `frontend-ui-engineering`, and so on.
-
----
-
-## Quick Start
-
-**Fastest path — any agent, one command.** The open [skills CLI](https://github.com/vercel-labs/skills) installs into 70+ agents (Claude Code, Cursor, Codex, Copilot, Cline, and more):
+In this repository:
 
 ```bash
-npx skills add addyosmani/agent-skills            # install all 25 skills
-npx skills add addyosmani/agent-skills --list     # browse before installing
+npm run all                              # validate, select, build every target into build/product/
+npm run inject -- /path/to/your-repo     # install into a repository
 ```
 
-Or grab individual skills:
+Then open your coding agent **in that repository** and invoke whichever role the work needs:
+
+```
+/brain-pm      turn a request into a ticket, then a refined idea, a spec, or a PRD
+/brain-em      turn an approved design into milestones and ready tickets
+/brain-swe-backend   build one ticket, story or bug, with tests and a pull request
+/brain-review-backend   review a pull request
+/brain-qa      verify a story independently
+```
+
+There is no entry point and no order you must follow. Each command confirms which model and thinking effort to run at, asks for the inputs its persona declares, does one step, and hands back naming what should run next. It never invokes the next role itself.
+
+Every command is namespaced `brain-`, so it cannot collide with a command from another tool. Commands are discovered when a session starts, so start a new session after injecting.
+
+**Codex differs in two ways.** Custom prompts are namespaced, so the command is `/prompts:brain-pm`, and they are read only from `$CODEX_HOME/prompts` (default `~/.codex/prompts`), never from a repository. Injection installs them there for you and retires any `brain-*` command it no longer produces, leaving files it does not own alone. Pass `--no-install-commands` to manage that directory yourself. Restart Codex afterwards. Skills and `AGENTS.md` need no such step, because Codex scans `.agents/skills` up from the working directory.
+
+| Harness | How you invoke a role |
+|---|---|
+| Claude Code, Cursor, Gemini CLI, OpenCode, Copilot | `/brain-pm` |
+| Codex | `/prompts:brain-pm`, after a restart |
+
+The equivalent from a shell, useful for scripts and for harnesses without commands, is:
 
 ```bash
-npx skills add addyosmani/agent-skills --skill code-review-and-quality   # five-axis review before merge
-npx skills add addyosmani/agent-skills --skill interview-me              # requirements interrogation, one question at a time
-npx skills add addyosmani/agent-skills --skill test-driven-development   # red-green-refactor, enforced
+node .agent-brain/control-plane/brain.js context --role ceo --harness claude-code \
+  --model <your model id> --effort <your effort>
 ```
 
-> **Installing one skill?** A per-skill `npx` install copies only
-> `skills/<name>/`, not the repo-level `references/` directory. The skill still
-> works, but paths to supplementary shared checklists are unavailable. Use a
-> whole-repo integration, clone the repository, or copy the needed checklist into
-> a `references/` directory inside the installed skill. This portability gap is
-> tracked in [#361](https://github.com/addyosmani/agent-skills/issues/361).
+## What lands in your repository
 
-Prefer a native integration? Pick your tool below.
+| Path | What it is |
+|---|---|
+| `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursor/rules/`, `.github/copilot-instructions.md` | The organization as a managed block; your own text outside the markers is kept |
+| `.claude/skills/`, `.agents/skills/`, and the other per-tool skill directories | The selected skills plus one per persona |
+| `.claude/agents/` and the other per-tool agent directories | The personas as subagents, for when you approve delegation |
+| `.agent-brain/control-plane/` | SQLite store, CLI, local UI, and the hooks that capture usage |
+| `.agent-brain/ORG.md`, `agents-reports/`, `references/`, `docs/`, `services/` | The rules, report formats, and per-service documents |
+| `.claude/settings.json`, `.mcp.json` and their per-tool equivalents | Usage-capture hooks and the Linear and GitHub MCP servers, merged with whatever is already there |
 
-<details>
-<summary><b>Claude Code (recommended)</b></summary>
+Re-injecting updates what the brain owns and leaves your own state alone.
 
-**Marketplace install:**
+## The control plane
 
-```
-/plugin marketplace add addyosmani/agent-skills
-/plugin install agent-skills@addy-agent-skills
-```
-
-> **SSH errors?** The marketplace clones repos via SSH. If you don't have SSH keys set up on GitHub, either [add your SSH key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account) or use the full HTTPS URL to force HTTPS cloning during the marketplace-add step:
-> ```bash
-> /plugin marketplace add https://github.com/addyosmani/agent-skills.git
-> /plugin install agent-skills@addy-agent-skills
-> ```
->
-> If `/plugin install` still fails with `git@github.com: Permission denied (publickey)` on Windows or macOS, the recommended workaround is to configure Git once to rewrite GitHub SSH URLs to HTTPS for subprocess clones:
-> ```bash
-> git config --global url."https://github.com/".insteadOf git@github.com:
-> ```
-
-**Local / development:**
+One SQLite database holds everything that changes while agents work:
 
 ```bash
-git clone https://github.com/addyosmani/agent-skills.git
-claude --plugin-dir /path/to/agent-skills
+node .agent-brain/control-plane/brain.js status     # tree, blocked, stale, path conflicts
+node .agent-brain/control-plane/brain.js quota      # what each provider will actually serve
+node .agent-brain/control-plane/brain.js serve      # local UI, editable, zero dependencies
+node .agent-brain/control-plane/brain.js export langfuse   # ship traces, tokens and cost to Langfuse
 ```
 
-</details>
+The local UI answers "what is running right now" and deliberately stays minimal. For trace timelines, agent graphs, filtering, retention and cost dashboards, export to **Langfuse**: set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL` (a `.env` file is read too) and the control plane posts OTLP spans with no dependency to install. Each agent becomes a trace named by its role, nested under the agent that assigned it, with model calls as generations carrying real token counts and cost. `langfuse_export` controls when it ships: `off`, `session-end` (default), or `turn`.
 
-<details>
-<summary><b>Cursor</b></summary>
+Events are metadata only, so nothing you or an agent wrote can leave the machine through this path.
 
-Put workflow skills under `.cursor/skills/` (sync from `agent-skills/skills/`) and short policies in `.cursor/rules/*.mdc` — do not paste full skills into rules. See [docs/cursor-setup.md](docs/cursor-setup.md).
+It records sessions, the agent tree with the model and effort actually in use, token and cost usage per agent and per model, provider quota snapshots, and an audit trail of every change. Usage is captured automatically from harness hooks, so tokens and cost are real numbers rather than estimates.
 
-</details>
+Documents that humans read stay as markdown. State that changes while agents work lives in the database.
 
-<details>
-<summary><b>Antigravity CLI</b></summary>
 
-Install as a native plugin for skills and subagents. In affected Antigravity CLI releases, legacy command TOMLs are reported as converted but their wrapper commands are not discoverable; invoke the underlying namespaced skills directly. See [docs/antigravity-setup.md](docs/antigravity-setup.md#lifecycle-workflows-and-command-compatibility).
-
-**Install from the repo:**
-
-```bash
-agy plugin install https://github.com/addyosmani/agent-skills.git
-```
-
-**Install from a local clone:**
-
-```bash
-git clone https://github.com/addyosmani/agent-skills.git
-agy plugin install ./agent-skills
-```
-
-</details>
-
-<details>
-<summary><b>Gemini CLI</b></summary>
-
-Install as native skills for auto-discovery, or add to `GEMINI.md` for persistent context. See [docs/gemini-cli-setup.md](docs/gemini-cli-setup.md).
-
-**Install from the repo:**
-
-```bash
-gemini skills install https://github.com/addyosmani/agent-skills.git --path skills
-```
-
-**Install from a local clone:**
-
-```bash
-gemini skills install ./agent-skills/skills/
-```
-
-</details>
-
-<details>
-<summary><b>Windsurf</b></summary>
-
-Add skill contents to your Windsurf rules configuration. See [docs/windsurf-setup.md](docs/windsurf-setup.md).
-
-</details>
-
-<details>
-<summary><b>OpenCode</b></summary>
-
-Copy skills to `.opencode/skills/` (or `~/.config/opencode/skills/`), add a project-local `AGENTS.md`, and use the built-in `skill` tool for agent-driven execution. Optional slash commands can be added under `.opencode/commands/`.
-
-See [docs/opencode-setup.md](docs/opencode-setup.md).
-
-</details>
-
-<details>
-<summary><b>GitHub Copilot</b></summary>
-
-Use agent definitions from `agents/` as Copilot personas and skill content in `.github/copilot-instructions.md`. See [docs/copilot-setup.md](docs/copilot-setup.md).
-
-Using the standalone `copilot` CLI? Install it as a plugin — see [docs/copilot-cli-setup.md](docs/copilot-cli-setup.md).
-
-</details>
-
-<details>
-  <summary><b>Kiro IDE & CLI </b></summary>
-  Skills for Kiro reside under ".kiro/skills/" and can be stored under Project or Global level. Kiro also supports Agents.md. See Kiro docs at https://kiro.dev/docs/skills/
-</details>
-
-<details>
-<summary><b>Codex</b></summary>
-
-Install as a native Codex plugin (Codex CLI v0.122+):
-
-```bash
-codex plugin marketplace add addyosmani/agent-skills
-codex plugin add agent-skills@agent-skills
-```
-
-The first command registers the marketplace; the second installs the plugin. Codex reads the root `skills/` directory directly through `.codex-plugin/plugin.json`. Once installed, invoke skills in chat using `@` (e.g., `@spec-driven-development`). See [docs/codex-setup.md](docs/codex-setup.md) for local installation and troubleshooting.
-
-</details>
-
-<details>
-<summary><b>Command Code</b></summary>
-
-Install natively with the built-in `cmd skills` command. Command Code clones the repo, discovers every `SKILL.md`, and installs into `.commandcode/skills/`:
-
-```bash
-cmd skills add addyosmani/agent-skills            # pick skills to install (project)
-cmd skills add addyosmani/agent-skills --global   # install for all projects (~/.commandcode/skills/)
-cmd skills add addyosmani/agent-skills -s spec-driven-development  # install a specific skill
-```
-
-Installed skills show up in the TUI slash menu, e.g. `/spec-driven-development`. See [docs/commandcode-setup.md](docs/commandcode-setup.md).
-
-</details>
-
-<details>
-<summary><b>Other Agents</b></summary>
-
-Skills are plain Markdown - they work with any agent that accepts system prompts or instruction files. See [docs/getting-started.md](docs/getting-started.md).
-
-</details>
-
-
-
----
-
-## Adoption
-
-Already installed? How you roll the pack out depends on your codebase. The **[Adoption Guide](docs/adoption-guide.md)** covers two paths: the full lifecycle from day one for a greenfield project, or an incremental, verification-first rollout for an established codebase.
-
----
-
-## All 24 Skills
-
-The commands above are entry points. The pack includes 25 skills total — 24 lifecycle skills plus the `using-agent-skills` meta-skill. Each skill is a structured workflow with steps, verification gates, and anti-rationalization tables. You can also reference any skill directly.
-
-### Meta - Discover which skill applies
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [using-agent-skills](skills/using-agent-skills/SKILL.md) | Maps incoming work to the right skill workflow and defines shared operating rules | Starting a session or deciding which skill applies |
-
-### Define - Clarify what to build
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [interview-me](skills/interview-me/SKILL.md) | One-question-at-a-time interview that extracts what the user actually wants instead of what they think they should want, until ~95% confidence | The ask is underspecified, or the user invokes "interview me" / "grill me" |
-| [idea-refine](skills/idea-refine/SKILL.md) | Structured divergent/convergent thinking to turn vague ideas into concrete proposals | You have a rough concept that needs exploration |
-| [spec-driven-development](skills/spec-driven-development/SKILL.md) | Write a PRD covering objectives, commands, structure, code style, testing, and boundaries before any code | Starting a new project, feature, or significant change |
-| [constraint-driven-development](skills/constraint-driven-development/SKILL.md) | Interviews you for a quality bar with sane default thresholds, writes CONSTRAINTS.md, places each check by cost, and catches agents silencing checks or skipping tests to get green | No standards are written down, or an agent is producing more than anyone reads |
-
-### Plan - Break it down
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [planning-and-task-breakdown](skills/planning-and-task-breakdown/SKILL.md) | Decompose specs into small, verifiable tasks with acceptance criteria and dependency ordering | You have a spec and need implementable units |
-
-### Build - Write the code
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [incremental-implementation](skills/incremental-implementation/SKILL.md) | Thin vertical slices - implement, test, verify, commit. Feature flags, safe defaults, rollback-friendly changes | Any change touching more than one file |
-| [test-driven-development](skills/test-driven-development/SKILL.md) | Red-Green-Refactor, test pyramid (80/15/5), test sizes, DAMP over DRY, Beyonce Rule, browser testing | Implementing logic, fixing bugs, or changing behavior |
-| [context-engineering](skills/context-engineering/SKILL.md) | Feed agents the right information at the right time - rules files, context packing, MCP integrations | Starting a session, switching tasks, or when output quality drops |
-| [source-driven-development](skills/source-driven-development/SKILL.md) | Ground every framework decision in official documentation - verify, cite sources, flag what's unverified | You want authoritative, source-cited code for any framework or library |
-| [doubt-driven-development](skills/doubt-driven-development/SKILL.md) | Adversarial fresh-context review of every non-trivial decision in-flight - CLAIM → EXTRACT → DOUBT → RECONCILE → STOP, with optional user-authorized cross-model escalation | Stakes are high (production, security, irreversible), working in unfamiliar code, or a confident output is cheaper to verify now than to debug later |
-| [frontend-ui-engineering](skills/frontend-ui-engineering/SKILL.md) | Component architecture, design systems, state management, responsive design, WCAG 2.1 AA accessibility | Building or modifying user-facing interfaces |
-| [api-and-interface-design](skills/api-and-interface-design/SKILL.md) | Contract-first design, Hyrum's Law, One-Version Rule, error semantics, boundary validation | Designing APIs, module boundaries, or public interfaces |
-
-### Verify - Prove it works
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [browser-testing-with-devtools](skills/browser-testing-with-devtools/SKILL.md) | Chrome DevTools MCP for live runtime data - DOM inspection, console logs, network traces, performance profiling | Building or debugging anything that runs in a browser |
-| [debugging-and-error-recovery](skills/debugging-and-error-recovery/SKILL.md) | Five-step triage: reproduce, localize, reduce, fix, guard. Stop-the-line rule, safe fallbacks | Tests fail, builds break, or behavior is unexpected |
-
-### Review - Quality gates before merge
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [code-review-and-quality](skills/code-review-and-quality/SKILL.md) | Five-axis review, change sizing (~100 lines), severity labels (Nit/Optional/FYI), review speed norms, splitting strategies | Before merging any change |
-| [code-simplification](skills/code-simplification/SKILL.md) | Chesterton's Fence, Rule of 500, reduce complexity while preserving exact behavior | Code works but is harder to read or maintain than it should be |
-| [security-and-hardening](skills/security-and-hardening/SKILL.md) | OWASP Top 10 prevention, auth patterns, secrets management, dependency auditing, three-tier boundary system | Handling user input, auth, data storage, or external integrations |
-| [performance-optimization](skills/performance-optimization/SKILL.md) | Measure-first approach - Core Web Vitals targets, profiling workflows, bundle analysis, anti-pattern detection | Performance requirements exist or you suspect regressions |
-
-### Ship - Deploy with confidence
-
-| Skill | What It Does | Use When |
-|-------|-------------|----------|
-| [git-workflow-and-versioning](skills/git-workflow-and-versioning/SKILL.md) | Trunk-based development, atomic commits, change sizing (~100 lines), the commit-as-save-point pattern | Making any code change (always) |
-| [ci-cd-and-automation](skills/ci-cd-and-automation/SKILL.md) | Shift Left, Faster is Safer, feature flags, quality gate pipelines, failure feedback loops | Setting up or modifying build and deploy pipelines |
-| [deprecation-and-migration](skills/deprecation-and-migration/SKILL.md) | Code-as-liability mindset, compulsory vs advisory deprecation, migration patterns, zombie code removal | Removing old systems, migrating users, or sunsetting features |
-| [documentation-and-adrs](skills/documentation-and-adrs/SKILL.md) | Architecture Decision Records, API docs, inline documentation standards - document the *why* | Making architectural decisions, changing APIs, or shipping features |
-| [observability-and-instrumentation](skills/observability-and-instrumentation/SKILL.md) | Structured logging, RED metrics, OpenTelemetry tracing, symptom-based alerting - instrument as you build | Adding telemetry, or shipping anything that runs in production |
-| [shipping-and-launch](skills/shipping-and-launch/SKILL.md) | Pre-launch checklists, feature flag lifecycle, staged rollouts, rollback procedures, monitoring setup | Preparing to deploy to production |
-
----
-
-## Agent Personas
-
-Pre-configured specialist personas for targeted reviews:
-
-| Agent | Role | Perspective |
-|-------|------|-------------|
-| [code-reviewer](agents/code-reviewer.md) | Senior Staff Engineer | Five-axis code review with "would a staff engineer approve this?" standard |
-| [test-engineer](agents/test-engineer.md) | QA Specialist | Test strategy, coverage analysis, and the Prove-It pattern |
-| [security-auditor](agents/security-auditor.md) | Security Engineer | Vulnerability detection, threat modeling, OWASP assessment |
-| [web-performance-auditor](agents/web-performance-auditor.md) | Web Performance Engineer | Core Web Vitals audit with Quick/Deep modes and a metric-honesty rule; run it via `/webperf` |
-
-See [docs/agents.md](docs/agents.md) for the decision matrix, orchestration rules, and how personas compose with skills and slash commands.
-
----
-
-## Reference Checklists
-
-Quick-reference material that skills pull in when needed:
-
-| Reference | Covers |
-|-----------|--------|
-| [definition-of-done.md](references/definition-of-done.md) | Project-wide standing bar every change clears, contrasted with per-task acceptance criteria |
-| [testing-patterns.md](references/testing-patterns.md) | Test structure, naming, mocking, React/API/E2E examples, anti-patterns (JavaScript/TypeScript) |
-| [security-checklist.md](references/security-checklist.md) | Pre-commit checks, auth, input validation, headers, CORS, OWASP Top 10 |
-| [performance-checklist.md](references/performance-checklist.md) | Core Web Vitals targets, frontend/backend checklists, measurement commands |
-| [accessibility-checklist.md](references/accessibility-checklist.md) | Keyboard nav, screen readers, visual design, ARIA, testing tools |
-| [observability-checklist.md](references/observability-checklist.md) | On-call questions, structured logging, RED/USE metrics, tracing, symptom-based alerting, pre-launch gate |
-| [orchestration-patterns.md](references/orchestration-patterns.md) | Endorsed multi-persona orchestration patterns, anti-patterns, and the "personas don't invoke personas" rule |
-
----
-
-## How Skills Work
-
-Every skill follows a consistent anatomy:
+## Repository layout
 
 ```
-┌─────────────────────────────────────────────────┐
-│  SKILL.md                                       │
-│                                                 │
-│  ┌─ Frontmatter ─────────────────────────────┐  │
-│  │ name: lowercase-hyphen-name               │  │
-│  │ description: Guides agents through [task].│  │
-│  │              Use when…                    │  │
-│  └───────────────────────────────────────────┘  │                                                                                                
-│  Overview         → What this skill does        │
-│  When to Use      → Triggering conditions       │
-│  Process          → Step-by-step workflow       │
-│  Rationalizations → Excuses + rebuttals         │
-│  Red Flags        → Signs something's wrong     │
-│  Verification     → Evidence requirements       │
-└─────────────────────────────────────────────────┘
+org/              ordered parts emitted as one always-on ORG.md
+agents/           the personas; discipline variants extend a base with `extends:`
+agents-reports/   one uniform report template per role
+skills/           the flat skill dump; `category:` groups them at build time
+control-plane/    SQLite schema, CLI, UI, usage hooks, quota and Langfuse adapters
+references/       shared checklists and the cross-cutting contracts
+templates/        what gets stamped into a project: global docs, service docs, the entry command (every command is named brain-*)
+scripts/brain/    validate · select · build · inject · import
+docs/             brain.md, persona-anatomy.md, skill-anatomy.md
+evals/            trigger and routing evals; every skill needs a case
+build/            everything generated: the two selections and build/{product,self}/<tool>/
 ```
 
-**Key design choices:**
+Start with [docs/brain.md](docs/brain.md) for how the pieces fit, [docs/persona-anatomy.md](docs/persona-anatomy.md) to add a role, and [docs/skill-anatomy.md](docs/skill-anatomy.md) to add a skill.
 
-- **Process, not prose.** Skills are workflows agents follow, not reference docs they read. Each has steps, checkpoints, and exit criteria.
-- **Anti-rationalization.** Every skill includes a table of common excuses agents use to skip steps (e.g., "I'll add tests later") with documented counter-arguments.
-- **Verification is non-negotiable.** Every skill ends with evidence requirements - tests passing, build output, runtime data. "Seems right" is never sufficient.
-- **Progressive disclosure.** The `SKILL.md` is the entry point. Supporting references load only when needed, keeping token usage minimal.
+## Tools it composes
 
----
+Built here only where nothing existed. Everything else is borrowed:
 
-## Project Structure
+| Tool | Role |
+|---|---|
+| [quota-axi](https://github.com/kunchenguid/quota-axi) | provider quota, pace, runway, and spend priority across Claude, Codex, Cursor, Copilot, Grok, Kimi, Z.AI, OpenCode |
+| [Linear](https://linear.app) | the tracker: milestones, sprints, tickets, bugs, blockers, reports |
+| [GitHub](https://github.com) | pull requests, reviews, CI/CD, releases |
+| [Langfuse](https://langfuse.com) | trace timelines, agent graphs, and cost dashboards; the recommended UI |
 
-```
-agent-skills/
-├── skills/                            # 25 skills (24 lifecycle + 1 meta)
-│   ├── interview-me/                  #   Define
-│   ├── idea-refine/                   #   Define
-│   ├── spec-driven-development/       #   Define
-│   ├── constraint-driven-development/ #   Define
-│   ├── planning-and-task-breakdown/   #   Plan
-│   ├── incremental-implementation/    #   Build
-│   ├── context-engineering/           #   Build
-│   ├── source-driven-development/     #   Build
-│   ├── doubt-driven-development/      #   Build
-│   ├── frontend-ui-engineering/       #   Build
-│   ├── test-driven-development/       #   Build
-│   ├── api-and-interface-design/      #   Build
-│   ├── browser-testing-with-devtools/ #   Verify
-│   ├── debugging-and-error-recovery/  #   Verify
-│   ├── code-review-and-quality/       #   Review
-│   ├── code-simplification/           #   Review
-│   ├── security-and-hardening/        #   Review
-│   ├── performance-optimization/      #   Review
-│   ├── git-workflow-and-versioning/   #   Ship
-│   ├── ci-cd-and-automation/          #   Ship
-│   ├── deprecation-and-migration/     #   Ship
-│   ├── documentation-and-adrs/        #   Ship
-│   ├── observability-and-instrumentation/ # Ship
-│   ├── shipping-and-launch/           #   Ship
-│   └── using-agent-skills/            #   Meta: how to use this pack
-├── agents/                            # 4 specialist personas
-├── references/                        # 7 supplementary checklists
-├── hooks/                             # Session lifecycle hooks
-├── .claude/commands/                  # 8 slash commands (Claude Code)
-├── .gemini/commands/                  # 8 slash commands (Gemini CLI)
-├── commands/                          # 8 slash commands (Antigravity CLI)
-├── plugin.json                        # Antigravity plugin manifest
-└── docs/                              # Setup guides per tool
-```
+The reasoning, including what was evaluated and rejected, is in [references/agent-observability.md](references/agent-observability.md).
 
----
+## Requirements
 
-## Why Agent Skills?
+Node 22.5 or newer, for the built-in SQLite the control plane uses. No other dependencies.
 
-AI coding agents default to the shortest path - which often means skipping specs, tests, security reviews, and the practices that make software reliable. Agent Skills gives agents structured workflows that enforce the same discipline senior engineers bring to production code.
+## Credits
 
-Each skill encodes hard-won engineering judgment: *when* to write a spec, *what* to test, *how* to review, and *when* to ship. These aren't generic prompts - they're the kind of opinionated, process-driven workflows that separate production-quality work from prototype-quality work.
-
-Skills bake in best practices from Google's engineering culture — including concepts from [Software Engineering at Google](https://abseil.io/resources/swe-book) and Google's [engineering practices guide](https://google.github.io/eng-practices/). You'll find Hyrum's Law in API design, the Beyonce Rule and test pyramid in testing, change sizing and review speed norms in code review, Chesterton's Fence in simplification, trunk-based development in git workflow, Shift Left and feature flags in CI/CD, and a dedicated deprecation skill treating code as a liability. These aren't abstract principles — they're embedded directly into the step-by-step workflows agents follow.
-
----
-
-## How it compares
-
-Wondering how this stacks up against [Superpowers](https://github.com/obra/superpowers) or [Matt Pocock's skills](https://github.com/mattpocock/skills)? See **[docs/comparison.md](docs/comparison.md)** for an honest, side-by-side look at how the three are shaped differently and when to reach for each — including a link to a controlled [head-to-head experiment](https://www.linkedin.com/pulse/superpowers-vs-agent-skills-faster-shipping-safer-reasoning-om-mishra-dzakf/).
-
----
-
-## Contributing
-
-Skills should be **specific** (actionable steps, not vague advice), **verifiable** (clear exit criteria with evidence requirements), **battle-tested** (based on real workflows), and **minimal** (only what's needed to guide the agent).
-
-See [docs/skill-anatomy.md](docs/skill-anatomy.md) for the format specification and [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## Team
-
-agent-skills is built and maintained by:
-
-| | Name | GitHub | Role |
-|---|------|--------|------|
-| <img src="https://github.com/addyosmani.png?size=120" width="60" height="60" alt="Addy Osmani"> | **Addy Osmani** | [@addyosmani](https://github.com/addyosmani) | Creator |
-| <img src="https://github.com/federicobartoli.png?size=120" width="60" height="60" alt="Federico Bartoli"> | **Federico Bartoli** | [@federicobartoli](https://github.com/federicobartoli) | Collaborator |
-| <img src="https://github.com/nucliweb.png?size=120" width="60" height="60" alt="Joan León"> | **Joan León** | [@nucliweb](https://github.com/nucliweb) | Collaborator |
-
----
-
-## License
-
-MIT - use these skills in your projects, teams, and tools.
+This repository began as a fork of [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) and still uses its skill format, several of its engineering skills, its shared checklists, and its eval framework. Those parts remain MIT licensed under the original copyright; see [LICENSE](LICENSE). The organization, control plane, and injection pipeline are new work.

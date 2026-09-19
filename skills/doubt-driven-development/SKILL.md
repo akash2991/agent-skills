@@ -1,6 +1,7 @@
 ---
 name: doubt-driven-development
 description: Subjects every non-trivial decision to a fresh-context adversarial review before it stands. Use when correctness matters more than speed, when working in unfamiliar code, when stakes are high (production, security-sensitive logic, irreversible operations), or any time a confident output would be cheaper to verify now than to debug later.
+category: coding
 ---
 
 # Doubt-Driven Development
@@ -9,7 +10,7 @@ description: Subjects every non-trivial decision to a fresh-context adversarial 
 
 A confident answer is not a correct one. Long sessions accumulate context that quietly turns assumptions into "facts" without anyone noticing. Doubt-driven development is the discipline of materializing a fresh-context reviewer — biased to **disprove**, not approve — before any non-trivial output stands.
 
-This is not `/review`. `/review` is a verdict on a finished artifact. This is an in-flight posture: non-trivial decisions get cross-examined while course-correction is still cheap.
+This is not code review. A review is a verdict on a finished artifact. This is an in-flight posture: non-trivial decisions get cross-examined while course-correction is still cheap.
 
 ## When to Use
 
@@ -43,8 +44,8 @@ If you doubt every keystroke, you ship nothing. The skill applies only to non-tr
 
 This skill is designed for the **main-session orchestrator**, where Step 3 (DOUBT, detailed below) can spawn a fresh-context reviewer.
 
-- **Do NOT add this skill to a persona's `skills:` frontmatter.** A persona that follows Step 3 would spawn another persona — the orchestration anti-pattern explicitly forbidden by `../../references/orchestration-patterns.md` ("personas do not invoke other personas").
-- **If you find yourself applying this skill from inside a subagent context** (where Claude Code prevents nested subagent spawn): the preferred path is to surface to the user that doubt-driven cannot run nested and let the main session handle it. As a last resort only, a degraded self-questioning fallback exists — rewrite ARTIFACT + CONTRACT as a fresh self-prompt with a hard mental separator from your prior reasoning, and walk Steps 1–5. This is **not fresh-context review** (you carry your own context with you), so flag the result as degraded and prefer escalation whenever the user is reachable.
+- **Do NOT add this skill to a persona's `skills:` frontmatter.** A persona that follows Step 3 would spawn another persona, and in this organization a persona never invokes another one: the coordinator does the invoking.
+- **If you find yourself applying this skill from inside a subagent context** (where Claude Code prevents nested subagent spawn): the preferred path is to surface to the user that doubt-driven cannot run nested and let the main session handle it. As a last resort only, a degraded self-questioning fallback exists — rewrite ARTIFACT + CONTRACT as a fresh self-prompt with a hard mental separator from your prior reasoning, and walk Steps 1–5. This is **not fresh-context review** (you carry your own context with you), so flag the result as degraded and hand back to the coordinator whenever they are reachable.
 
 ## The Process
 
@@ -197,7 +198,7 @@ If 3 cycles is "obviously insufficient" because the artifact is large: the artif
 | "I'm confident, skip the doubt step" | Confidence correlates poorly with correctness on novel problems. Moments of certainty are exactly when blind spots hide. |
 | "Spawning a reviewer is expensive" | Debugging a wrong commit in production is more expensive. The check is bounded; the bug isn't. |
 | "The reviewer will just nitpick" | Only if unscoped. Constrain the prompt to "issues that would make this fail under the contract." |
-| "I'll do doubt at the end with `/review`" | `/review` is a final gate. Doubt-driven catches wrong directions early when course-correction is cheap. By PR time it's too late. |
+| "I'll do doubt at the end, in review" | Review is a final gate. Doubt-driven catches wrong directions early when course-correction is cheap. By PR time it's too late. |
 | "If I doubt every step I'll never ship" | The skill applies to non-trivial decisions, not every keystroke. Re-read "When NOT to Use." |
 | "Two opinions are always better than one" | Not when the second has less context and produces noise. Reconcile, don't defer. |
 | "The reviewer disagreed so I was wrong" | The reviewer lacks your context — disagreement is information, not verdict. Re-read the artifact, classify, then decide. |
@@ -213,7 +214,7 @@ If 3 cycles is "obviously insufficient" because the artifact is large: the artif
 - Skipping doubt under time pressure on a high-stakes decision
 - Re-spawning fresh-context on an unchanged artifact (you'll get the same findings; you're stalling)
 - **Doubt theater (checkable signal)**: across 2 or more cycles where the reviewer surfaced substantive findings, zero findings were classified as actionable. You are validating, not doubting. Stop and escalate.
-- Doubting only after committing — that's `/review`, not doubt-driven development
+- Doubting only after committing, which is review rather than doubt-driven development
 - Hardcoding an external CLI invocation without confirming with the user that the tool exists, is configured, and accepts that exact syntax
 - **Silently skipping cross-model in an interactive doubt cycle.** Even when not recommending it, the offer must be visible. Skipping is fine; silent skipping is not.
 - Falling back silently when an external CLI errors or is missing — surface the failure and let the user redirect
@@ -222,11 +223,11 @@ If 3 cycles is "obviously insufficient" because the artifact is large: the artif
 
 ## Interaction with Other Skills
 
-- **`code-review-and-quality` / `/review`**: complementary. `/review` is post-hoc PR verdict; doubt-driven is in-flight per-decision. Use both.
+- **`code-review-and-quality`**: complementary. Review is post-hoc PR verdict; doubt-driven is in-flight per-decision. Use both.
 - **`source-driven-development`**: SDD verifies *facts about frameworks* against official docs. Doubt-driven verifies *your reasoning about the artifact*. SDD checks the API exists; doubt-driven checks you used it correctly under the contract.
 - **`test-driven-development`**: TDD's RED step is doubt made concrete — a failing test is a disproof attempt. When TDD applies, that failing test *is* the doubt step for behavioral claims.
 - **`debugging-and-error-recovery`**: when the reviewer surfaces a real failure mode, drop into the debugging skill to localize and fix.
-- **Repo orchestration rules** (`../../references/orchestration-patterns.md`): this skill orchestrates from the main session. A persona calling another persona is anti-pattern B — see Loading Constraints above.
+- **Who may run this**: the main session only. A persona calling another persona is not allowed here — see Loading Constraints above.
 
 ## Verification
 
