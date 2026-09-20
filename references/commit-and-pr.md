@@ -1,6 +1,6 @@
 # Commits and pull requests
 
-Loaded by every agent that commits. The rules for commits, branches, pull requests, and merge are `git-workflow-and-versioning` P1–P16; the `git-workflow-and-versioning` and `github` skills carry the mechanics. This file holds only the commit message anatomy that P3 points at.
+Loaded by every agent that commits. The rules for commits, branches, pull requests, merge, and Markdown diffs are `git-workflow-and-versioning` P1–P17; the `git-workflow-and-versioning` and `github` skills carry the mechanics. This file holds only the commit message anatomy that P3 points at.
 
 ## Commit message anatomy
 

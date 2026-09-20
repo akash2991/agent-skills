@@ -1,6 +1,6 @@
 # Review and merge
 
-What a review produces and when a change merges. Loaded by the engineers and the reviewer personas. The process rules are `git-workflow-and-versioning` P8–P10 and P14–P15; the review framework, roles, and output format are the `code-reviewer` persona.
+What a review produces and when a change merges. Loaded by the engineers and the reviewer personas. The process rules are `git-workflow-and-versioning` P8–P10, P14–P15, and P17; the review framework, roles, and output format are the `code-reviewer` persona. Markdown changes are viewed and judged per `markdown-diff.md`.
 
 ## When a review runs
 

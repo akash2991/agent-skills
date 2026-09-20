@@ -1,0 +1,4 @@
+[diff]
+	algorithm = histogram
+[diff "markdown"]
+	xfuncname = "^#{1,6}[ \t].+"

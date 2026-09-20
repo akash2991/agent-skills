@@ -1,6 +1,6 @@
 ---
 name: code-review-and-quality
-description: How to review a pull request in any reviewer role (code reviewer, QA reviewer, perf reviewer, security reviewer) — the fixed checklist (unrelated changes, missing feature-flag gating, regression risk, missing or redundant observability, missing or redundant comments, domain conventions, use of strings), filing findings as Linear issues and PR comments, approval and comment-resolution rules, and the "never block for a security audit" rule; conducts multi-axis code review. Use when you are asked to review, approve, critique, or audit a PR, diff, or branch, or when an agent takes on a reviewer role — even if the user only says "take a look at this PR"; before merging any change; when reviewing code written by yourself, another agent, or a human; or when you need to assess code quality across multiple dimensions before it enters the main branch.
+description: How to review a pull request in any reviewer role (code reviewer, QA reviewer, perf reviewer, security reviewer) — the fixed checklist (unrelated changes, missing feature-flag gating, regression risk, missing or redundant observability, missing or redundant comments, domain conventions, use of strings, Markdown obligation versus wording), filing findings as Linear issues and PR comments, approval and comment-resolution rules, and the "never block for a security audit" rule; conducts multi-axis code review. Use when you are asked to review, approve, critique, or audit a PR, diff, or branch, or when an agent takes on a reviewer role — even if the user only says "take a look at this PR"; before merging any change; when reviewing code written by yourself, another agent, or a human; or when you need to assess code quality across multiple dimensions before it enters the main branch. Use when reviewing Markdown, a skill, or documentation.
 category: coding
 ---
 
@@ -20,6 +20,7 @@ Multi-dimensional code review with quality gates. Every reviewer runs the fixed 
 - When refactoring existing code
 - After any bug fix (review both the fix and the regression test)
 - When you are asked to review, approve, critique, or audit a PR, diff, or branch, or when an agent takes on a reviewer role — even if the user only says "take a look at this PR"
+- When the change is Markdown: a skill, persona, reference, or project doc
 
 ## Reviewer roles
 
@@ -40,8 +41,9 @@ Check, in order, and report each hit:
 | 5 | **Missing or redundant comments.** Comments should be used very sparingly. |
 | 6 | **Domain conventions not followed.** |
 | 7 | **Use of strings** (where an enum or typed id belongs). |
+| 8 | **Markdown / prose: obligation, trigger, or rule-id changed.** Wording-only is not a finding. Detail: `../../references/markdown-diff.md`. |
 
-Additional checks that follow from the other skills: commit granularity and message (`git-workflow-and-versioning` P1, P3, P2), PR size (`git-workflow-and-versioning` P11), tests mapped to acceptance criteria and not weakened (`test-driven-development` T2), and from `coding-standards`: no secrets (C22), backward compatibility (C13), no edits to generated/vendor files (C14).
+Additional checks that follow from the other skills: commit granularity and message (`git-workflow-and-versioning` P1, P3, P2), PR size (`git-workflow-and-versioning` P11), Markdown viewing (`git-workflow-and-versioning` P17), tests mapped to acceptance criteria and not weakened (`test-driven-development` T2), and from `coding-standards`: no secrets (C22), backward compatibility (C13), no edits to generated/vendor files (C14).
 
 ## Process rules
 
@@ -379,6 +381,8 @@ For triaging `npm audit` findings and supply-chain risk (typosquatting, compromi
 | "That comment is minor, it can stay open" | Every comment is resolved by a commit or an explained reply (R4). |
 | "The extra comments make the code friendlier" | Comments should be used very sparingly; missing or redundant comments are a finding (check 5). |
 | "A string is fine here, it's only used once" | Use of strings where an enum or typed id belongs is a finding (check 7). |
+| "The sentence was rewritten, request changes" | Wording-only is not a finding; file obligation, trigger, or rule-id changes (check 8). |
+| "Same idea, I'll skip the markdown files" | Still check 8 for modal, number, rule-id, and Use-when drift. |
 
 ## Red Flags
 
@@ -386,7 +390,8 @@ For triaging `npm audit` findings and supply-chain risk (typosquatting, compromi
 - A PR held open waiting for a security audit (R2)
 - A finding with no Linear issue, or no PR comment while the PR is open (R3)
 - A reviewed-class PR merged with an unresolved comment or without the discipline code reviewer's approval (R4)
-- A review that skips any of checklist items 1–7 or reports no verdict
+- A review that skips any of checklist items 1–8 or reports no verdict
+- A Markdown change blocked for sentence shape, or a must/should/Use-when change passed as wording (check 8)
 - Changes unrelated to the task, or changes not feature-flag gated where applicable, passed without a finding (checks 1, 2)
 - Review that only checks if tests pass (ignoring other axes)
 - "LGTM" without evidence of actual review
@@ -405,7 +410,7 @@ For triaging `npm audit` findings and supply-chain risk (typosquatting, compromi
 
 After review is complete:
 
-- [ ] Checklist items 1–7 were each checked, in order, and every hit reported
+- [ ] Checklist items 1–8 were each checked, in order, and every hit reported
 - [ ] Every finding has a Linear issue and, while the PR was open, a PR comment (R3)
 - [ ] The verdict is stated as approve, request changes, or comment only, and the PR was not held for a security audit (R2)
 - [ ] All Critical issues are resolved

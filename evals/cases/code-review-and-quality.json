@@ -13,6 +13,10 @@
       {
         "prompt": "Can you review the changes another model just wrote for me?",
         "top_k": 3
+      },
+      {
+        "prompt": "Review this skill Markdown rewrite before merge",
+        "top_k": 3
       }
     ],
     "negative": [
@@ -39,6 +43,19 @@
         "Every finding carries a severity label from the skill's taxonomy",
         "Security of user input is explicitly considered for the new endpoint",
         "The review leads with high-leverage findings rather than nits"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Review this SKILL.md rewrite. Several sentences were restructured; one rule changed must to should.",
+      "expected_output": "A review that files the modal change and does not block on sentence shape",
+      "files": [
+        "code-review-and-quality"
+      ],
+      "expectations": [
+        "The must-to-should change is a finding",
+        "Restructured sentences with the same obligation are not findings",
+        "The review judges obligation, trigger, and rule id, not wrap or clause order"
       ]
     }
   ]

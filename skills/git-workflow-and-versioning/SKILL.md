@@ -1,6 +1,6 @@
 ---
 name: git-workflow-and-versioning
-description: Rules for commits, branches, pull requests, and merging — always raise a PR and never merge directly, never hold a PR for a security audit, regular merge commit versus squash (conflict flagged), delete remote and local branches, small working commits that never break the app, commit messages carrying model, thinking effort, harness, and ticket id, branch-per-ticket naming, PR template, PR size limits (~400 lines / 10 files), main always releasable, and the changelog line per merged task. Use when you commit, branch, open, update, or merge a PR, or write a commit message — even for a one-line change or "just push it". Use when making any code change, resolving conflicts, pushing to a remote, or when you need to organize work across multiple parallel streams. Use when cutting a release, choosing a semantic version bump, tagging, or writing a changelog.
+description: Rules for commits, branches, pull requests, and merging — always raise a PR and never merge directly, never hold a PR for a security audit, regular merge commit versus squash (conflict flagged), delete remote and local branches, small working commits that never break the app, commit messages carrying model, thinking effort, harness, and ticket id, branch-per-ticket naming, PR template, PR size limits (~400 lines / 10 files), main always releasable, and the changelog line per merged task. Use when you commit, branch, open, update, or merge a PR, or write a commit message — even for a one-line change or "just push it". Use when making any code change, resolving conflicts, pushing to a remote, or when you need to organize work across multiple parallel streams. Use when cutting a release, choosing a semantic version bump, tagging, or writing a changelog. Use when viewing a Markdown or documentation diff in git.
 category: delivery
 ---
 
@@ -10,7 +10,7 @@ category: delivery
 
 Git is your safety net. Treat commits as save points, branches as sandboxes, and history as documentation. With AI agents generating code at high speed, disciplined version control is the mechanism that keeps changes manageable, reviewable, and reversible.
 
-This skill holds the rules (P1–P16) and the git mechanics. The GitHub calls that carry them out are `github`; what a review produces is `../../references/merge-and-review.md`.
+This skill holds the rules (P1–P17) and the git mechanics. The GitHub calls that carry them out are `github`; what a review produces is `../../references/merge-and-review.md`; Markdown diffs are `../../references/markdown-diff.md`.
 
 ## When to Use
 
@@ -115,6 +115,12 @@ main ──●──●──●──●──●──●──●──●─
 
 - One ticket per PR; the title starts with the ticket id; the PR links the ticket and the ticket links the PR (P2, P4).
 
+## Diffs
+
+| ID | Rule |
+| --- | --- |
+| P17 | **When the change is Markdown, view it with `--color-words` and heading hunks.** Never replace `git diff` with a view that hides paraphrases. Detail: `../../references/markdown-diff.md`. |
+
 ## Merge
 
 | ID | Rule |
@@ -167,6 +173,7 @@ Before every commit:
 ```bash
 # 1. Check what you're about to commit
 git diff --staged
+# Markdown: git diff --staged --color-words  (P17)
 
 # 2. Ensure no secrets
 git diff --staged | grep -i "password\|secret\|api_key\|token"
@@ -266,6 +273,7 @@ Write the entry in the same change that makes the change, while the impact is fr
 
 - `github` carries the GitHub calls for the PR, review, merge, and release rules here; `development-setup` carries the worktree procedure behind P6.
 - `continuous-delivery` owns releasability and the changelog rule that P12 and P13 serve; `deprecation-and-migration` owns the migration window a breaking change needs; `shipping-and-launch` ships the release this section versions.
+- This skill owns how a Markdown diff is viewed (P17). `code-review-and-quality` owns which prose changes are findings.
 
 ## Common Rationalizations
 
@@ -285,6 +293,8 @@ Write the entry in the same change that makes the change, while the impact is fr
 | "It's just a small fix, bump the patch" | Check what consumers can observe. A behavior change they relied on is a major, whatever the diff size. |
 | "The changelog is just the commit log" | Commits are for you; the changelog is for consumers, curated by impact. Generating one from raw commits buries what matters. |
 | "We'll write the changelog at release time" | By then the impact is reconstructed from memory and half of it is missing. Every merged task adds its changelog line (P13). |
+| "The paragraph was rewritten, skip the markdown hunks" | View Markdown with `--color-words` and heading hunks (P17). |
+| "I'll hide same-intent sentences so the diff is smaller" | Never replace `git diff` with a paraphrase-hiding view (P17). |
 
 ## Red Flags
 
@@ -306,6 +316,7 @@ Write the entry in the same change that makes the change, while the impact is fr
 - A breaking change shipped under a minor or patch version bump
 - A release with no tag, or a version number hand-edited out of sync with the tag
 - A user-facing release with no changelog entry, or a changelog that's just dumped commit messages
+- A Markdown change reviewed only as wrapped line deletes and adds, or a diff view that drops paraphrases (P17)
 
 ## Verification
 
@@ -319,6 +330,7 @@ Before you push — checklist:
 6. PR opened from `<ticket>-<slug>` with the template; review required or explicitly optional per the ticket. (P5, P10, P8)
 7. Never wait for a security audit. (P9)
 8. On merge: regular merge commit with the ticket id; delete remote and local branch. (P15, P16)
+9. Markdown: viewed with `--color-words` and heading hunks; paraphrases not hidden. (P17)
 
 For every commit, also:
 

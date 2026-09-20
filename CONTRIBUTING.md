@@ -2,6 +2,8 @@
 
 Read [AGENTS.md](AGENTS.md) for the layout and the checks. `Goal.md` and `User.md` are the owner's requirements; never edit them.
 
+After clone, `git config --local include.path ../.gitconfig` so Markdown diffs use heading hunks. Review Markdown as words and obligations, not wrapped lines: [references/markdown-diff.md](references/markdown-diff.md).
+
 ## Before proposing a new skill
 
 1. Search the catalog: most ideas overlap an existing skill. Extend it rather than adding a near-duplicate.
