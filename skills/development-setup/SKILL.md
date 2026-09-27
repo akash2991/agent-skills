@@ -1,6 +1,6 @@
 ---
 name: development-setup
-description: How development is set up before any code is written, run, tested, debugged, or built, with rule ids DS1–DS17 — every agent's own isolated environment (a git worktree at the project root, never in the harness or agent-brain directory; its own Docker containers; LocalStack for AWS; a database snapshot or seed; optional private observability; cleanup after the PR), shared EC2 dev machines (several agents per machine, metrics deciding when another launches, a larger type only with explicit permission, unused machines terminated), mobile builds on EAS Build with AWS as the fallback, and parallel work (API contract first, backend services concurrent once the DB model and contracts are fixed, a dependency's shape resolved first). Use when starting any task that writes, runs, tests, debugs, or builds code, when development or an Android or iOS build runs on a cloud machine, or when several agents, or the frontend and the backend, work on one repository at once.
+description: How development is set up before any code is written, run, tested, debugged, or built, with rule ids DS1–DS17 — every agent's own isolated environment (a git worktree at the project root, never in the harness or agent-brain directory; its own Docker containers; LocalStack for AWS; a database snapshot or seed; optional private observability; cleanup after the PR), shared EC2 dev machines (several agents per machine, metrics deciding when another launches, a larger type only with explicit permission, unused machines terminated), Android builds on EC2 by default, iOS builds on EAS Build with explicit permission, and parallel work (API contract first, backend services concurrent once the DB model and contracts are fixed, a dependency's shape resolved first). Use when starting any task that writes, runs, tests, debugs, or builds code, when development or an Android or iOS build runs on a cloud machine, or when several agents, or the frontend and the backend, work on one repository at once.
 category: delivery
 ---
 
@@ -41,8 +41,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 | DS13 | **An unused machine dies.** A machine terminates itself after `CLOUD_IDLE_MINUTES` (30) with no SSH connection and no load, and at its deadline regardless, `CLOUD_MAX_HOURS` (8) after the last agent joined; an AWS-side schedule terminates it at that deadline if it cannot. Terminate, never stop: a stopped machine still bills its disk. |
 | DS14 | **Leave when done, reap at every start and end.** `scripts/cloud-down.sh <instance-id> <work-dir>` removes your clone and containers, and terminates the machine when no other agent's work is left on it; `scripts/cloud-reap.sh` at the start and the end of every session that uses the cloud. |
 | DS15 | **Nothing lives only on the machine, and nothing of yours goes onto it.** Commit and push before every pause: termination deletes the disk. Git reaches the remote through SSH agent forwarding; this machine's AWS credentials, tokens, and keys are never copied there. Services are reached through SSH tunnels, never through opened ports. Another agent's directory, containers, and ports are never touched. |
-| DS16 | **Mobile apps build on EAS Build; AWS is the fallback, local the exception.** `scripts/eas-build.sh` builds on EAS and falls back to AWS when this month's free builds for the platform (`EAS_FREE_BUILDS`, 15) are used or the queue wait passes `EAS_MAX_QUEUE_MINUTES` (30). On AWS, Android builds in Docker on a dev machine and iOS on an EC2 Mac. A failed EAS build is diagnosed from its logs and the reason reported: the app's own failure is fixed and rebuilt on EAS; moving it to AWS or local is the user's decision. The user may send any build to AWS or, rarely, to this machine; the choice and every fallback are recorded on the ticket. |
-| DS17 | **An EC2 Mac is a 24-hour commitment.** A Mac runs on a dedicated host billed for at least 24 hours: ask with that stated (DS12), reuse an allocated host for every iOS build in those 24 hours instead of allocating another, and let the scheduled release free it at the 24-hour mark. |
+| DS16 | **Android builds on EC2 by default; EAS is used solely for iOS.** During local development and testing, an Android build is the default because multiple Android builds are cheaper than iOS builds on EAS. An iOS build is only built with explicit user permission, to test UI bugs if any, because functionality should not differ between platforms. `scripts/android-ec2-build.sh` builds Android on an EC2 dev machine in Docker; `scripts/ios-eas-build.sh` builds iOS on EAS when the user explicitly approves it. The user may override either path; the choice and reason are recorded on the ticket. |
+| DS17 | **An iOS build on AWS is a 24-hour commitment.** An EC2 Mac runs on a dedicated host billed for at least 24 hours. This is an override path, not the default: ask with that stated (DS12), reuse an allocated host for every iOS build in those 24 hours instead of allocating another, and let the scheduled release free it at the 24-hour mark. |
 
 ## Parallel work
 
@@ -54,7 +54,7 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 
 ## Procedure
 
-1. Decide where the work runs: this machine by default, EC2 when the user or the ticket says so or this machine cannot run the stack. A mobile build goes to EAS unless the user says otherwise (DS16).
+1. Decide where the work runs: this machine by default, EC2 when the user or the ticket says so or this machine cannot run the stack. An Android build goes to EC2 by default; an iOS build goes to EAS only with explicit user permission (DS16).
 2. Locally: `git worktree add <project-root>/<ticket>-<slug>` from the project root (DS2). In the cloud: `scripts/cloud-reap.sh`, then `scripts/cloud-up.sh <ticket>`, which joins a machine with headroom or launches one; clone the branch into `~/work/<ticket>-<slug>` (DS10–DS14, [cloud.md](cloud.md)).
 3. Start Docker and LocalStack for the services you touch (DS3, DS4), in the cloud as the Compose project `<ticket>-<slug>` on your own ports; snapshot or seed the database (DS5).
 4. Confirm the API contract, DB model, and every dependency's shape exist for the slice you are about to build (DS7–DS9); if not, that is the first task, not a thing to work around.
@@ -83,8 +83,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 | "I'll stop the machine instead of terminating it, to keep my state." | A stopped machine still bills its disk, and state lives in the pushed branch (DS13, DS15). |
 | "I'm done, so I'll terminate the machine." | `cloud-down.sh` terminates it only when no other agent's work is left on it (DS14). |
 | "Opening port 3000 on the security group is quicker than a tunnel." | Services are reached through SSH tunnels (DS15). |
-| "The EAS build failed; I'll just try it on AWS." | Read the logs and report the reason; the user decides whether it moves (DS16). |
-| "The EAS queue is slow; I'll build locally." | EAS, then AWS when the queue or the free builds run out; local only when the user asks (DS16). |
+| "I'll build iOS on EAS without asking the user." | iOS on EAS requires explicit user permission; functionality should not differ (DS16). |
+| "Android builds are cheaper on EAS, so I'll use that." | Android builds on EC2 by default; EAS is iOS-only (DS16). |
 | "Another Mac host is faster than waiting for the scrubbed one." | A new host is another 24-hour charge; reuse the allocated one (DS17). |
 | "I'll build the frontend once the backend is done." | The contract comes first; the frontend mocks it, the backend returns labelled mock data until complete (DS7). |
 | "I'll figure out the dependency's shape as I go." | It is resolved before anything else is done (DS9). |
@@ -100,7 +100,7 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 - A machine of another type, a third live machine, or a new Mac host with no permission recorded on the ticket (DS12, DS17).
 - A `brain=dev` machine running with nobody using it, stopped instead of terminated, or listed by `cloud-reap.sh` after its agents left (DS13, DS14).
 - Unpushed work on a cloud machine, credentials copied to it, a security group open beyond SSH, or two agents in one Compose project or on the same ports (DS10, DS15).
-- A mobile build run locally or on AWS with no user instruction or EAS fallback recorded on the ticket (DS16).
+- An Android build run on EAS, or an iOS build run without explicit user permission recorded on the ticket (DS16).
 - Frontend and backend serialized because no contract exists (DS7).
 - Backend services blocked on each other after the DB model and contracts are fixed (DS8).
 - Code written against a dependency whose shape or type is still open (DS9).
@@ -110,7 +110,7 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 Before starting work:
 
 - [ ] A git worktree exists at `<project-root>/<ticket>-<slug>`, created from the project root (DS2); or, in the cloud, `cloud-up.sh` placed you on a machine with headroom or launched the default type, or a type the user approved on the ticket (DS10–DS12).
-- [ ] For a mobile build, EAS was used, or the user's instruction or the EAS fallback reason is on the ticket (DS16).
+- [ ] For an Android build, EC2 was used, or the override to EAS is recorded on the ticket; for an iOS build, explicit user permission is recorded (DS16).
 - [ ] Docker containers and LocalStack are running for the services you touch and belong to this agent only (DS3, DS4).
 - [ ] The database is snapshotted or seeded for this agent (DS5).
 - [ ] The API contract, DB model, and dependency shapes for this slice exist (DS7–DS9).
