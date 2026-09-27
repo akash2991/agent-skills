@@ -9,6 +9,7 @@ const path = require('path');
 const test = require('node:test');
 
 const { buildBrain, assertSafeOutput, splitFrontmatter } = require('./lib/build-brain');
+const { stripFencedCodeBlocks } = require('./lib/skill-lint');
 const { pullInstall, planInstall, validateRelPath, mergeProjectAgents, STATE_PATH } = require('./lib/pull-install');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -70,8 +71,8 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
 
   for (const host of ['.agents', '.claude']) {
     assert.deepEqual(fs.readFileSync(path.join(target, host, 'skills/coding-standards/SKILL.md')), fs.readFileSync(path.join(ROOT, 'skills/coding-standards/SKILL.md')));
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'references/security-checklist.md')), fs.readFileSync(path.join(ROOT, 'references/security-checklist.md')));
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'templates/ADR.md')), fs.readFileSync(path.join(ROOT, 'templates/ADR.md')));
+    assert.ok(!fs.existsSync(path.join(target, host, 'references')));
+    assert.ok(!fs.existsSync(path.join(target, host, 'templates')));
   }
   for (const host of ['.agents', '.claude', '.gemini', '.pi']) {
     assert.deepEqual(fs.readFileSync(path.join(target, host, 'agents/backend-engineer.md')), fs.readFileSync(path.join(ROOT, 'agents/backend-engineer.md')));
@@ -148,6 +149,65 @@ test('existing harness folders do not trigger extra copies; managed duplicates a
   assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
 });
 
+test('shared documents stay at root; installed links are rebased without changing source or skill-local links', () => {
+  const source = sourceFixture();
+  const target = tmpDir('root-references');
+  const skillFile = path.join(source, 'skills/adrs/SKILL.md');
+  fs.appendFileSync(skillFile, '\nRoot: [ADR](../../templates/ADR.md). Local: [detail](references/detail.md).\n');
+  fs.mkdirSync(path.join(source, 'skills/adrs/references'), { recursive: true });
+  const nested = 'Root: [security](../../../references/security-checklist.md#authentication). Local: [detail](../references/detail.md).\n';
+  fs.writeFileSync(path.join(source, 'skills/adrs/references/detail.md'), nested);
+  const sourceSkill = fs.readFileSync(skillFile, 'utf8');
+  const personaFile = path.join(source, 'agents/code-reviewer.md');
+  fs.appendFileSync(personaFile, '\n[Shared checklist](../references/security-checklist.md)\n');
+  const sourcePersona = fs.readFileSync(personaFile, 'utf8');
+  const entries = [];
+  for (const host of ['.agents', '.claude']) {
+    for (const rel of ['references/security-checklist.md', 'templates/ADR.md']) {
+      const data = fs.readFileSync(path.join(source, rel));
+      const installed = `${host}/${rel}`;
+      fs.mkdirSync(path.dirname(path.join(target, installed)), { recursive: true });
+      fs.writeFileSync(path.join(target, installed), data);
+      entries.push({ path: installed, sha256: crypto.createHash('sha256').update(data).digest('hex'), mode: '0644' });
+    }
+  }
+  fs.mkdirSync(path.join(target, '.agent-brain'));
+  fs.writeFileSync(path.join(target, STATE_PATH), JSON.stringify({ schema: 1, files: entries }));
+  const result = pullInstall({ sourceRoot: source, target });
+  assert.equal(result.plan.prunes.length, 4);
+  for (const host of ['.agents', '.claude']) {
+    assert.ok(!fs.existsSync(path.join(target, host, 'references')));
+    assert.ok(!fs.existsSync(path.join(target, host, 'templates')));
+    assert.equal(fs.readFileSync(path.join(target, host, 'skills/adrs/SKILL.md'), 'utf8'), sourceSkill.replaceAll('../../templates/', '../../../templates/'));
+    assert.equal(fs.readFileSync(path.join(target, host, 'skills/adrs/references/detail.md'), 'utf8'), nested.replace('../../../references/', '../../../../references/'));
+    assert.deepEqual(fs.readFileSync(path.resolve(target, host, 'skills/adrs', '../../../templates/ADR.md')), fs.readFileSync(path.join(source, 'templates/ADR.md')));
+  }
+  for (const host of ['.agents', '.claude', '.gemini', '.pi']) {
+    assert.equal(fs.readFileSync(path.join(target, host, 'agents/code-reviewer.md'), 'utf8'), sourcePersona.replaceAll('../references/', '../../references/'));
+  }
+  assert.equal(fs.readFileSync(personaFile, 'utf8'), sourcePersona);
+  assert.equal(fs.readFileSync(skillFile, 'utf8'), sourceSkill);
+  assert.equal(fs.readFileSync(path.join(source, 'skills/adrs/references/detail.md'), 'utf8'), nested);
+  assert.equal(pullInstall({ sourceRoot: source, target }).plan.writes.length, 0);
+});
+
+test('all installed skill reference links resolve without harness-local shared directories', () => {
+  const target = tmpDir('installed-links');
+  pullInstall({ sourceRoot: ROOT, target });
+  let checked = 0;
+  for (const entry of state(target).files) {
+    if (!/^\.(agents|claude)\/skills\/.+\.md$/.test(entry.path)) continue;
+    const file = path.join(target, entry.path);
+    const markdown = stripFencedCodeBlocks(fs.readFileSync(file, 'utf8'));
+    const links = markdown.matchAll(/(?<![A-Za-z0-9._/-])((?:\.\.\/)*references\/[A-Za-z0-9._-]+\.md)/g);
+    for (const [, link] of links) {
+      assert.ok(fs.existsSync(path.resolve(path.dirname(file), link)), `${entry.path}: unresolved ${link}`);
+      checked++;
+    }
+  }
+  assert.ok(checked > 20, `expected real reference coverage, checked ${checked}`);
+});
+
 test('build copies Terraform sources but excludes generated state and local settings', () => {
   const source = sourceFixture();
   const dir = path.join(source, 'skills/development-setup/terraform');
@@ -188,7 +248,7 @@ test('brain files are replaced on first install and subsequent pulls without bac
   fs.writeFileSync(path.join(target, '.env.example'), 'OLD_EXAMPLE=old\n');
   fs.writeFileSync(path.join(target, '.env'), 'PROJECT_PRIVATE=untouched\n');
   pullInstall({ sourceRoot: ROOT, target });
-  const expected = fs.readFileSync(path.join(ROOT, 'skills/test-driven-development/SKILL.md'), 'utf8');
+  const expected = fs.readFileSync(path.join(ROOT, 'skills/test-driven-development/SKILL.md'), 'utf8').replaceAll('../../references/', '../../../references/');
   assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), expected);
   fs.writeFileSync(path.join(target, rel), 'local edit discarded\n');
   pullInstall({ sourceRoot: ROOT, target });

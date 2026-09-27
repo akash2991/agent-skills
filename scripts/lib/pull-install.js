@@ -126,6 +126,19 @@ function collectBuildFiles(buildRoot) {
     if (files.has(rel)) throw new Error(`duplicate install path: ${rel}`);
     files.set(rel, { ...info });
   }
+  function relocateSharedLinks(relative, info) {
+    if (!relative.endsWith('.md')) return info;
+    const content = Buffer.from(info.content.toString('utf8').replace(
+      /(?<![\w./-])((?:\.\.\/)+)(references|templates)\//g,
+      (link, parents, folder) => {
+        // Add the tool-directory level only for links to repo-root assets.
+        // A skill's own references/ and templates/ remain next to that skill.
+        const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relative), parents, folder));
+        return resolved === folder ? `../${link}` : link;
+      }
+    ));
+    return { ...info, content, sha256: sha256Buffer(content) };
+  }
   function route(text, host) {
     const skillHost = host === '.claude' ? '.claude' : '.agents';
     return text.replace(/(?<![\w./-])skills\//g, `${skillHost}/skills/`)
@@ -137,16 +150,12 @@ function collectBuildFiles(buildRoot) {
     validateRelPath(relative, 'build path');
     const info = { ...fileInfo(abs), abs };
     if (relative.startsWith('skills/')) {
-      for (const host of skillHosts) add(`${host}/${relative}`, info);
+      for (const host of skillHosts) add(`${host}/${relative}`, relocateSharedLinks(relative, info));
       continue;
     }
     if (relative.startsWith('agents/')) {
-      for (const host of personaHosts) add(`${host}/${relative}`, info);
+      for (const host of personaHosts) add(`${host}/${relative}`, relocateSharedLinks(relative, info));
       continue;
-    }
-    // Verbatim copies need sibling references/templates for ../../ links.
-    if (/^(references|templates)\//.test(relative)) {
-      for (const host of skillHosts) add(`${host}/${relative}`, info);
     }
     let host;
     if (relative === 'AGENTS.md' || relative.startsWith('commands/')) host = '.agents';
