@@ -113,14 +113,13 @@ function walkFiles(root) {
   return out;
 }
 
-function collectBuildFiles(buildRoot, targetRoot) {
+function collectBuildFiles(buildRoot) {
   const files = new Map();
-  const skillHosts = ['.agents', '.claude', '.gemini'];
-  // Refresh pre-existing legacy copies without introducing new Pi/Hermes
-  // discovery directories. Pi normally discovers .agents/skills directly.
-  for (const host of ['.pi', '.hermes']) {
-    if (targetRoot && lstatIfPresent(path.join(targetRoot, host, 'skills'))) skillHosts.push(host);
-  }
+  // Native discovery, not folder presence, decides where a copy is needed.
+  // Pi, Codex, Gemini and Hermes share .agents/skills. Claude uses its own
+  // skill directory. Personas have separate discovery rules; see
+  // docs/harness-layout.md before changing either list.
+  const skillHosts = ['.agents', '.claude'];
   const personaHosts = ['.agents', '.claude', '.gemini', '.pi'];
   function add(rel, info) {
     validateRelPath(rel, 'install path');
@@ -128,7 +127,8 @@ function collectBuildFiles(buildRoot, targetRoot) {
     files.set(rel, { ...info });
   }
   function route(text, host) {
-    return text.replace(/(?<![\w./-])skills\//g, `${host}/skills/`)
+    const skillHost = host === '.claude' ? '.claude' : '.agents';
+    return text.replace(/(?<![\w./-])skills\//g, `${skillHost}/skills/`)
       .replace(/(?<![\w./-])agents\//g, `${host}/agents/`);
   }
   for (const abs of walkFiles(buildRoot)) {
@@ -196,7 +196,7 @@ function mergeProjectAgents(incoming, existing) {
 function planInstall(sourceRoot, targetRoot, buildRoot) {
   assertExistingTarget(targetRoot);
   assertNoSourceTargetOverlap(sourceRoot, targetRoot);
-  const desired = collectBuildFiles(buildRoot, targetRoot);
+  const desired = collectBuildFiles(buildRoot);
   const state = readState(targetRoot);
   const conflicts = [];
   const writes = [];

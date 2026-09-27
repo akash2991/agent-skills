@@ -27,7 +27,7 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 ## Installed layout
 
 - Root `AGENTS.md`, `SOUL.md`, and `.env.example`.
-- Full skill copies in `.agents/skills/`, `.claude/skills/`, and `.gemini/skills/`, selected by `manifest.json`.
+- Shared skill copies in `.agents/skills/` for Pi, Codex, Gemini, and Hermes; native copies in `.claude/skills/` for Claude. Both come from the same `skills/` source, selected by `manifest.json`.
 - Full persona copies in `.agents/agents/`, `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`.
 - Root `references/` and `templates/`, plus copies beside each tool's skill directory so relative links work. Supporting scripts and skill-local references are copied along with each skill; generated Terraform state, local tfvars, and provider caches are excluded.
 - Skill/persona anatomy guides under `docs/`; project documents are not generated from templates automatically.
@@ -35,9 +35,11 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 - Commands and the shared portion of `AGENTS.md` point directly to the installed tool directories. Skill/persona contents are not rewritten: there are no wrappers, symlinks, or shared root `skills/` or `agents/` copies.
 - `.agent-brain/install-state.json`, recording installed files for repeatable updates and removal of retired files. Keep it in Git with the installed content.
 
-Old copy-based installations are replaced directly without hash-based reconciliation. Existing legacy `.pi/skills/` and `.hermes/skills/` directories are refreshed if present, but not created on new installs. An install made by the earlier wrapper-based version is migrated automatically: wrappers become full copies and only previously managed root skill/persona files are removed. Empty directories left by those managed files are removed; unrelated files remain. Unlisted files are not swept up or deleted. Symlink/nonregular destinations and source/target overlap are still refused to prevent writes outside the intended project.
+Old copy-based installations are replaced directly without hash-based reconciliation. Redundant managed skill copies under `.pi/`, `.hermes/`, and `.gemini/` are removed in favor of `.agents/skills/`, even if those folders already exist. Unrelated skills and harness settings are left alone. Hermes requires project trust before loading shared project skills; the installer does not grant it. An install made by the earlier wrapper-based version is migrated automatically: wrappers become full copies and only previously managed root skill/persona files are removed. Empty directories left by those managed files are removed; unrelated files remain. Unlisted files are not swept up or deleted. Symlink/nonregular destinations and source/target overlap are still refused to prevent writes outside the intended project.
 
 The source repository's contributor-facing root `AGENTS.md` is never installed: the organization's shared instructions come from `project/AGENTS.md`. Start a new agent session after pulling. See [pi setup](pi-setup.md) and [Codex setup](codex-setup.md); Codex global prompts still require an explicit copy.
+
+The verified discovery rules, settings audit, editable source locations, and remaining command-template duplication are recorded in [Harness layout](harness-layout.md). Check that contract before changing where files are installed.
 
 ## Test locally before pushing the installer
 

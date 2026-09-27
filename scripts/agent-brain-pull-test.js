@@ -58,7 +58,9 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.ok(fs.existsSync(path.join(target, '.agents/skills/coding-standards/SKILL.md')));
   assert.ok(!fs.existsSync(path.join(target, 'skills')));
   assert.ok(!fs.existsSync(path.join(target, 'agents')));
-  assert.ok(!fs.existsSync(path.join(target, '.pi/skills')));
+  for (const host of ['.pi', '.hermes', '.gemini']) {
+    for (const dir of ['skills', 'references', 'templates']) assert.ok(!fs.existsSync(path.join(target, host, dir)), `unnecessary copy: ${host}/${dir}`);
+  }
   assert.ok(fs.existsSync(path.join(target, '.claude', 'commands', 'brain.md')));
   assert.ok(fs.existsSync(path.join(target, '.gemini', 'commands', 'brain.toml')));
   assert.ok(fs.existsSync(path.join(target, '.pi', 'prompts', 'brain.md')));
@@ -66,7 +68,7 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.ok(!fs.existsSync(path.join(target, 'README.md')), 'consumer README must not be installed');
   assert.ok(!fs.existsSync(path.join(home, '.codex')), 'installer must not write global codex prompts');
 
-  for (const host of ['.agents', '.claude', '.gemini']) {
+  for (const host of ['.agents', '.claude']) {
     assert.deepEqual(fs.readFileSync(path.join(target, host, 'skills/coding-standards/SKILL.md')), fs.readFileSync(path.join(ROOT, 'skills/coding-standards/SKILL.md')));
     assert.deepEqual(fs.readFileSync(path.join(target, host, 'references/security-checklist.md')), fs.readFileSync(path.join(ROOT, 'references/security-checklist.md')));
     assert.deepEqual(fs.readFileSync(path.join(target, host, 'templates/ADR.md')), fs.readFileSync(path.join(ROOT, 'templates/ADR.md')));
@@ -76,6 +78,11 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   }
   assert.match(fs.readFileSync(path.join(target, '.claude/commands/brain.md'), 'utf8'), /\.claude\/skills\//);
   assert.match(fs.readFileSync(path.join(target, '.pi/prompts/brain.md'), 'utf8'), /\.pi\/agents\//);
+  for (const file of ['.pi/prompts/brain.md', '.codex/prompts/brain.md', '.gemini/commands/brain.toml']) {
+    const command = fs.readFileSync(path.join(target, file), 'utf8');
+    assert.match(command, /\.agents\/skills\//);
+    assert.doesNotMatch(command, /\.(pi|hermes|gemini)\/skills\//);
+  }
   assert.match(fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8'), /\.agents\/skills\//);
 
   const firstState = state(target);
@@ -112,17 +119,33 @@ test('migration replaces wrappers and removes only previously managed root copie
   assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
 });
 
-test('existing legacy tool directories receive full copies and unowned files remain', () => {
-  const target = tmpDir('legacy-tools');
-  for (const host of ['.pi', '.hermes']) fs.mkdirSync(path.join(target, host, 'skills'), { recursive: true });
-  fs.mkdirSync(path.join(target, 'skills/custom'), { recursive: true });
-  fs.writeFileSync(path.join(target, 'skills/custom/keep.md'), 'unrelated');
-  pullInstall({ sourceRoot: ROOT, target });
-  for (const host of ['.pi', '.hermes']) {
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'skills/adrs/SKILL.md')), fs.readFileSync(path.join(ROOT, 'skills/adrs/SKILL.md')));
-    assert.ok(fs.existsSync(path.join(target, host, 'references/security-checklist.md')));
+test('existing harness folders do not trigger extra copies; managed duplicates are retired', () => {
+  const target = tmpDir('shared-discovery');
+  const entries = [];
+  for (const host of ['.pi', '.hermes', '.gemini']) {
+    for (const file of ['skills/adrs/SKILL.md', 'references/security-checklist.md', 'templates/ADR.md']) {
+      const rel = `${host}/${file}`;
+      const content = fs.readFileSync(path.join(ROOT, file));
+      fs.mkdirSync(path.dirname(path.join(target, rel)), { recursive: true });
+      fs.writeFileSync(path.join(target, rel), content);
+      entries.push({ path: rel, sha256: crypto.createHash('sha256').update(content).digest('hex'), mode: '0644' });
+    }
+    fs.mkdirSync(path.join(target, host, 'skills/custom'), { recursive: true });
+    fs.writeFileSync(path.join(target, host, 'skills/custom/SKILL.md'), 'unrelated third-party skill');
+    fs.writeFileSync(path.join(target, host, 'settings.json'), '{"keep":"unchanged"}\n');
   }
-  assert.equal(fs.readFileSync(path.join(target, 'skills/custom/keep.md'), 'utf8'), 'unrelated');
+  fs.mkdirSync(path.join(target, '.agent-brain'));
+  fs.writeFileSync(path.join(target, STATE_PATH), JSON.stringify({ schema: 1, files: entries }));
+  const result = pullInstall({ sourceRoot: ROOT, target });
+  assert.equal(result.plan.prunes.length, 9);
+  for (const host of ['.pi', '.hermes', '.gemini']) {
+    assert.ok(!fs.existsSync(path.join(target, host, 'skills/adrs')));
+    assert.ok(!fs.existsSync(path.join(target, host, 'references')));
+    assert.equal(fs.readFileSync(path.join(target, host, 'skills/custom/SKILL.md'), 'utf8'), 'unrelated third-party skill');
+    assert.equal(fs.readFileSync(path.join(target, host, 'settings.json'), 'utf8'), '{"keep":"unchanged"}\n');
+  }
+  assert.ok(fs.existsSync(path.join(target, '.agents/skills/adrs/SKILL.md')));
+  assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
 });
 
 test('build copies Terraform sources but excludes generated state and local settings', () => {
