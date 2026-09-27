@@ -80,38 +80,6 @@ function splitFrontmatter(text) {
   return { frontmatter: match[0], body: text.slice(match[0].length) };
 }
 
-function writeSkillWrapper(root, out, skill) {
-  const canonical = path.join(root, 'skills', skill, 'SKILL.md');
-  const { frontmatter } = splitFrontmatter(fs.readFileSync(canonical, 'utf8'));
-  const body = [
-    '',
-    `This is a discovery wrapper for the canonical brain skill at \`../../../skills/${skill}/SKILL.md\`.`,
-    '',
-    `Read and use \`../../../skills/${skill}/SKILL.md\` as the source of truth. Resolve any relative references from the canonical skill directory \`skills/${skill}/\`, not from this wrapper directory.`,
-    ''
-  ].join('\n');
-  for (const base of ['.agents/skills', '.claude/skills']) {
-    const target = path.join(out, base, skill, 'SKILL.md');
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, `${frontmatter}${body}`);
-  }
-}
-
-function writePersonaWrapper(root, out, persona) {
-  const canonical = path.join(root, 'agents', `${persona}.md`);
-  const { frontmatter } = splitFrontmatter(fs.readFileSync(canonical, 'utf8'));
-  const body = [
-    '',
-    `This is a discovery wrapper for the canonical brain persona at \`../../agents/${persona}.md\`.`,
-    '',
-    `Read and use \`../../agents/${persona}.md\` as the source of truth.`,
-    ''
-  ].join('\n');
-  const target = path.join(out, '.claude/agents', `${persona}.md`);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, `${frontmatter}${body}`);
-}
-
 function buildBrain(options = {}) {
   const root = canonicalPath(options.root || DEFAULT_ROOT);
   const requestedOut = path.resolve(options.out || path.join(root, 'build'));
@@ -149,13 +117,11 @@ function buildBrain(options = {}) {
     const from = path.join(root, 'skills', s);
     if (!fs.existsSync(from)) { console.error(`  missing skill: ${s}`); missing++; continue; }
     copy(from, path.join(out, 'skills', s));
-    writeSkillWrapper(root, out, s);
   }
   for (const p of personas) {
     const from = path.join(root, 'agents', `${p}.md`);
     if (!fs.existsSync(from)) { console.error(`  missing persona: ${p}`); missing++; continue; }
     copy(from, path.join(out, 'agents', `${p}.md`));
-    writePersonaWrapper(root, out, p);
   }
   if (missing) {
     const err = new Error(`manifest references ${missing} missing item(s)`);

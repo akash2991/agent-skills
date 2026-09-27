@@ -40,8 +40,9 @@ function validateManagedRelPath(rel, label = 'path') {
     || new RegExp(`^skills/${name}/.+$`).test(rel)
     || new RegExp(`^agents/${name}\\.md$`).test(rel)
     || /^(references|templates)\/.+/.test(rel)
-    || new RegExp(`^\\.(agents|claude)/skills/${name}/SKILL\\.md$`).test(rel)
-    || new RegExp(`^\\.claude/agents/${name}\\.md$`).test(rel)
+    || new RegExp(`^\\.(agents|claude|gemini|pi|hermes)/skills/${name}/.+$`).test(rel)
+    || new RegExp(`^\\.(agents|claude|gemini|pi)/agents/${name}\\.md$`).test(rel)
+    || /^\.(agents|claude|gemini|pi|hermes)\/(references|templates)\/.+/.test(rel)
     || /^(\.claude\/commands|\.pi\/prompts|\.codex\/prompts)\/brain(-status)?\.md$/.test(rel)
     || /^(\.gemini\/commands|commands)\/brain(-status)?\.toml$/.test(rel);
   if (!allowed) throw new Error(`invalid ${label}: outside managed brain layout: ${rel}`);

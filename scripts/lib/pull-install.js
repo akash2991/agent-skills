@@ -113,15 +113,52 @@ function walkFiles(root) {
   return out;
 }
 
-function collectBuildFiles(buildRoot) {
+function collectBuildFiles(buildRoot, targetRoot) {
   const files = new Map();
+  const skillHosts = ['.agents', '.claude', '.gemini'];
+  // Refresh pre-existing legacy copies without introducing new Pi/Hermes
+  // discovery directories. Pi normally discovers .agents/skills directly.
+  for (const host of ['.pi', '.hermes']) {
+    if (targetRoot && lstatIfPresent(path.join(targetRoot, host, 'skills'))) skillHosts.push(host);
+  }
+  const personaHosts = ['.agents', '.claude', '.gemini', '.pi'];
+  function add(rel, info) {
+    validateRelPath(rel, 'install path');
+    if (files.has(rel)) throw new Error(`duplicate install path: ${rel}`);
+    files.set(rel, { ...info });
+  }
+  function route(text, host) {
+    return text.replace(/(?<![\w./-])skills\//g, `${host}/skills/`)
+      .replace(/(?<![\w./-])agents\//g, `${host}/agents/`);
+  }
   for (const abs of walkFiles(buildRoot)) {
     const relative = toPosix(path.relative(buildRoot, abs));
     if (relative === 'README.md') continue;
-    const rel = validateRelPath(relative, 'build path');
-    if (files.has(rel)) throw new Error(`duplicate build path: ${rel}`);
-    const info = fileInfo(abs);
-    files.set(rel, { ...info, abs });
+    validateRelPath(relative, 'build path');
+    const info = { ...fileInfo(abs), abs };
+    if (relative.startsWith('skills/')) {
+      for (const host of skillHosts) add(`${host}/${relative}`, info);
+      continue;
+    }
+    if (relative.startsWith('agents/')) {
+      for (const host of personaHosts) add(`${host}/${relative}`, info);
+      continue;
+    }
+    // Verbatim copies need sibling references/templates for ../../ links.
+    if (/^(references|templates)\//.test(relative)) {
+      for (const host of skillHosts) add(`${host}/${relative}`, info);
+    }
+    let host;
+    if (relative === 'AGENTS.md' || relative.startsWith('commands/')) host = '.agents';
+    else if (/^\.(claude|gemini|pi|codex)\/(commands|prompts)\//.test(relative)) {
+      host = relative.split('/')[0];
+      if (host === '.codex') host = '.agents';
+    }
+    if (host) {
+      info.content = Buffer.from(route(info.content.toString('utf8'), host));
+      info.sha256 = sha256Buffer(info.content);
+    }
+    add(relative, info);
   }
   return files;
 }
@@ -159,7 +196,7 @@ function mergeProjectAgents(incoming, existing) {
 function planInstall(sourceRoot, targetRoot, buildRoot) {
   assertExistingTarget(targetRoot);
   assertNoSourceTargetOverlap(sourceRoot, targetRoot);
-  const desired = collectBuildFiles(buildRoot);
+  const desired = collectBuildFiles(buildRoot, targetRoot);
   const state = readState(targetRoot);
   const conflicts = [];
   const writes = [];
@@ -181,7 +218,17 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
     }
     if (rel === 'AGENTS.md' && existing) {
       try {
-        desiredInfo.content = Buffer.from(mergeProjectAgents(desiredInfo.content.toString('utf8'), existing.content.toString('utf8')));
+        let merged = mergeProjectAgents(desiredInfo.content.toString('utf8'), existing.content.toString('utf8'));
+        // Keep project instructions, but repair exact references to brain files
+        // whose old root copies are no longer installed. Do not rewrite custom
+        // project paths or arbitrary uses of the words skills/agents.
+        for (const installed of desired.keys()) {
+          if (!/^\.agents\/(skills|agents)\//.test(installed)) continue;
+          const previous = installed.slice('.agents/'.length);
+          const escaped = previous.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          merged = merged.replace(new RegExp(`(?<![\\w./-])${escaped}(?![\\w.-])`, 'g'), installed);
+        }
+        desiredInfo.content = Buffer.from(merged);
         desiredInfo.sha256 = sha256Buffer(desiredInfo.content);
         nextState.set(rel, { sha256: desiredInfo.sha256, mode: desiredInfo.mode });
       } catch (err) {
@@ -227,6 +274,14 @@ function applyPlan(targetRoot, plan) {
   for (const rel of plan.prunes) {
     checkPathComponents(targetRoot, rel);
     fs.unlinkSync(path.join(targetRoot, rel));
+    // Remove only empty directories left by previously managed files, never
+    // recursively remove a consumer directory or sweep up untracked content.
+    let dir = path.dirname(path.join(targetRoot, rel));
+    while (dir !== targetRoot) {
+      try { fs.rmdirSync(dir); }
+      catch (err) { if (['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(err.code)) break; throw err; }
+      dir = path.dirname(dir);
+    }
   }
   for (const rel of plan.writes) {
     checkPathComponents(targetRoot, rel);
