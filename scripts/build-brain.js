@@ -24,7 +24,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'u
 
 function copy(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
-  fs.cpSync(from, to, { recursive: true, filter: p => !/(^|\/)(\.DS_Store|mcp\.json)$/.test(p) });
+  fs.cpSync(from, to, { recursive: true, filter: p => !/(^|\/)(\.DS_Store|mcp\.json|\.terraform|[^/]*\.tfstate(\.[^/]*)?|terraform\.tfvars)$/.test(p) });
 }
 
 fs.rmSync(OUT, { recursive: true, force: true });
