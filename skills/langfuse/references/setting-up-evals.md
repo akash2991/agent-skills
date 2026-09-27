@@ -31,7 +31,7 @@ Treat trace errors and logged failures as existing coverage. Unless the user wan
 
 Do not propose evaluating a known failure with an owner and a planned one-time fix unless the user wants to track whether it recurs.
 
-If formal error analysis is the right next step, explain why and ask whether the user wants to do it. If they agree, run it following `references/error-analysis.md`, and do not start metric selection until the analysis is complete.
+If formal error analysis is the right next step, explain why and ask whether the user wants to do it. If they agree, run it following `./error-analysis.md`, and do not start metric selection until the analysis is complete.
 
 ## Define the metric set
 
@@ -61,5 +61,5 @@ Follow [Writing good evaluators](https://langfuse.com/academy/evaluate/writing-e
 - Prioritize a clean score name: it is the metric that lands on every observation, so name it after what is measured (`refusal`), not after the evaluator (`refusal judge`). Keep any evaluator-mechanism wording out of the score name.
 - Explain why the chosen evaluation method measures the intended behavior, what evidence it relies on, what it cannot tell the user, and when another method would be better.
 - When methods have significant trade-offs and none is clearly superior, explain the options and let the user decide before implementation.
-- Only if an LLM-as-a-judge is the best fit, calibrate it on real examples before treating it as ready(`references/judge-calibration.md`). You can do this by running an experiment on a dataset where the prompt being tested is the LLM-as-a-judge prompt.
+- Only if an LLM-as-a-judge is the best fit, calibrate it on real examples before treating it as ready(`./judge-calibration.md`). You can do this by running an experiment on a dataset where the prompt being tested is the LLM-as-a-judge prompt.
 - Share a link to the evaluator.

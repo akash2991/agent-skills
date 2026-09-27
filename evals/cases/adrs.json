@@ -37,6 +37,7 @@
       "expectations": [
         "The agent looks for an existing ADR convention before choosing a location, numbering, or headings",
         "Problem, options, choice, rationale, and reversibility are distinct sections",
+        "The ADR records a status from the lifecycle (Proposed, Accepted, Superseded or Deprecated) and a date",
         "Rejected options are recorded with why they were rejected, not just the winning choice",
         "The document is written in present tense describing the state it creates"
       ]

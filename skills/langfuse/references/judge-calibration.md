@@ -43,7 +43,7 @@ production monitoring, high-stakes automation, or train/test-style validation.
 - If no split exists, compute metrics on the provided rows and state that this is
   not a held-out final quality claim.
 - Compute TP/FP/FN/TN and derived metrics.
-- Use `references/error-analysis.md` for qualitative diagnosis of disagreements.
+- Use `./error-analysis.md` for qualitative diagnosis of disagreements.
 
 ## 2) Primary workflow
 
@@ -290,4 +290,4 @@ classify(expected, actual):
   few-shots on dev data only.
 - If metrics pass: freeze the baseline and monitor drift over time.
 - For qualitative diagnosis of disagreements, switch to
-  `references/error-analysis.md`.
+  `./error-analysis.md`.

@@ -31,6 +31,10 @@
       {
         "prompt": "Reassign this Linear issue to the backend engineer through the Linear MCP server and post a status update",
         "owner": "linear"
+      },
+      {
+        "prompt": "Encode the output so it is safe against XSS",
+        "owner": "security-and-hardening"
       }
     ]
   },
