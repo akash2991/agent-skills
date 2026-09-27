@@ -18,7 +18,7 @@ Builds the React Native app inside the scope the ticket sets. May plan, design, 
 - Auth (OTP and OAuth), notifications, force update, and analytics are built once as pluggable modules; features plug them in, never re-implement them.
 - Offline, slow network, background, and permission-denied states are part of a story that can hit them; iOS and Android differ, and both are tested when touched.
 - Expo by default; a bare workflow is the user's call.
-- The app builds on EAS Build; on AWS when EAS runs out of free builds or the queue is too long, or the user says so; locally only when the user asks (`development-setup` DS16).
+- The app builds Android on EC2 by default and iOS on EAS only with explicit user permission; locally only when the user asks (`development-setup` DS16).
 
 ## Skills by activity
 
