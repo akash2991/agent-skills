@@ -1,0 +1,48 @@
+{
+  "skill_name": "linear",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Create the Linear project, milestone, cycle, and issues for this feature through the Linear MCP server",
+        "top_k": 3
+      },
+      {
+        "prompt": "Reassign this Linear issue to the backend engineer and mark it blocked with a status update",
+        "top_k": 3
+      },
+      {
+        "prompt": "Make a ticket for this request with my prompt verbatim before starting any work",
+        "top_k": 3
+      },
+      {
+        "prompt": "File the review finding as a Linear issue and record on the ticket that the design review was skipped and why",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "Write the PRD for this feature",
+        "owner": "prd-writing"
+      },
+      {
+        "prompt": "Break this spec into small verifiable tasks with acceptance criteria",
+        "owner": "planning-and-task-breakdown"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "The user says: \"Add CSV export to the reports page, and skip the design review for this one.\" Set up the ticket in Linear.",
+      "expected_output": "A ticket searched for and then created under the right project before any code, carrying the user's prompt verbatim, the ticket anatomy, acceptance criteria, a scope class, the skipped design review recorded with the reason, and the identifier read back and quoted",
+      "expectations": [
+        "Searches for an existing project and issue before creating",
+        "The ticket carries the user's prompt verbatim, not a paraphrase",
+        "The skipped design review is recorded on the ticket with the reason",
+        "The ticket uses the task template with outcome and verification surface",
+        "The identifier is read back and quoted, never fabricated"
+      ]
+    }
+  ]
+}

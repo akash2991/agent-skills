@@ -2,9 +2,13 @@
 node_modules/
 .env
 .env.*
+!.env.example
 *.log
 .claude/.simplify-ignore-cache/
 .claude/sdd-cache/
+.claude/settings.local.json
+.mcp.json
 evals/results/
 evals/plugin/results/
 __pycache__/
+build/

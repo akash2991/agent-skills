@@ -1,0 +1,93 @@
+#!/bin/bash
+# create-workflow.sh — create the organisation's workflow states in a Linear team.
+#
+# Usage: skills/linear/scripts/create-workflow.sh            LINEAR_TEAM and LINEAR_API_KEY from the local .env
+#        skills/linear/scripts/create-workflow.sh <TEAM-KEY> overrides LINEAR_TEAM
+# Run once per team by the user. Needs python3 and network access.
+#
+# Idempotent: enables triage on the team, reads its states, creates only the missing
+# ones from workflow.json next to this script's folder, and prints the resulting states
+# as JSON on stdout. Status goes to stderr. Never deletes or renames a state the team
+# already has, but does put them in workflow.json's order. Triage and Duplicate are
+# Linear's own reserved states: enabling triage creates them, and Linear refuses both
+# to create them and to write to them, so the script only checks they are there.
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"
+WORKFLOW="$HERE/../workflow.json"
+TEAM_KEY="${1:-${LINEAR_TEAM:-}}"
+[ -f .env ] && [ -z "${LINEAR_API_KEY:-}" ] && { set -a; . ./.env; set +a; }
+TEAM_KEY="${TEAM_KEY:-${LINEAR_TEAM:-}}"
+[ -n "$TEAM_KEY" ] || { echo "set LINEAR_TEAM in .env (or pass <TEAM-KEY>)" >&2; exit 2; }
+[ -n "${LINEAR_API_KEY:-}" ] || { echo "set LINEAR_API_KEY in .env (a Linear personal API key)" >&2; exit 2; }
+[ -f "$WORKFLOW" ] || { echo "missing $WORKFLOW" >&2; exit 2; }
+TMP="$(mktemp -t linear-workflow.XXXXXX)"
+trap 'rm -f "$TMP"' EXIT
+
+echo "creating the workflow in Linear team $TEAM_KEY" >&2
+WORKFLOW="$WORKFLOW" TEAM_KEY="$TEAM_KEY" python3 - "$TMP" <<'PY'
+import json, os, sys, urllib.request
+
+API = "https://api.linear.app/graphql"
+KEY = os.environ["LINEAR_API_KEY"]
+TEAM_KEY = os.environ["TEAM_KEY"]
+COLORS = {"triage": "#95a2b3", "backlog": "#bec2c8", "unstarted": "#e2e2e2", "started": "#f2c94c", "completed": "#5e6ad2", "canceled": "#95a2b3", "duplicate": "#95a2b3"}
+
+def gql(query, variables=None):
+    body = json.dumps({"query": query, "variables": variables or {}}).encode()
+    req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json", "Authorization": KEY})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        out = json.load(r)
+    if out.get("errors"):
+        sys.stderr.write("Linear error: %s\n" % json.dumps(out["errors"]))
+        sys.exit(1)
+    return out["data"]
+
+with open(os.environ["WORKFLOW"]) as f:
+    wanted = json.load(f)["states"]
+
+teams = gql("query($key:String!){ teams(filter:{key:{eq:$key}}){ nodes{ id key name triageEnabled } } }", {"key": TEAM_KEY})["teams"]["nodes"]
+if not teams:
+    sys.stderr.write("no Linear team with key %s\n" % TEAM_KEY); sys.exit(1)
+team = teams[0]
+
+# Enable triage first: that is what creates the team's Triage state, so the states
+# have to be read afterwards for it to be seen.
+if not team["triageEnabled"]:
+    gql("mutation($id:String!){ teamUpdate(id:$id, input:{triageEnabled:true}){ success } }", {"id": team["id"]})
+    sys.stderr.write("triage enabled\n")
+
+def states():
+    return gql("query($id:String!){ team(id:$id){ states{ nodes{ id name type position description } } } }", {"id": team["id"]})["team"]["states"]["nodes"]
+
+existing = {s["name"]: s for s in states()}
+sys.stderr.write("team %s (%s): %d existing states\n" % (team["name"], team["key"], len(existing)))
+
+created = []
+for position, st in enumerate(wanted):
+    have = existing.get(st["name"])
+    if st.get("builtin"):
+        # A reserved state: Linear refuses every write to it, position included.
+        if not have:
+            sys.stderr.write("WARNING: %s is Linear's own state and this team has none; turn triage on in the team's settings\n" % st["name"])
+        continue
+    if have:
+        if have["type"] != st["type"]:
+            sys.stderr.write("WARNING: state %r exists with type %s, wanted %s; left as is\n" % (st["name"], have["type"], st["type"]))
+        elif have["position"] != float(position):
+            # Position orders the states inside their category: without this a state
+            # created now would tie with one the team already had.
+            gql("mutation($id:String!,$p:Float!){ workflowStateUpdate(id:$id, input:{position:$p}){ success } }", {"id": have["id"], "p": float(position)})
+            sys.stderr.write("moved %s to position %d\n" % (st["name"], position))
+        continue
+    data = gql("mutation($input:WorkflowStateCreateInput!){ workflowStateCreate(input:$input){ success workflowState{ id name type position } } }",
+               {"input": {"teamId": team["id"], "name": st["name"], "type": st["type"], "description": st["description"], "color": COLORS[st["type"]], "position": float(position)}})
+    created.append(data["workflowStateCreate"]["workflowState"])
+    sys.stderr.write("created %s (%s)\n" % (st["name"], st["type"]))
+
+final = states()
+final.sort(key=lambda s: (s["position"], s["name"]))
+with open(sys.argv[1], "w") as f:
+    json.dump({"team": {"id": team["id"], "key": team["key"], "name": team["name"]}, "created": [c["name"] for c in created], "states": [{k: s[k] for k in ("id", "name", "type", "position")} for s in final]}, f, indent=2)
+sys.stderr.write("done: %d created, %d states in the team\n" % (len(created), len(final)))
+PY
+cat "$TMP"

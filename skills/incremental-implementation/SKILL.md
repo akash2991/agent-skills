@@ -1,6 +1,7 @@
 ---
 name: incremental-implementation
 description: Delivers changes incrementally in thin, verifiable slices. Use when implementing any feature or change that touches more than one file, or when picking up the next task from a plan. Use when rolling a change out behind a feature flag, when you're about to write a large amount of code at once, or when a task feels too big to land in one step.
+category: coding
 ---
 
 # Incremental Implementation
@@ -65,7 +66,7 @@ Each slice delivers working end-to-end functionality.
 
 ### Contract-First Slicing
 
-When backend and frontend need to develop in parallel:
+When backend and frontend need to develop in parallel (the rules are in `development-setup`):
 
 ```
 Slice 0: Define the API contract (types, interfaces, OpenAPI spec)
@@ -142,11 +143,11 @@ Each increment changes one logical thing. Don't mix concerns:
 
 ### Rule 2: Keep It Compilable
 
-After each increment, the project must build and existing tests must pass. Don't leave the codebase in a broken state between slices.
+After each increment, the project must build and existing tests must pass. Don't leave the codebase in a broken state between slices. The rule is in `continuous-delivery` (the app works at every point) and `git-workflow-and-versioning`.
 
 ### Rule 3: Feature Flags for Incomplete Features
 
-If a feature isn't ready for users but you need to merge increments:
+If a feature isn't ready for users but you need to merge increments (per `continuous-delivery`: flags default off, or code without an entry point):
 
 ```typescript
 // Feature flag for work-in-progress
