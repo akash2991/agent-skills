@@ -1,6 +1,6 @@
 ---
 name: github
-description: How to operate GitHub through the GitHub MCP server or the gh CLI — the server setup, and the call for each organisation action (find or create a branch or PR, raise a PR with the template, link it to the ticket, request a reviewer, post inline review comments and a verdict, resolve threads, read CI checks, merge with a merge commit and delete the branch, tag and publish a release). Use when a persona needs to read or change anything on GitHub — a PR, a review, a check, a merge, a release — after the git workflow rules have decided what to do.
+description: How to operate GitHub through the GitHub MCP server or the gh CLI — the server setup, and the call for each organisation action (find or create a branch or PR, raise a PR with the template, link it to the ticket, request a reviewer, post inline review comments and a verdict, resolve threads, check CI status with gh, read CI checks, merge a PR with a merge commit and delete the branch, tag and publish a release). Use when a persona needs to read or change anything on GitHub — a PR, a review, a check, a merge, a release — after the git workflow rules have decided what to do.
 category: tools
 ---
 
