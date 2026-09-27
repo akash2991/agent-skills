@@ -55,7 +55,7 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
 
 1. `scripts/cloud-reap.sh`.
 2. `scripts/cloud-up.sh <ticket>` joins a machine with headroom or launches one, and prints `instance_id`, `public_ip`, `ssh`, `expires_at`, and `joined`. When it refuses, ask the user with its message and the metrics, record the answer on the ticket, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
-3. `ssh -A ec2-user@<ip>`; on a new machine wait for `cloud-init status --wait`. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes; nothing else is copied over (DS15).
+3. `ssh -A ec2-user@<ip>`; on a new machine wait for `cloud-init status --wait`. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes, and the machine pins GitHub to the key that logged in (`CLOUD_KEY_NAME`'s key), so an agent holding a work and a personal GitHub key uses the right one; clone with `git@github.com:<owner>/<repo>.git`. Nothing else is copied over (DS15).
 4. In that directory, as locally: `docker compose -p <ticket>-<slug> up` for the services you touch, LocalStack, the seed or snapshot, and Prometheus, Grafana, and Loki when debugging (DS3–DS6, DS10). Pick host ports no other project on the machine uses (`docker ps --format '{{.Ports}}'`) and set them in the directory's `.env`.
 5. Reach a service with a tunnel, `ssh -A -L 3000:localhost:<port> ec2-user@<ip>`; never open a port on the security group.
 6. Commit and push before every pause (DS15).
