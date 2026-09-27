@@ -9,7 +9,7 @@
 #             on Amazon Linux 2023 with Docker and Compose. Launching past CLOUD_MAX_MACHINES (2) live dev
 #             machines refuses without --approved (DS11, DS12)
 #   --type    launches a new machine of that type; any type but the default refuses without --approved (DS12)
-#   --mac     a macOS build machine from CLOUD_MAC_AMI on CLOUD_MAC_TYPE (mac2.metal); reuses a free brain Mac
+#   --mac     a macOS build machine from CLOUD_MAC_AMI on CLOUD_MAC_TYPE (mac2-m2.metal); reuses a free brain Mac
 #             host, and allocating a new one refuses without --approved. A new host is released 24 h after
 #             allocation (DS17)
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
