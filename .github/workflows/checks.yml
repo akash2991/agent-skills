@@ -25,4 +25,5 @@ jobs:
           node --test scripts/validate-reference-links-test.js
           node --test scripts/validate-artifact-paths-test.js
           node --test scripts/validate-commands-test.js
+          node --test scripts/agent-brain-pull-test.js
       - run: node scripts/build-brain.js

@@ -13,6 +13,18 @@ Each skill is a Markdown file (`SKILL.md`) that describes a specific engineering
 
 **Skills are not reference docs.** They're step-by-step processes the agent follows.
 
+## Pull the complete Agent Brain (this fork)
+
+For this fork's selected skills, personas, organization, references, templates, and `/brain` commands, run **from the consuming repository root**:
+
+```bash
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
+```
+
+Rerun to update; add `--dry-run` to preview. Brain-owned files are replaced from this repo; only the existing `## This project` section of `AGENTS.md` is preserved. Read [Pull installation](pull-install.md) for prerequisites, version pinning, and the complete layout. It installs `project/AGENTS.md`, rendered for the selected brain, never this repository's contributor-facing root instructions.
+
+The sections below describe the upstream **skills-only** alternative, not the complete brain install.
+
 ## Quick Start (Any Agent)
 
 ### 1. Clone the repository

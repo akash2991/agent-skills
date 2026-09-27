@@ -34,6 +34,9 @@ jobs:
       - name: Test skill eval runner
         run: node --test scripts/run-evals-test.js
 
+      - name: Test pull installer
+        run: node --test scripts/agent-brain-pull-test.js
+
       - name: Run skill evals (trigger + routing)
         run: node scripts/run-evals.js --min-rank1 95
 

@@ -1,0 +1,38 @@
+{
+  "name": "agent-brain",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Pull installer for the agent brain bundle.",
+  "bin": {
+    "agent-brain": "scripts/agent-brain.js"
+  },
+  "files": [
+    "manifest.json",
+    "project/AGENTS.md",
+    "project/SOUL.md",
+    "project/.env.example",
+    "skills/**",
+    "agents/**",
+    "references/**",
+    "templates/**",
+    "docs/persona-anatomy.md",
+    "docs/skill-anatomy.md",
+    ".claude/commands/brain*.md",
+    ".gemini/commands/brain*.toml",
+    "commands/brain*.toml",
+    ".pi/prompts/brain*.md",
+    ".codex/prompts/brain*.md",
+    "scripts/agent-brain.js",
+    "scripts/build-brain.js",
+    "scripts/lib/build-brain.js",
+    "scripts/lib/pull-install.js",
+    "scripts/lib/install-paths.js"
+  ],
+  "scripts": {
+    "build": "node scripts/build-brain.js",
+    "test:pull": "node --test scripts/agent-brain-pull-test.js"
+  }
+}
