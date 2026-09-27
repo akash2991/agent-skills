@@ -29,11 +29,13 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 - Root `AGENTS.md`, `SOUL.md`, and `.env.example`.
 - Shared skill copies in `.agents/skills/` for Pi, Codex, Gemini, and Hermes; native copies in `.claude/skills/` for Claude. Both come from the same `skills/` source, selected by `manifest.json`.
 - Full persona copies in `.agents/agents/`, `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`.
-- One root `references/` and `templates/` directory. Installed Markdown links to those shared files gain the extra `../` needed for the tool directory; source Markdown is unchanged. Skill-local references/templates stay with their skill, and supporting scripts are copied with it. Generated Terraform state, local tfvars, and provider caches are excluded.
-- Skill/persona anatomy guides under `docs/`; project documents are not generated from templates automatically.
+- One root `references/` and `templates/` directory. Installed Markdown links to those shared files gain the extra `../` needed for the tool directory; source Markdown is unchanged. Skill-local references/templates stay with their skill, and per-project runtime scripts are copied with it. Account-wide Terraform provisioning sources, generated state, local tfvars, and provider caches are excluded.
+- Skill/persona anatomy guides are source-repository authoring documentation and are not installed. Project documents are not generated from templates automatically.
 - `/brain` and `/brain-status` commands for the supported tools.
 - Commands and the shared portion of `AGENTS.md` point directly to the installed tool directories. Only relative Markdown links to shared root references/templates are rebased; there are no wrappers, symlinks, or shared root `skills/` or `agents/` copies.
 - `.agent-brain/install-state.json`, recording installed files for repeatable updates and removal of retired files. Keep it in Git with the installed content.
+
+Previously managed anatomy guides and Terraform provisioning files are pruned on update. Unmanaged files, including local Terraform state and variables, are not removed. Provisioning instructions in the installed `development-setup/cloud.md` point back to the source repository.
 
 Old copy-based installations are replaced directly without hash-based reconciliation. Redundant managed skill copies under `.pi/`, `.hermes/`, and `.gemini/` are removed in favor of `.agents/skills/`, even if those folders already exist. Unrelated skills and harness settings are left alone. Hermes requires project trust before loading shared project skills; the installer does not grant it. An install made by the earlier wrapper-based version is migrated automatically: wrappers become full copies and only previously managed root skill/persona files are removed. Empty directories left by those managed files are removed; unrelated files remain. Unlisted files are not swept up or deleted. Symlink/nonregular destinations and source/target overlap are still refused to prevent writes outside the intended project.
 

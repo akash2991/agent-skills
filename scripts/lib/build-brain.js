@@ -29,6 +29,8 @@ function assertName(kind, name) {
 }
 
 function includeSource(file) {
+  // Account-wide provisioning stays in the source repo, not project bundles.
+  if (/(^|[\\/])skills[\\/]development-setup[\\/]terraform(?:[\\/]|$)/.test(file)) return false;
   return !/(^|[\\/])(\.DS_Store|mcp\.json|\.terraform|[^/\\]*\.tfstate(\.[^/\\]*)?|terraform\.tfvars)$/.test(file);
 }
 
@@ -105,7 +107,7 @@ function buildBrain(options = {}) {
   }
   validateSourceTree(root, 'references');
   validateSourceTree(root, 'templates');
-  for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md']) validateManagedRelPath(rel, 'source path');
+  for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example']) validateManagedRelPath(rel, 'source path');
   for (const dir of ['.claude/commands', '.gemini/commands', 'commands', '.pi/prompts', '.codex/prompts']) {
     for (const f of brainCommandFiles(root, dir)) validateManagedRelPath(`${dir}/${f}`, 'source path');
   }
@@ -142,9 +144,6 @@ function buildBrain(options = {}) {
       copy(path.join(root, dir, f), path.join(out, dir, f));
     }
   }
-  copy(path.join(root, 'docs', 'persona-anatomy.md'), path.join(out, 'docs', 'persona-anatomy.md'));
-  copy(path.join(root, 'docs', 'skill-anatomy.md'), path.join(out, 'docs', 'skill-anatomy.md'));
-
   fs.writeFileSync(path.join(out, 'README.md'), `# Brain\n\nBuilt from manifest.json: ${skills.length} skills, ${personas.length} personas.\n\nInstall into a project with:\n\n\`\`\`sh\nnpx --yes --package=github:akash2991/agent-skills#main agent-brain pull\n\`\`\`\n\nThis README describes the generated bundle and is not installed into consumer repositories.\n`);
 
   return { out, skills: skills.length, personas: personas.length };

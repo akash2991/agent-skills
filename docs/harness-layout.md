@@ -16,7 +16,10 @@ Before changing installation layout, inspect the consumer's tracked files, relev
 | Document templates | `templates/` |
 | Organization, soul, environment example | `project/AGENTS.md`, `project/SOUL.md`, `project/.env.example` |
 | Selection | `manifest.json` |
-| Skill/persona anatomy guides | `docs/skill-anatomy.md`, `docs/persona-anatomy.md` |
+| Skill/persona anatomy guides (source-only; not installed) | `docs/skill-anatomy.md`, `docs/persona-anatomy.md` |
+| Account-wide provisioning (source-only; not installed) | `skills/development-setup/terraform/` |
+
+The anatomy guides describe how maintainers author this brain; consuming projects do not need them. Terraform provisioning is shared per AWS account, not per project: installed cloud guidance links back here for provisioning, while per-project cloud and mobile-build scripts remain installed. Neither authoring guides nor provisioning sources are included in the generated bundle or npm package. Updates prune only previously managed copies, never unmanaged state or variables.
 
 `build/` is ignored, generated output. Consumer-specific documents created from templates remain owned by that project. In installed `AGENTS.md`, the `## This project` section remains project-specific; shared instructions are rebuilt here.
 

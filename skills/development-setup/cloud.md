@@ -6,10 +6,12 @@ How agents develop on shared EC2 machines and build the mobile app under `develo
 
 An agent never creates these; when one is missing, the script names it and the agent asks the user.
 
-The network, access, and deadline role are Terraform in `terraform/`, applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (SSH from the listed addresses only), the `brain-dev` key pair, the `brain-dev-scheduler` role, and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
+The network, access, and deadline role are defined in the [brain source repository's Terraform directory](https://github.com/akash2991/agent-skills/tree/main/skills/development-setup/terraform), applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (SSH from the listed addresses only), the `brain-dev` key pair, the `brain-dev-scheduler` role, and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
+
+Provisioning sources are not installed into consuming projects. For an already provisioned account, reuse its output IDs in the new project's `.env`; do not provision again per repository. For initial setup or account-wide changes, the user runs these commands from a checkout of the brain source repository, not from the consuming project:
 
 ```bash
-cd skills/development-setup/terraform
+cd /path/to/agent-skills/skills/development-setup/terraform
 cp terraform.tfvars.example terraform.tfvars      # the profile, each developer's /32, the public key
 ./init.sh <aws-profile>
 terraform plan -out=dev.tfplan && terraform apply dev.tfplan

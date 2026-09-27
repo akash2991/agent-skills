@@ -208,16 +208,57 @@ test('all installed skill reference links resolve without harness-local shared d
   assert.ok(checked > 20, `expected real reference coverage, checked ${checked}`);
 });
 
-test('build copies Terraform sources but excludes generated state and local settings', () => {
+test('build and fresh pull exclude authoring docs and provisioning but retain runtime scripts', () => {
   const source = sourceFixture();
   const dir = path.join(source, 'skills/development-setup/terraform');
+  const originalTerraform = fs.readFileSync(path.join(dir, 'main.tf'));
   fs.mkdirSync(path.join(dir, '.terraform'), { recursive: true });
   for (const file of ['terraform.tfvars', 'terraform.tfstate', 'terraform.tfstate.backup', '.terraform/private']) fs.writeFileSync(path.join(dir, file), 'do not distribute');
-  const target = tmpDir('terraform-target');
+  const build = tmpDir('runtime-build');
+  buildBrain({ root: source, out: build });
+  const target = tmpDir('runtime-target');
   pullInstall({ sourceRoot: source, target });
-  const installed = path.join(target, '.agents/skills/development-setup/terraform');
-  assert.ok(fs.existsSync(path.join(installed, 'main.tf')));
-  for (const file of ['terraform.tfvars', 'terraform.tfstate', 'terraform.tfstate.backup', '.terraform']) assert.ok(!fs.existsSync(path.join(installed, file)));
+  for (const output of [build, target]) {
+    for (const file of ['docs/skill-anatomy.md', 'docs/persona-anatomy.md']) assert.ok(!fs.existsSync(path.join(output, file)));
+  }
+  for (const skill of [path.join(build, 'skills/development-setup'), ...['.agents', '.claude'].map(host => path.join(target, host, 'skills/development-setup'))]) {
+    assert.ok(!fs.existsSync(path.join(skill, 'terraform')));
+    for (const script of ['cloud-up.sh', 'cloud-down.sh', 'android-ec2-build.sh', 'ios-eas-build.sh']) {
+      assert.deepEqual(fs.readFileSync(path.join(skill, 'scripts', script)), fs.readFileSync(path.join(source, 'skills/development-setup/scripts', script)));
+    }
+    assert.match(fs.readFileSync(path.join(skill, 'cloud.md'), 'utf8'), /https:\/\/github\.com\/akash2991\/agent-skills\/tree\/main\/skills\/development-setup\/terraform/);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'main.tf')), originalTerraform);
+  for (const file of ['docs/skill-anatomy.md', 'docs/persona-anatomy.md']) assert.deepEqual(fs.readFileSync(path.join(source, file)), fs.readFileSync(path.join(ROOT, file)));
+});
+
+test('update prunes managed authoring docs and provisioning without deleting unmanaged state or docs', () => {
+  const target = tmpDir('retired-provisioning');
+  pullInstall({ sourceRoot: ROOT, target });
+  const previous = state(target);
+  const retired = ['docs/skill-anatomy.md', 'docs/persona-anatomy.md'];
+  for (const host of ['.agents', '.claude', '.pi', '.hermes', '.gemini']) {
+    for (const file of ['main.tf', 'init.sh', '.terraform.lock.hcl', 'terraform.tfvars.example']) retired.push(`${host}/skills/development-setup/terraform/${file}`);
+  }
+  for (const rel of retired) {
+    const content = Buffer.from('previously installed brain file');
+    fs.mkdirSync(path.dirname(path.join(target, rel)), { recursive: true });
+    fs.writeFileSync(path.join(target, rel), content);
+    previous.files.push({ path: rel, sha256: crypto.createHash('sha256').update(content).digest('hex'), mode: '0644' });
+  }
+  fs.writeFileSync(path.join(target, STATE_PATH), JSON.stringify(previous));
+  const untouched = ['docs/DEVELOPMENT.md', '.agents/skills/development-setup/terraform/terraform.tfstate', '.agents/skills/development-setup/terraform/terraform.tfvars'];
+  for (const rel of untouched) fs.writeFileSync(path.join(target, rel), 'project-owned');
+  const preview = pullInstall({ sourceRoot: ROOT, target, dryRun: true });
+  assert.deepEqual([...preview.plan.prunes].sort(), [...retired].sort());
+  for (const rel of retired) assert.ok(fs.existsSync(path.join(target, rel)));
+  pullInstall({ sourceRoot: ROOT, target });
+  for (const rel of retired) assert.ok(!fs.existsSync(path.join(target, rel)));
+  for (const rel of untouched) assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), 'project-owned');
+  assert.ok(fs.existsSync(path.join(target, '.agents/skills/development-setup/scripts/cloud-up.sh')));
+  const repeat = pullInstall({ sourceRoot: ROOT, target });
+  assert.equal(repeat.plan.writes.length, 0);
+  assert.equal(repeat.plan.prunes.length, 0);
 });
 
 test('dry-run is nonmutating', () => {
@@ -450,6 +491,9 @@ test('package tarball includes dot assets and CLI works from extracted package',
   assert.match(list, /package\/\.codex\/prompts\/brain\.md/);
   assert.match(list, /package\/project\/\.env\.example/);
   assert.match(list, /package\/scripts\/agent-brain\.js/);
+  assert.doesNotMatch(list, /package\/docs\/(?:skill|persona)-anatomy\.md/);
+  assert.doesNotMatch(list, /package\/skills\/development-setup\/terraform\//);
+  assert.match(list, /package\/skills\/development-setup\/scripts\/cloud-up\.sh/);
 
   const extract = tmpDir('extract');
   execFileSync('tar', ['-xzf', tarball, '-C', extract]);
