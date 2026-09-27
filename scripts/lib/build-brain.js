@@ -28,11 +28,15 @@ function assertName(kind, name) {
   }
 }
 
+function includeSource(file) {
+  return !/(^|[\\/])(\.DS_Store|mcp\.json|\.terraform|[^/\\]*\.tfstate(\.[^/\\]*)?|terraform\.tfvars)$/.test(file);
+}
+
 function copy(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.cpSync(from, to, {
     recursive: true,
-    filter: p => !/(^|[\\/])(\.DS_Store|mcp\.json)$/.test(p)
+    filter: includeSource
   });
 }
 
@@ -45,6 +49,7 @@ function walkRegularFiles(root) {
   function walk(dir) {
     for (const name of fs.readdirSync(dir)) {
       const abs = path.join(dir, name);
+      if (!includeSource(abs)) continue;
       const st = fs.lstatSync(abs);
       if (st.isDirectory()) walk(abs);
       else if (st.isFile()) files.push(abs);

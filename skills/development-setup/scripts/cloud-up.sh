@@ -9,7 +9,7 @@
 #             on Amazon Linux 2023 with Docker and Compose. Launching past CLOUD_MAX_MACHINES (2) live dev
 #             machines refuses without --approved (DS11, DS12)
 #   --type    launches a new machine of that type; any type but the default refuses without --approved (DS12)
-#   --mac     a macOS build machine from CLOUD_MAC_AMI on CLOUD_MAC_TYPE (mac2.metal); reuses a free brain Mac
+#   --mac     a macOS build machine from CLOUD_MAC_AMI on CLOUD_MAC_TYPE (mac2-m2.metal); reuses a free brain Mac
 #             host, and allocating a new one refuses without --approved. A new host is released 24 h after
 #             allocation (DS17)
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
@@ -115,6 +115,18 @@ trap 'rm -f "$TMP"' EXIT
   cat "$HERE/brain-watchdog.sh"
   echo 'WATCHDOG'
   echo 'chmod +x /usr/local/bin/brain-watchdog'
+  # Git reaches GitHub with the key that logs in (DS15): the forwarded agent may hold several GitHub keys, so pin the
+  # one whose public half is in authorized_keys. GitHub's host keys come from its API over TLS, not from the first scan.
+  cat <<'GITHUB'
+H="$(eval echo ~ec2-user)"
+for i in $(seq 30); do [ -s "$H/.ssh/authorized_keys" ] && break; sleep 2; done
+head -n 1 "$H/.ssh/authorized_keys" > "$H/.ssh/github.pub"
+curl -fsSL https://api.github.com/meta | tr -d '\n' | grep -o '"ssh_keys": *\[[^]]*\]' | grep -oE '"(ssh|ecdsa)-[^"]*"' \
+  | tr -d '"' | sed 's/^/github.com /' >> "$H/.ssh/known_hosts"
+printf 'Host github.com\n    User git\n    IdentityFile ~/.ssh/github.pub\n    IdentitiesOnly yes\n' >> "$H/.ssh/config"
+chown ec2-user "$H/.ssh/github.pub" "$H/.ssh/known_hosts" "$H/.ssh/config"
+chmod 600 "$H/.ssh/config"
+GITHUB
   if [ "$MAC" = 1 ]; then
     echo 'nohup /usr/local/bin/brain-watchdog >/var/log/brain-watchdog.log 2>&1 &'
   else

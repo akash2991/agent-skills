@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (never committed) and fill in.
+aws_profile         = "personal"
+ssh_cidrs           = ["203.0.113.7/32"] # each developer's public IP: curl -s https://checkip.amazonaws.com
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+# region             = "ap-southeast-2"
+# availability_zones = ["ap-southeast-2a", "ap-southeast-2b"]

@@ -6,6 +6,18 @@ How agents develop on shared EC2 machines and build the mobile app under `develo
 
 An agent never creates these; when one is missing, the script names it and the agent asks the user.
 
+The network, access, and deadline role are Terraform in `terraform/`, applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (SSH from the listed addresses only), the `brain-dev` key pair, the `brain-dev-scheduler` role, and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
+
+```bash
+cd skills/development-setup/terraform
+cp terraform.tfvars.example terraform.tfvars      # the profile, each developer's /32, the public key
+./init.sh <aws-profile>
+terraform plan -out=dev.tfplan && terraform apply dev.tfplan
+terraform output -raw env                         # paste into the project's .env
+```
+
+A new developer's address is a line in `ssh_cidrs` and another apply; an address that changed is replaced the same way.
+
 | `.env` variable | What it is |
 |---|---|
 | `AWS_PROFILE` | the profile the scripts run as; its credentials stay on this machine (DS15) |
@@ -43,7 +55,7 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
 
 1. `scripts/cloud-reap.sh`.
 2. `scripts/cloud-up.sh <ticket>` joins a machine with headroom or launches one, and prints `instance_id`, `public_ip`, `ssh`, `expires_at`, and `joined`. When it refuses, ask the user with its message and the metrics, record the answer on the ticket, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
-3. `ssh -A ec2-user@<ip>`; on a new machine wait for `cloud-init status --wait`. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes; nothing else is copied over (DS15).
+3. `ssh -A ec2-user@<ip>`; on a new machine wait for `cloud-init status --wait`. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes, and the machine pins GitHub to the key that logged in (`CLOUD_KEY_NAME`'s key), so an agent holding a work and a personal GitHub key uses the right one; clone with `git@github.com:<owner>/<repo>.git`. Nothing else is copied over (DS15).
 4. In that directory, as locally: `docker compose -p <ticket>-<slug> up` for the services you touch, LocalStack, the seed or snapshot, and Prometheus, Grafana, and Loki when debugging (DS3–DS6, DS10). Pick host ports no other project on the machine uses (`docker ps --format '{{.Ports}}'`) and set them in the directory's `.env`.
 5. Reach a service with a tunnel, `ssh -A -L 3000:localhost:<port> ec2-user@<ip>`; never open a port on the security group.
 6. Commit and push before every pause (DS15).
