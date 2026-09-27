@@ -1,6 +1,6 @@
 # Cloud machines and mobile builds
 
-How agents develop on shared EC2 machines and build the mobile app under `development-setup` DS10–DS17. The scripts are in `scripts/`, run from the project root (`eas-build.sh` from the app directory), and read the project's `.env`; the project's `.env.example` lists every variable.
+How agents develop on shared EC2 machines and build the mobile app under `development-setup` DS10–DS17. The scripts are in `scripts/`, run from the project root (`android-ec2-build.sh` and `ios-eas-build.sh` from the app directory), and read the project's `.env`; the project's `.env.example` lists every variable.
 
 ## One-time setup (the user)
 
@@ -63,23 +63,33 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
 
 ## Mobile builds
 
-EAS Build by default (DS16). From the app directory:
+Android on EC2 by default; EAS for iOS only with explicit permission (DS16).
+
+### Android
+
+From the app directory:
 
 ```bash
-skills/development-setup/scripts/eas-build.sh android production   # or ios
+skills/development-setup/scripts/android-ec2-build.sh production
+```
+
+This joins or launches a dev machine, builds in a Docker container with the JDK and Android SDK the project pins, copies the artifact back, and cleans up. Run `cloud-capacity.sh` first if you are already on a shared machine: a Gradle release build needs several GiB of memory and all the cores it can get.
+
+The user may send an Android build to EAS as an override; record it on the ticket.
+
+### iOS
+
+From the app directory, only with explicit user permission:
+
+```bash
+skills/development-setup/scripts/ios-eas-build.sh production
 ```
 
 | Exit | Meaning | Next |
 |---|---|---|
 | 0 | built on EAS; prints the artifact URL | done |
-| 4 | this month's free builds for the platform are used up | build on AWS; note the reason on the ticket |
-| 5 | the queue wait passed `EAS_MAX_QUEUE_MINUTES`; the EAS build was canceled | build on AWS; note the reason on the ticket |
+| 4 | this month's free iOS builds are used up | ask the user whether to wait for next month or build on AWS; note the decision on the ticket |
+| 5 | the queue wait passed `EAS_MAX_QUEUE_MINUTES`; the EAS build was canceled | ask the user whether to retry or build on AWS; note the decision on the ticket |
 | 1 | the build failed on EAS; prints the error code and message | read the logs (`eas build:view <id>`), report the reason on the ticket with a recommendation; the app's own failure is fixed and rebuilt on EAS; moving to AWS or local is the user's call |
 
-The user may send any build straight to AWS, or, rarely, to this machine; record it on the ticket. An iOS build runs locally only on macOS with the Xcode the project pins.
-
-**Android on AWS:** join or launch a dev machine as above, and build in a Docker container from the image `docs/DEVELOPMENT.md` names (the JDK and Android SDK the project pins), for example `eas build --platform android --local` inside it. Run `cloud-capacity.sh` first: a Gradle release build needs several GiB of memory and all the cores it can get.
-
-**iOS on AWS:** `scripts/cloud-up.sh <ticket> --mac`. It reuses a free brain Mac host; when none exists it refuses until the user approves a new one, asked with "a Mac host bills for at least 24 hours" (DS17). A Mac takes several minutes to boot. Build with `eas build --platform ios --local` or `xcodebuild archive`. Signing credentials come the way `docs/DEVELOPMENT.md` says, for this build only, never committed.
-
-Either way: `scp` the artifact back or submit it from the machine, then `cloud-down.sh`. A Mac machine is terminated at once; its host stays allocated for further iOS builds and is released 24 hours after allocation by its schedule, or by `cloud-reap.sh` after that.
+**iOS on AWS (override):** `scripts/cloud-up.sh <ticket> --mac`. It reuses a free brain Mac host; when none exists it refuses until the user approves a new one, asked with "a Mac host bills for at least 24 hours" (DS17). A Mac takes several minutes to boot. Build with `eas build --platform ios --local` or `xcodebuild archive`. Signing credentials come the way `docs/DEVELOPMENT.md` says, for this build only, never committed. `scp` the artifact back or submit it from the machine, then `cloud-down.sh`. A Mac machine is terminated at once; its host stays allocated for further iOS builds and is released 24 hours after allocation by its schedule, or by `cloud-reap.sh` after that.

@@ -1,6 +1,6 @@
 ---
 name: hld
-description: How to write a High-Level Design from templates/HLD.md — goals, non-goals, assumptions, constraints, scale estimations, service boundaries with one owner per responsibility, domain model and glossary, API interfaces by name, interactions as sequence diagrams, tradeoffs with linked ADRs, dependencies and infra, SLOs, high-level observability, one-way doors, and what is left to the LLD, for a feature or a service from a reviewed PRD. Use when you write, review, or are asked for an HLD, design doc, architecture proposal, tech spec, or "how should we design X", or when an engineer has a reviewed PRD that touches more than one module or service, or introduces one, and before planning or implementation.
+description: How to write a High-Level Design from templates/HLD.md — goals, non-goals, assumptions, constraints, scale estimations, unified cross-service boundaries with one owner per responsibility, domain model and glossary, key API interfaces by name, interactions as sequence diagrams, tradeoffs with linked ADRs, dependencies and infra, SLOs, high-level observability, one-way doors, and what is left to the LLD, for a feature or a service from an approved or reviewed PRD. Use when you write, review, or are asked for an HLD, design doc, architecture proposal, tech spec, or "how should we design X", or when an engineer has a reviewed PRD that touches more than one module or service, or introduces one, and before planning or implementation.
 category: design
 ---
 
