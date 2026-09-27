@@ -10,7 +10,7 @@ Run from the consuming project's root:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
 
-This installs the complete brain, including full personas in `.pi/agents/`, full skills in `.agents/skills/`, and commands in `.pi/prompts/`. Rerun to update, or add `--dry-run` to preview. See [Pull installation](pull-install.md) for prerequisites, pinning, and update behavior.
+This installs the complete brain, including canonical personas in `agents/`, discovery wrappers in `.agents/skills/`, and commands in `.pi/prompts/`. Rerun to update, or add `--dry-run` to preview. See [Pull installation](pull-install.md) for prerequisites, pinning, and update behavior.
 
 Review the installed resources before granting project trust. Start a new pi session or run `/reload` after updating skills and prompts. Then in the project:
 

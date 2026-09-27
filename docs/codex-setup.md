@@ -44,7 +44,7 @@ From the consuming project's root:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
 
-The pull installs full personas in `.agents/agents/`, full skills in `.agents/skills/`, and the complete brain and references. Rerun to update, or add `--dry-run` to preview. See [Pull installation](pull-install.md) for prerequisites, pinning, and update behavior.
+The pull installs canonical personas in `agents/`, skill discovery wrappers in `.agents/skills/`, and the complete brain and references. Rerun to update, or add `--dry-run` to preview. See [Pull installation](pull-install.md) for prerequisites, pinning, and update behavior.
 
 The installer never writes outside the project. To enable Codex's global custom prompts, explicitly copy the installed local prompts after reviewing them:
 

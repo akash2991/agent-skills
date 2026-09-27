@@ -48,17 +48,14 @@ function runCli(args, opts = {}) {
   });
 }
 
-test('fresh install uses full tool-local copies, state, idempotence, and no global writes', () => {
+test('fresh install, wrappers, state, idempotence, and no global writes', () => {
   const target = tmpDir('fresh');
   const home = tmpDir('home');
   const res = runCli(['pull', '--target', target], { home });
   assert.equal(res.status, 0, res.stderr);
   assert.ok(fs.existsSync(path.join(target, 'AGENTS.md')));
   assert.ok(fs.existsSync(path.join(target, 'SOUL.md')));
-  assert.ok(fs.existsSync(path.join(target, '.agents/skills/coding-standards/SKILL.md')));
-  assert.ok(!fs.existsSync(path.join(target, 'skills')));
-  assert.ok(!fs.existsSync(path.join(target, 'agents')));
-  assert.ok(!fs.existsSync(path.join(target, '.pi/skills')));
+  assert.ok(fs.existsSync(path.join(target, 'skills', 'coding-standards', 'SKILL.md')));
   assert.ok(fs.existsSync(path.join(target, '.claude', 'commands', 'brain.md')));
   assert.ok(fs.existsSync(path.join(target, '.gemini', 'commands', 'brain.toml')));
   assert.ok(fs.existsSync(path.join(target, '.pi', 'prompts', 'brain.md')));
@@ -66,23 +63,20 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.ok(!fs.existsSync(path.join(target, 'README.md')), 'consumer README must not be installed');
   assert.ok(!fs.existsSync(path.join(home, '.codex')), 'installer must not write global codex prompts');
 
-  for (const host of ['.agents', '.claude', '.gemini']) {
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'skills/coding-standards/SKILL.md')), fs.readFileSync(path.join(ROOT, 'skills/coding-standards/SKILL.md')));
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'references/security-checklist.md')), fs.readFileSync(path.join(ROOT, 'references/security-checklist.md')));
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'templates/ADR.md')), fs.readFileSync(path.join(ROOT, 'templates/ADR.md')));
-  }
-  for (const host of ['.agents', '.claude', '.gemini', '.pi']) {
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'agents/backend-engineer.md')), fs.readFileSync(path.join(ROOT, 'agents/backend-engineer.md')));
-  }
-  assert.match(fs.readFileSync(path.join(target, '.claude/commands/brain.md'), 'utf8'), /\.claude\/skills\//);
-  assert.match(fs.readFileSync(path.join(target, '.pi/prompts/brain.md'), 'utf8'), /\.pi\/agents\//);
-  assert.match(fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8'), /\.agents\/skills\//);
+  const canonicalSkill = fs.readFileSync(path.join(target, 'skills', 'coding-standards', 'SKILL.md'), 'utf8');
+  const wrapperSkill = fs.readFileSync(path.join(target, '.claude', 'skills', 'coding-standards', 'SKILL.md'), 'utf8');
+  assert.equal(wrapperSkill.slice(0, canonicalSkill.indexOf('\n---\n') + 5), canonicalSkill.slice(0, canonicalSkill.indexOf('\n---\n') + 5));
+  assert.match(wrapperSkill, /\.\.\/\.\.\/\.\.\/skills\/coding-standards\/SKILL\.md/);
+  assert.match(wrapperSkill, /Resolve any relative references from the canonical skill directory `skills\/coding-standards\/`/);
+
+  const persona = fs.readFileSync(path.join(target, '.claude', 'agents', 'backend-engineer.md'), 'utf8');
+  assert.match(persona, /\.\.\/\.\.\/agents\/backend-engineer\.md/);
 
   const firstState = state(target);
   assert.equal(firstState.schema, 1);
   assert.ok(firstState.files.length > 50);
   assert.ok(firstState.files.every(f => /^[a-f0-9]{64}$/.test(f.sha256) && ['0644', '0755'].includes(f.mode)));
-  const executableScript = firstState.files.find(f => f.path === '.agents/skills/development-setup/scripts/cloud-up.sh');
+  const executableScript = firstState.files.find(f => f.path === 'skills/development-setup/scripts/cloud-up.sh');
   assert.equal(executableScript && executableScript.mode, '0755');
   assert.notEqual(fs.statSync(path.join(target, executableScript.path)).mode & 0o111, 0);
 
@@ -90,51 +84,6 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /already up to date/);
   assert.deepEqual(state(target), firstState);
-});
-
-test('migration replaces wrappers and removes only previously managed root copies', () => {
-  const target = tmpDir('old-layout');
-  const oldFiles = ['skills/coding-standards/SKILL.md', 'agents/backend-engineer.md'];
-  const entries = oldFiles.map(rel => {
-    const content = fs.readFileSync(path.join(ROOT, rel));
-    fs.mkdirSync(path.dirname(path.join(target, rel)), { recursive: true });
-    fs.writeFileSync(path.join(target, rel), content);
-    return { path: rel, sha256: crypto.createHash('sha256').update(content).digest('hex'), mode: '0644' };
-  });
-  fs.mkdirSync(path.join(target, '.agent-brain'));
-  fs.writeFileSync(path.join(target, STATE_PATH), JSON.stringify({ schema: 1, files: entries }));
-  fs.mkdirSync(path.join(target, '.claude/skills/coding-standards'), { recursive: true });
-  fs.writeFileSync(path.join(target, '.claude/skills/coding-standards/SKILL.md'), 'Read ../../../skills/coding-standards/SKILL.md');
-  pullInstall({ sourceRoot: ROOT, target });
-  assert.ok(!fs.existsSync(path.join(target, 'skills')));
-  assert.ok(!fs.existsSync(path.join(target, 'agents')));
-  assert.deepEqual(fs.readFileSync(path.join(target, '.claude/skills/coding-standards/SKILL.md')), fs.readFileSync(path.join(ROOT, 'skills/coding-standards/SKILL.md')));
-  assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
-});
-
-test('existing legacy tool directories receive full copies and unowned files remain', () => {
-  const target = tmpDir('legacy-tools');
-  for (const host of ['.pi', '.hermes']) fs.mkdirSync(path.join(target, host, 'skills'), { recursive: true });
-  fs.mkdirSync(path.join(target, 'skills/custom'), { recursive: true });
-  fs.writeFileSync(path.join(target, 'skills/custom/keep.md'), 'unrelated');
-  pullInstall({ sourceRoot: ROOT, target });
-  for (const host of ['.pi', '.hermes']) {
-    assert.deepEqual(fs.readFileSync(path.join(target, host, 'skills/adrs/SKILL.md')), fs.readFileSync(path.join(ROOT, 'skills/adrs/SKILL.md')));
-    assert.ok(fs.existsSync(path.join(target, host, 'references/security-checklist.md')));
-  }
-  assert.equal(fs.readFileSync(path.join(target, 'skills/custom/keep.md'), 'utf8'), 'unrelated');
-});
-
-test('build copies Terraform sources but excludes generated state and local settings', () => {
-  const source = sourceFixture();
-  const dir = path.join(source, 'skills/development-setup/terraform');
-  fs.mkdirSync(path.join(dir, '.terraform'), { recursive: true });
-  for (const file of ['terraform.tfvars', 'terraform.tfstate', 'terraform.tfstate.backup', '.terraform/private']) fs.writeFileSync(path.join(dir, file), 'do not distribute');
-  const target = tmpDir('terraform-target');
-  pullInstall({ sourceRoot: source, target });
-  const installed = path.join(target, '.agents/skills/development-setup/terraform');
-  assert.ok(fs.existsSync(path.join(installed, 'main.tf')));
-  for (const file of ['terraform.tfvars', 'terraform.tfstate', 'terraform.tfstate.backup', '.terraform']) assert.ok(!fs.existsSync(path.join(installed, file)));
 });
 
 test('dry-run is nonmutating', () => {
@@ -159,13 +108,13 @@ test('ambiguous AGENTS.md refuses before partial writes', () => {
 
 test('brain files are replaced on first install and subsequent pulls without backups', () => {
   const target = tmpDir('replace');
-  const rel = '.agents/skills/test-driven-development/SKILL.md';
+  const rel = 'skills/test-driven-development/SKILL.md';
   fs.mkdirSync(path.dirname(path.join(target, rel)), { recursive: true });
   fs.writeFileSync(path.join(target, rel), 'old copied skill\n');
   fs.writeFileSync(path.join(target, '.env.example'), 'OLD_EXAMPLE=old\n');
   fs.writeFileSync(path.join(target, '.env'), 'PROJECT_PRIVATE=untouched\n');
   pullInstall({ sourceRoot: ROOT, target });
-  const expected = fs.readFileSync(path.join(ROOT, 'skills/test-driven-development/SKILL.md'), 'utf8');
+  const expected = fs.readFileSync(path.join(ROOT, rel), 'utf8');
   assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), expected);
   fs.writeFileSync(path.join(target, rel), 'local edit discarded\n');
   pullInstall({ sourceRoot: ROOT, target });
@@ -206,7 +155,7 @@ test('pullInstall applies updates and prunes unmodified retired files', () => {
   const result = pullInstall({ sourceRoot: source, target });
   assert.match(result.message, /prune retired/);
   assert.equal(fs.readFileSync(path.join(target, 'SOUL.md'), 'utf8'), '# Changed soul\n');
-  assert.ok(!fs.existsSync(path.join(target, '.agents/skills/test-driven-development/SKILL.md')));
+  assert.ok(!fs.existsSync(path.join(target, 'skills', 'test-driven-development', 'SKILL.md')));
   assert.ok(!fs.existsSync(path.join(target, '.claude', 'skills', 'test-driven-development', 'SKILL.md')));
   assert.ok(!state(target).files.some(f => f.path.includes('test-driven-development')));
 });
@@ -222,8 +171,7 @@ test('first install adopts preexisting identical files', () => {
 test('symlink path components are refused', () => {
   const target = tmpDir('symlink');
   const outside = tmpDir('outside');
-  fs.mkdirSync(path.join(target, '.agents'));
-  fs.symlinkSync(outside, path.join(target, '.agents/skills'), 'dir');
+  fs.symlinkSync(outside, path.join(target, 'skills'), 'dir');
   const res = runCli(['pull', '--target', target]);
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /path component is not a directory/);
@@ -288,8 +236,7 @@ test('dangling symlinks at managed paths and state paths are refused without wri
   assert.ok(!fs.existsSync(path.join(finalTarget, '.agent-brain')));
 
   const parentTarget = tmpDir('dangling-parent');
-  fs.mkdirSync(path.join(parentTarget, '.agents'));
-  fs.symlinkSync(path.join(parentTarget, 'missing-dir'), path.join(parentTarget, '.agents/skills'));
+  fs.symlinkSync(path.join(parentTarget, 'missing-dir'), path.join(parentTarget, 'skills'));
   const parentRes = runCli(['pull', '--target', parentTarget]);
   assert.notEqual(parentRes.status, 0);
   assert.match(parentRes.stderr, /path component is not a directory/);
@@ -319,7 +266,7 @@ test('source and target overlap is refused before mutation', () => {
   assert.throws(() => pullInstall({ sourceRoot: source, target: path.join(alias, 'tmp-overlap-target') }), /overlapping source and target/);
 });
 
-test('source frontmatter preserves CRLF exactly and invalid frontmatter fails', () => {
+test('wrapper frontmatter preserves CRLF exactly and invalid frontmatter fails', () => {
   const crlf = '---\r\nname: sample\r\ndescription: Use when testing.\r\n---\r\n# Body\r\n';
   assert.equal(splitFrontmatter(crlf).frontmatter, '---\r\nname: sample\r\ndescription: Use when testing.\r\n---\r\n');
   assert.throws(() => splitFrontmatter('---\nname: missing-description\n---\n# Body\n'), /requires name and description frontmatter/);
@@ -398,7 +345,7 @@ test('foreign state cannot claim Git internals or arbitrary project files', () =
 });
 
 test('dangling symlinks at files, parents, and state are refused before writes', () => {
-  for (const rel of ['AGENTS.md', '.agents/skills', '.agent-brain', STATE_PATH]) {
+  for (const rel of ['AGENTS.md', 'skills', '.agent-brain', STATE_PATH]) {
     const target = tmpDir('dangling');
     const dest = path.join(target, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -476,14 +423,6 @@ test('AGENTS.md updates shared content while preserving only the project section
   assert.ok(fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8').endsWith('Project-only edit\n'));
 });
 
-test('AGENTS migration repairs only exact installed brain paths in project notes', () => {
-  const target = tmpDir('project-paths');
-  fs.writeFileSync(path.join(target, 'AGENTS.md'), '# Old shared\n\n## This project\nBrownfield note. Run `skills/linear/scripts/create-workflow.sh`. Keep `skills/custom/tool.sh`.\n');
-  pullInstall({ sourceRoot: ROOT, target });
-  const installed = fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8');
-  assert.match(installed, /Brownfield note\. Run `\.agents\/skills\/linear\/scripts\/create-workflow\.sh`\. Keep `skills\/custom\/tool\.sh`/);
-});
-
 test('project section merging keeps source sections after it and rejects duplicates', () => {
   const source = '# Shared\n\n## This project\nDefault\n\n## More shared rules\nNew\n';
   const current = '# Old\n\n## This project\nLocal\n\n## More shared rules\nOld\n';
@@ -491,7 +430,7 @@ test('project section merging keeps source sections after it and rejects duplica
   assert.throws(() => mergeProjectAgents(source, current + '\n## This project\nDuplicate\n'), /exactly one/);
 });
 
-test('source frontmatter accepts CRLF and rejects missing metadata', () => {
+test('frontmatter wrappers preserve CRLF and reject missing metadata', () => {
   const frontmatter = '---\r\nname: example\r\ndescription: Example skill\r\n---\r\n';
   assert.equal(splitFrontmatter(`${frontmatter}body`).frontmatter, frontmatter);
   assert.throws(() => splitFrontmatter('# No metadata'), /requires name and description/);
