@@ -12,3 +12,8 @@ evals/results/
 evals/plugin/results/
 __pycache__/
 build/
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.tfplan

@@ -6,6 +6,18 @@ How agents develop on shared EC2 machines and build the mobile app under `develo
 
 An agent never creates these; when one is missing, the script names it and the agent asks the user.
 
+The network, access, and deadline role are Terraform in `terraform/`, applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (SSH from the listed addresses only), the `brain-dev` key pair, the `brain-dev-scheduler` role, and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
+
+```bash
+cd skills/development-setup/terraform
+cp terraform.tfvars.example terraform.tfvars      # the profile, each developer's /32, the public key
+./init.sh <aws-profile>
+terraform plan -out=dev.tfplan && terraform apply dev.tfplan
+terraform output -raw env                         # paste into the project's .env
+```
+
+A new developer's address is a line in `ssh_cidrs` and another apply; an address that changed is replaced the same way.
+
 | `.env` variable | What it is |
 |---|---|
 | `AWS_PROFILE` | the profile the scripts run as; its credentials stay on this machine (DS15) |
