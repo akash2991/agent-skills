@@ -25,14 +25,14 @@ How any requirement is planned and shipped: `main` is always releasable, the app
 | --- | --- |
 | L1 | **Semver, and a changelog.** A changelog is maintained globally and per service; every merged task adds a line; every release publishes a changelog entry that lists its tickets. |
 | L2 | **Every merged change is deployable; `main` is always releasable:** CI is green, migrations are backward compatible for one release, and anything incomplete is behind a flag that defaults off. A change that cannot be deployed on its own is not ready to merge. |
-| L3 | **A progressively usable product: the app works at every point.** Create one API, test it, commit it, then the next; never make the product unusable to make progress, however large the scope. Stories and sprints are cut so the user gets usable increments. "Localhost keeps working after every commit" is an explicit acceptance criterion on every task, because historically it was not met. |
+| L3 | **A progressively usable product: the app works at every point.** Create one API, test it, commit it, then the next; never make the product unusable to make progress, however large the scope. Every delivery sprint (a Linear cycle) lands a working product and a demonstrable usable increment toward the full scope. Individual contract, schema, or documentation tickets may be prerequisites, but a cycle of only isolated layers or documents is not a delivered product increment. "Localhost keeps working after every commit" is an explicit acceptance criterion on every task, because historically it was not met. |
 | L4 | **Feature flags, and code without an entry point, for what is not ready.** Flags default off. |
 | L5 | **An MVP ships first for any requirement, however big; the original scope continues after.** Discovered work is classified before it enters scope; only MVP requirements and MVP blockers enter automatically. |
 | L6 | **Where slicing is technically impossible (some migrations), say so on the ticket.** The user may ask for one-shot development, the whole change in one pass with one round of testing, when speed is required: only on an explicit user instruction, recorded in `docs/LEARNINGS.md` and noted on the ticket. |
 
 ## Planning recipe for a large scope
 
-1. Get the API contract, the DB model, and every dependency's shape resolved before parallel work starts.
+1. Invoke `planning-and-task-breakdown` for scope, design readiness, and decomposition before applying the shipping rules below.
 2. Cut the MVP; everything else stays on the ticket as later scope (L5).
 3. Order the slices so each leaves the app working; put unfinished paths behind a flag or leave them without an entry point (L3, L4).
 4. One API at a time: implement, test, commit, PR (L3).
@@ -68,6 +68,7 @@ How any requirement is planned and shipped: `main` is always releasable, the app
 Before a slice merges, confirm:
 
 - [ ] The app works after this change alone; localhost still runs (L3).
+- [ ] At delivery-cycle close, the planned usable increment has been exercised end to end; completed prerequisites alone are not reported as a product outcome (L3).
 - [ ] CI is green; migrations are backward compatible for one release; incomplete paths are behind a flag defaulting off or have no entry point (L2, L4).
 - [ ] The MVP is cut and later scope stays on the ticket (L5).
 - [ ] Semver bumped and changelog line added on merge (L1).
