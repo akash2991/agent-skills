@@ -58,10 +58,11 @@
     {
       "id": 1,
       "kind": "dialogue",
-      "prompt": "You are starting ticket PROJ-42 (add a webhook endpoint, consumed by the web client) on a repository other agents are also working on. Set up your environment, say what must exist before you and the frontend engineer can work in parallel, and describe what you will remove when done.",
-      "expected_output": "A worktree created from the project root at <project-root>/PROJ-42-<slug>, own Docker containers and LocalStack for the touched services, a database snapshot or seed, the API contract written first so the frontend mocks it while the backend returns labelled mock data, dependency shapes resolved before code, the app and tests run inside that environment, and the worktree, containers and snapshot removed after the PR is opened",
+      "prompt": "You are the main agent starting backend ticket PROJ-42 (add a webhook endpoint), while a frontend subagent starts ticket PROJ-43 (consume that endpoint) in parallel. Set up and name both agents' environments, say what must exist before you can work in parallel, and describe what you will remove when done.",
+      "expected_output": "Each agent gets a worktree beside the main repository at <workspace-root>/<ticket>-<slug>, sharing <workspace-root> with <workspace-root>/<repo-name> and never nested inside the repository; each main agent and subagent has the exact visible runtime name of its own worktree basename so its ticket is apparent during parallel work; own Docker containers and LocalStack for the touched services, a database snapshot or seed, the API contract written first so the frontend mocks it while the backend returns labelled mock data, dependency shapes resolved before code, the app and tests run inside that environment, and the worktree, containers and snapshot removed after the PR is opened",
       "expectations": [
-        "The git worktree is created at the project root, never inside the harness's directory",
+        "Each agent's git worktree is created beside the main repository so both share the same parent directory; it is never nested inside the repository or a harness directory",
+        "The main agent and every subagent have a visible runtime name exactly matching their own worktree basename, <ticket>-<slug>; persona, role, and harness id remain separate",
         "Docker containers and LocalStack are started for the services touched and not reused from another agent",
         "The database is snapshotted or seeded for this agent",
         "The API contract is written before frontend and backend work in parallel; the frontend mocks it and the backend returns labelled mock data",

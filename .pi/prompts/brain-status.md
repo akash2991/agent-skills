@@ -1,11 +1,13 @@
 ---
-description: Show the main agent and every subagent with persona, skills, tools, model, harness, thinking effort, and ticket
+description: Show the main agent and every subagent with runtime name, worktree, persona, skills, tools, model, harness, thinking effort, and ticket
 ---
 
 Print the current state of the agents in this session, the main agent (you) first, then every subagent you started, one block each:
 
 ```
 Agent: main | subagent <id>
+Runtime Name: <exact worktree basename or ->
+Worktree: <path or ->
 Persona: <name>
 Skills: <loaded, in load order>
 Tools: <in use>

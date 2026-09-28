@@ -1,6 +1,6 @@
 ---
 name: development-setup
-description: How development is set up before any code is written, run, tested, debugged, or built, with rule ids DS1–DS17 — every agent's own isolated environment (a git worktree at the project root, never in the harness or agent-brain directory; its own Docker containers; LocalStack for AWS; a database snapshot or seed; optional private observability; cleanup after the PR), shared EC2 dev machines (several agents per machine, metrics deciding when another launches, a larger type only with explicit permission, unused machines terminated), Android builds on EC2 by default, iOS builds on EAS Build with explicit permission, and parallel work (API contract first, backend services concurrent once the DB model and contracts are fixed, a dependency's shape resolved first). Use when starting any task that writes, runs, tests, debugs, or builds code, when development or an Android or iOS build runs on a cloud machine, or when several agents, or the frontend and the backend, work on one repository at once.
+description: Development setup rules DS1–DS17 for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, matching main-agent and subagent names, independent Docker containers, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus shared EC2 dev machines with capacity and cost guards, Android builds on EC2, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when development or a mobile build runs in the cloud; or when agents, frontend, and backend work on one repository concurrently.
 category: delivery
 ---
 
@@ -23,7 +23,7 @@ What is in place before development starts: an environment that belongs to this 
 | ID | Rule |
 | --- | --- |
 | DS1 | **Every agent creates its own environment.** Everything below is ephemeral and belongs to this agent only; the user's checkout stays untouched. |
-| DS2 | **A git worktree at the project root**, `<project-root>/<ticket>-<slug>`, never inside the harness's directory (not a `herdr` root or a `claude` root) or the agent brain. Removed after the PR is open. |
+| DS2 | **A git worktree beside the main repository, never inside it, with the agent named after it.** If the main checkout is `<workspace-root>/<repo-name>`, create the worktree at `<workspace-root>/<ticket>-<slug>` so both directories share the same parent. The visible runtime name of each main agent and subagent is exactly the basename of that agent's assigned worktree, `<ticket>-<slug>`; persona, role, and immutable harness IDs remain separate metadata. The worktree also never belongs inside a harness directory (such as a `herdr` or `claude` root) or the agent brain. Remove it after the PR is open. |
 | DS3 | **The service runs in its own Docker containers**; Docker is the local development standard. Never reuse another agent's containers. |
 | DS4 | **LocalStack mocks AWS.** The app never calls a real AWS service from a development environment, local or on EC2; an EC2 machine hosts the environment, it is not a backend for the app. |
 | DS5 | **Its own data:** a snapshot of the database or a seed script. Never the shared database. |
@@ -55,7 +55,7 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 ## Procedure
 
 1. Decide where the work runs: this machine by default, EC2 when the user or the ticket says so or this machine cannot run the stack. An Android build goes to EC2 by default; an iOS build goes to EAS only with explicit user permission (DS16).
-2. Locally: `git worktree add <project-root>/<ticket>-<slug>` from the project root (DS2). In the cloud: `scripts/cloud-reap.sh`, then `scripts/cloud-up.sh <ticket>`, which joins a machine with headroom or launches one; clone the branch into `~/work/<ticket>-<slug>` (DS10–DS14, [cloud.md](cloud.md)).
+2. Locally: from the main repository, run `git worktree add ../<ticket>-<slug>` so the worktree is its sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts. In the cloud, apply the same naming rule to the clone at `~/work/<ticket>-<slug>`; run `scripts/cloud-reap.sh`, then `scripts/cloud-up.sh <ticket>`, which joins a machine with headroom or launches one (DS2, DS10–DS14, [cloud.md](cloud.md)).
 3. Start Docker and LocalStack for the services you touch (DS3, DS4), in the cloud as the Compose project `<ticket>-<slug>` on your own ports; snapshot or seed the database (DS5).
 4. Confirm the API contract, DB model, and every dependency's shape exist for the slice you are about to build (DS7–DS9); if not, that is the first task, not a thing to work around.
 5. Work; run the app and tests inside this environment. In the cloud, push before every pause (DS15).
@@ -72,7 +72,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 | Rationalization | Reality |
 |---|---|
 | "I'll just work in the user's checkout." | Every agent creates its own environment; the user's checkout stays untouched (DS1). |
-| "The harness directory is a convenient place for the worktree." | The worktree lives at the project root, never in the harness's directory (DS2). |
+| "The main repository or harness directory is a convenient place for the worktree." | The worktree is a sibling of the main repository: both share one parent, but neither contains the other (DS2). |
+| "A role-based agent name is more descriptive." | The persona and role are separate metadata. The visible runtime name exactly matches the worktree basename so parallel agents reveal their ticket at a glance (DS2). |
 | "Another agent's containers are already running, I'll reuse them." | Everything is ephemeral and belongs to this agent only (DS3). |
 | "I'll hit real AWS / the shared database for this test." | LocalStack and your own snapshot or seed (DS4, DS5). |
 | "I'll clean up the worktree later." | Open the PR, then remove the worktree, containers, and snapshot (DS2). |
@@ -92,7 +93,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 ## Red Flags
 
 - Code changes appearing in the user's checkout instead of an agent worktree (DS1).
-- A worktree created inside the harness's directory or the agent brain (DS2).
+- A worktree created inside the main repository, a harness directory, or the agent brain instead of beside the main repository (DS2).
+- A main agent or subagent whose visible runtime name differs from its assigned worktree basename, including a persona or role appended to the name (DS2).
 - Two agents sharing a container, a database, or a worktree (DS3, DS5).
 - Tests run against real AWS or a shared database (DS4, DS5).
 - Worktrees, containers, or snapshots left behind after the PR is open (DS2).
@@ -109,7 +111,7 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 
 Before starting work:
 
-- [ ] A git worktree exists at `<project-root>/<ticket>-<slug>`, created from the project root (DS2); or, in the cloud, `cloud-up.sh` placed you on a machine with headroom or launched the default type, or a type the user approved on the ticket (DS10–DS12).
+- [ ] Each main agent and subagent has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is exactly that worktree's basename (DS2); or, in the cloud, `cloud-up.sh` placed you on a machine with headroom or launched the default type, or a type the user approved on the ticket (DS10–DS12).
 - [ ] For an Android build, EC2 was used, or the override to EAS is recorded on the ticket; for an iOS build, explicit user permission is recorded (DS16).
 - [ ] Docker containers and LocalStack are running for the services you touch and belong to this agent only (DS3, DS4).
 - [ ] The database is snapshotted or seeded for this agent (DS5).

@@ -64,8 +64,10 @@ pane=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdi
 - **`--label`** every tab with its role (`reviewer:auth`, `design:mvp`,
   `research:pricing`) — the labels are your at-a-glance dashboard.
 - **`--cwd "$PWD"`** shares this checkout. For agents that will *write* in
-  parallel and could collide, give each its own git worktree instead — that's
-  the `herdr-worktree-agent` skill; read-only reviewers can safely share.
+  parallel and could collide, give each its own git worktree instead and use
+  that worktree's exact basename as the agent's visible runtime name
+  (`development-setup` DS2) — `herdr-worktree-agent` supplies the worktree
+  procedure; read-only reviewers can safely share.
 
 Then start an agent in that pane and **fire the brief without `--wait`**, so you
 can launch the next slice while this one works. **Address the agent by its pane

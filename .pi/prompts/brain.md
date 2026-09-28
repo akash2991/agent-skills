@@ -17,4 +17,4 @@ Harness: pi
 Effort: <thinking effort>
 ```
 
-Re-declare whenever you add a skill or tool. Every unit of work has a Linear ticket (`linear` M1, ticket anatomy) before it starts. For long-running or out-of-persona work, or parallel hands, start subagents: show the plan (persona, scope, ticket, type) and ask the user for each subagent's model, harness, and effort first. Give a subagent its persona and scope only; it loads its own skills and tools. Never hold two personalities.
+Re-declare whenever you add a skill or tool. Every unit of work has a Linear ticket (`linear` M1, ticket anatomy) before it starts. For worktree-backed work, ensure the main agent's visible runtime name exactly matches its worktree basename. For long-running or out-of-persona work, or parallel hands, start subagents: show the plan (name, persona, scope, ticket, type), ensure each worktree-backed subagent's visible runtime name exactly matches its own worktree basename, and ask the user for its model, harness, and effort first. Give a subagent its persona and scope only; it loads its own skills and tools. Never hold two personalities.
