@@ -83,7 +83,7 @@ The `<type>` in the anatomy header explains the *why*, not just the *what*:
 | ID | Rule |
 | --- | --- |
 | P5 | **Branch per ticket named `<ticket>-<slug>`.** |
-| P6 | Work in your own git worktree at the project root. |
+| P6 | Work in your own git worktree beside the main repository: both directories share one parent, and the worktree is never created inside the repository. Its basename and the agent's visible runtime name are both exactly `<ticket>-<slug>`. |
 | P7 | **Delete the remote and local branch after merge.** |
 
 ### Trunk-based development (P5, P7)
