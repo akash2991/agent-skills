@@ -24,17 +24,22 @@ you ──▶ /brain-status                   who is running what, on which mode
 
 ## Use it
 
+Run this **inside the repository that wants the brain** (Node.js 22+, npm, and Git):
+
 ```bash
-node scripts/build-brain.js          # assemble build/ from manifest.json
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
 
-Then follow `build/README.md` to copy the brain into a project, and start a session there with `/brain`. Or install this repository as a plugin the way upstream does (`docs/getting-started.md`). The `/brain` and `/brain-status` commands ship for Claude Code, Gemini CLI, Antigravity, and pi (`docs/pi-setup.md`).
+Run it again to pull updates; add `--dry-run` to preview them. The command installs the selected skills, personas, references, templates, project instructions, and `/brain` commands. Brain-owned files are replaced from this repo. Only the `## This project` section of an existing `AGENTS.md` is preserved; the shared instructions are updated. Use Git for history and rollback—no backups are created. Nothing is pushed into consuming repos or written to global tool configuration.
+
+See [Pull installation](docs/pull-install.md) for version pinning, update behavior, and installing from a local checkout. Start a new agent session with `/brain`; host details are in [pi setup](docs/pi-setup.md) and [Codex setup](docs/codex-setup.md). The upstream skills-only/plugin approach remains available in [Getting Started](docs/getting-started.md).
 
 ## Change it
 
 - New skill: `skills/<name>/SKILL.md` per [docs/skill-anatomy.md](docs/skill-anatomy.md), an eval case in `evals/cases/`, a line in `manifest.json`. A skill copied from elsewhere may keep its shape until it is refactored after its eval.
 - New persona: `agents/<name>.md` per [docs/persona-anatomy.md](docs/persona-anatomy.md), a line in `manifest.json` and in `project/AGENTS.md`.
-- Checks: `node scripts/validate-skills.js`, `validate-agents.js`, `validate-reference-links.js`, `validate-commands.js`, `run-evals.js --min-rank1 80`.
+- Checks: `node scripts/validate-skills.js`, `validate-agents.js`, `validate-reference-links.js`, `validate-commands.js`, `run-evals.js --min-rank1 95`, and `node --test scripts/agent-brain-pull-test.js`.
+- Assemble a bundle for inspection: `node scripts/build-brain.js` → `build/`. Consumers use the pull command instead of copying that output.
 
 `Goal.md` and `User.md` are the owner's requirements and are never edited by agents.
 

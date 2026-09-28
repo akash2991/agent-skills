@@ -38,16 +38,22 @@ Slash commands in `.claude/commands/` and personas in `agents/` stay Claude Code
 
 Codex reads `AGENTS.md` from the project root, skills from `.agents/skills/`, and custom prompts from `~/.codex/prompts/` only (prompts are not read from the repository). The brain's `/brain` and `/brain-status` prompts ship in `.codex/prompts/` in the same format Codex expects (`description` and `argument-hint` front matter, `$ARGUMENTS` for the arguments); copy them into the home directory.
 
+From the consuming project's root:
+
 ```bash
-node scripts/build-brain.js                            # in this repository
-cp build/AGENTS.md build/SOUL.md /path/to/project/
-cp -r build/references build/templates /path/to/project/
-mkdir -p /path/to/project/.agents
-cp -r build/skills /path/to/project/.agents/skills
-cp -r build/agents /path/to/project/.agents/agents     # personas, read by /prompts:brain
-mkdir -p ~/.codex/prompts
-cp build/.codex/prompts/brain*.md ~/.codex/prompts/
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
+
+The pull installs full personas in `.agents/agents/`, full skills in `.agents/skills/`, and the complete brain and references. Rerun to update, or add `--dry-run` to preview. See [Pull installation](pull-install.md) for prerequisites, pinning, and update behavior.
+
+The installer never writes outside the project. To enable Codex's global custom prompts, explicitly copy the installed local prompts after reviewing them:
+
+```bash
+mkdir -p ~/.codex/prompts
+cp -n .codex/prompts/brain*.md ~/.codex/prompts/
+```
+
+`cp -n` preserves existing global prompts. Compare and update them manually if you already have older versions. Restart Codex after installation.
 
 Then in the project:
 

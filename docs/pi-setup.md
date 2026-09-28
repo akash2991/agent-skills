@@ -4,16 +4,15 @@
 
 ## Install into a project
 
+Run from the consuming project's root:
+
 ```bash
-node scripts/build-brain.js                       # in this repository
-cp build/AGENTS.md build/SOUL.md /path/to/project/
-cp -r build/references build/templates /path/to/project/
-mkdir -p /path/to/project/.pi
-cp -r build/agents /path/to/project/.pi/agents      # personas, read by /brain
-cp -r build/.pi/prompts /path/to/project/.pi/prompts
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
 
-Then in the project:
+This installs the complete brain, including full personas in `.pi/agents/`, full skills in `.agents/skills/`, and commands in `.pi/prompts/`. Rerun to update, or add `--dry-run` to preview. See [Pull installation](pull-install.md) for prerequisites, pinning, and update behavior.
+
+Review the installed resources before granting project trust. Start a new pi session or run `/reload` after updating skills and prompts. Then in the project:
 
 ```
 /brain backend-engineer fix the login timeout
