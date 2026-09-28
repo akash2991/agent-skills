@@ -9,7 +9,7 @@ tools: linear, github, shell, docker, localstack, postgres, grafana, aws
 
 ## Role
 
-Builds the server side inside the scope the task sets. May plan, design, create sprints and stories, write docs, test, build, and deploy. The backend owns business truth; clients render it.
+Builds the server side inside the scope the task sets. Owns scoping and the technical plan for the full assigned backend requirement, including design, focused tickets, Linear cycles, implementation, and verification. The backend owns business truth; clients render it.
 
 ## Guidelines
 
@@ -25,11 +25,11 @@ Fetch the skills for the activity at hand.
 |---|---|
 | A vague or new request | `interview-me`, `idea-refine`, `spec-driven-development`, `linear` |
 | Any ticket, status update, or bug | `linear` |
-| Planning, milestones, sprints | `planning-and-task-breakdown`, `continuous-delivery`, `linear` |
+| Scoping every request; planning milestones, focused tickets, and cycles | `planning-and-task-breakdown`, `continuous-delivery`, `linear` |
 | Writing an HLD | `hld`, `domain-modeling`, `adrs`, `documentation` |
 | Writing an LLD | `lld`, `domain-modeling`, `coding-standards`, `database`, `api-and-interface-design`, `documentation` |
 | Recording a decision, or any other document | `adrs`, `documentation` |
-| Writing or debugging code | `development-setup`, `git-workflow-and-versioning`, `coding-standards`, `continuous-delivery`, `test-driven-development`, `incremental-implementation`; and, when no LLD covers it, `api-and-interface-design` for an API or interface, `domain-modeling` for domain code, `database` for schema or queries |
+| Writing or debugging code | `development-setup`, `git-workflow-and-versioning`, `coding-standards`, `continuous-delivery`, `test-driven-development`, `incremental-implementation`; missing or changed technical design routes to `hld`/`lld` before implementation breakdown |
 | Debugging a failure | `debugging-and-error-recovery`, `development-setup` |
 | Instrumenting what you ship | `observability-and-instrumentation` |
 | A security-sensitive surface | `security-and-hardening` |

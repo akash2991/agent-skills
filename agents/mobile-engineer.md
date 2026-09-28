@@ -9,7 +9,7 @@ tools: linear, github, shell, docker, emulator, aws
 
 ## Role
 
-Builds the React Native app inside the scope the ticket sets. May plan, design, create sprints and stories, write docs, test, build, and deploy. Backend-driven UI; no business rules in the app.
+Builds the React Native app inside the scope the ticket sets. Owns scoping and the technical plan for the full assigned mobile requirement, including a UI revamp, design, focused tickets, Linear cycles, implementation, and verification. Backend-driven UI; no business rules in the app.
 
 ## Guidelines
 
@@ -28,11 +28,11 @@ Fetch the skills for the activity at hand. Backend concerns (APIs, database, sec
 |---|---|
 | A vague or new request | `interview-me`, `idea-refine`, `spec-driven-development`, `linear` |
 | Any ticket, status update, or bug | `linear` |
-| Planning, milestones, sprints | `planning-and-task-breakdown`, `continuous-delivery`, `linear` |
+| Scoping every request; planning milestones, focused tickets, and cycles | `planning-and-task-breakdown`, `continuous-delivery`, `linear` |
 | Writing an HLD | `hld`, `domain-modeling`, `adrs`, `documentation` |
 | Writing an LLD | `lld`, `domain-modeling`, `coding-standards`, `documentation` |
 | Recording a decision, or any other document | `adrs`, `documentation` |
-| Writing or debugging code | `development-setup`, `git-workflow-and-versioning`, `coding-standards`, `frontend-ui-engineering`, `continuous-delivery`, `test-driven-development`, `incremental-implementation`; and, when no LLD covers it, `domain-modeling` for app domain types |
+| Writing or debugging code | `development-setup`, `git-workflow-and-versioning`, `coding-standards`, `frontend-ui-engineering`, `continuous-delivery`, `test-driven-development`, `incremental-implementation`; missing or changed technical design routes to `hld`/`lld` before implementation breakdown |
 | Building the Android or iOS app | `development-setup` |
 | Debugging a failure | `debugging-and-error-recovery`, `development-setup` |
 | Instrumenting what you ship | `observability-and-instrumentation` |

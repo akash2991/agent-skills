@@ -10,14 +10,14 @@ category: design
 
 Two altitudes, one skill. The **project** architecture in `docs/ARCHITECTURE.md` says which services exist, what each is for, and where the API reference is. A **feature or service** `HLD.md` says the boundaries, the APIs by name, the domain model, and the scale it is sized for. Anyone with this skill may write either; keep to the altitude of the document you are writing. An HLD makes parallel work possible without rework: it fixes boundaries and API names, and deliberately not internals or exact contracts, which belong to `lld`.
 
-The HLD is kept very high level and **calls out what is left to figure out in the LLD**. Not every feature needs an HLD or LLD. The anatomy is `templates/HLD.md`; the process below fills it.
+The HLD is kept very high level and **calls out what is left to figure out in the LLD**. Not every request needs new documents: reuse current, reviewed design that covers it; resolve missing technical design before detailed implementation breakdown. The anatomy is `templates/HLD.md`; the process below fills it.
 
 ## When to Use
 
 - A reviewed PRD touches more than one module or service, or introduces a new one.
 - A cross-service interaction must change.
 - Asked for an HLD, design doc, architecture proposal, tech spec, or "how should we design X".
-- NOT for a single-service change with existing APIs; update the service `HLD.md` directly in the PR.
+- A single-service change may reuse the current HLD; if boundaries or interactions change, review the affected sections before planning dependent implementation.
 - NOT for internals: folder layout, types, exact contracts, and patterns belong to `lld`.
 
 ## Process
@@ -36,13 +36,13 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 10. **SLOs** for the critical paths at the level the PRD justifies; **observability** at high level: metrics and log points (`../../references/metrics-and-logging.md`). Detail belongs in code.
 11. **Sketches for the LLD** only where parallel work needs them before the LLD exists; **left to the LLD** says what this document does not decide.
 12. **Diagrams as code**: `hld.drawio` next to the file, Mermaid inline.
-13. **Hand off**: write it where `../../references/documentation-map.md` says; give it to the user for review; then plan with `planning-and-task-breakdown`, then `lld`.
+13. **Hand off**: write it where `../../references/documentation-map.md` says and obtain user review. Resolve the contracts and internals left open through `lld`, with review, before `planning-and-task-breakdown` derives dependent implementation tickets. Earlier high-level placeholders are provisional, not executable scope.
 
 ## Interaction with other skills
 
 - Upstream: `prd-writing`; the HLD starts from a reviewed PRD.
 - Alongside: `domain-modeling` for the glossary and domain models; `adrs` for every decision worth preserving; `documentation` for how the document is written, rendered, and stored.
-- Downstream: `planning-and-task-breakdown`, then `lld`, which decides the internals and exact contracts this document leaves open.
+- Downstream: `lld` decides the internals and exact contracts left open; `planning-and-task-breakdown` derives precise implementation issues from the applicable reviewed design.
 
 ## Common Rationalizations
 
@@ -55,7 +55,7 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 | "The interface can be defined during implementation." | Then two services implement two interfaces. Names and interactions come first; the contract follows in the LLD. |
 | "We may need to scale, so design for it now." | Design for the estimated scale. Record scale as a later concern. |
 | "The design is obvious, skip the review." | Every HLD, LLD, and PRD is reviewed by the user. |
-| "Every feature needs a full HLD." | Not every feature needs an HLD or LLD, and sections can be skipped with a reason. |
+| "Every feature needs a new full HLD." | Reuse current reviewed design where it applies; fill missing design before detailed implementation planning, and skip inapplicable sections with a reason. |
 
 ## Red Flags
 

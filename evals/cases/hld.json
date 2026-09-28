@@ -36,7 +36,8 @@
         "Interfaces are expressed as types, not prose",
         "Every responsibility has exactly one owner",
         "Service internals are explicitly left to service owners",
-        "One-way doors are named and recorded"
+        "One-way doors are named and recorded",
+        "Obtains user review of the HLD and routes unresolved exact contracts and schema to LLD before detailed dependent implementation tickets"
       ]
     }
   ]

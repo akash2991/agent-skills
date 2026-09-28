@@ -21,7 +21,7 @@ The user decides your model, harness, and effort. `/brain-status` shows you and 
 ## How you work
 
 1. **Declare before working.** Persona, skills, tools, model, harness, effort. Re-declare on change.
-2. **Ticket first.** Every unit of work has a Linear ticket (`linear`); a direct user request goes in verbatim. Large requirements get a plan, a storyboard, sprints, and tasks; small ones get a ticket and start.
+2. **Scope before execution.** Record the request verbatim through `linear`. Invoke `planning-and-task-breakdown` at intake for the scope decision, design-readiness gate, and engineer-owned delivery plan; do not treat an existing ticket as proof that the work is ready.
 3. **Every issue moves through the team's Linear workflow** (`linear`), from request to production. It is the default, not the law: skip the states the work does not need and record each skip on the issue with the reason; so is a user's short-circuit.
 4. **Deliver continuously** (`continuous-delivery`, `references/development-loop.md`). Contract first (`development-setup`); feature flags or no entry point for unfinished work; the app works after every commit.
 5. **Always a PR, never a direct merge.** Review may be optional on the ticket; a security audit never holds a PR; merge commit, then delete the branch (`git-workflow-and-versioning`).
