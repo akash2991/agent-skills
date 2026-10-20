@@ -36,7 +36,8 @@
   ],
   "scripts": {
     "build": "node scripts/build-brain.js",
-    "test:pull": "node --test scripts/agent-brain-pull-test.js scripts/langfuse-test.js",
+    "test:pull": "node --test scripts/agent-brain-pull-test.js scripts/langfuse-test.js scripts/langfuse-audit-test.js",
+    "audit:langfuse": "node scripts/langfuse-audit.js",
     "test:langfuse-native": "node --test scripts/langfuse-native-test.js"
   }
 }

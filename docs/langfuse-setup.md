@@ -1,5 +1,7 @@
 # Automatic development-session tracing with Langfuse
 
+**Security warning:** the [live privacy/subagent audit](langfuse-audit-2026-10-20.md) reproduced persisted synthetic secrets/PII in both harnesses and a missing Pi/Herdr child subtree. The shipped setup is not verified safe for sensitive content. This audit follow-up documents and detects the failures; it does not fix them.
+
 The brain can register the official **Pi and Claude Code** plugins together. This traces development sessions, not the consuming application's own AI calls. Ordinary brain imports do not enable telemetry.
 
 ## Install into a consuming repository
@@ -68,7 +70,7 @@ Once the per-developer credential configuration and project approvals are comple
 | Pi plugin 0.1.2 | Turns, separate generations, tools, token/cache/reasoning-token usage, available costs, images; session grouping and cwd/Git-branch metadata | Partial generation inputs, not full model context/reasoning text or thinking-level labels. Child Pi roots are spans; propagation requires launchers to preserve parent environment and load the plugin. |
 | Claude plugin 1.2.1 | Transcript-based Stop/SessionEnd hooks; turns, generations, token/cache usage/costs, tools, reasoning blocks, skills, subagents, images; session grouping | Depends on Claude's transcript format and hook runtime. In the live test, a synthetic tool-call transcript row produced an extra model-less/no-usage generation alongside two priced generations. Do not equate observation count to billed model requests. |
 
-There is no custom project-prefixed session ID/persona naming convention and no automatic unified cross-harness session. Each plugin uses its own harness's session identity. Other harnesses, Claude Desktop Chat mode, and the application's runtime are not instrumented. Real child-agent propagation, reasoning capture, image uploads, and all failure paths have not been live-verified by this repository.
+There is no custom project-prefixed session ID/persona naming convention and no automatic unified cross-harness session. Each plugin uses its own harness's session identity. Other harnesses, Claude Desktop Chat mode, and the application's runtime are not instrumented. Real child-agent propagation has now been tested with mixed results; see the [audit and remediation criteria](langfuse-audit-2026-10-20.md). Reasoning capture, image uploads, and all failure paths remain unverified.
 
 ## Privacy and disabling
 
