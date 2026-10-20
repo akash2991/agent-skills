@@ -14,15 +14,15 @@ Preview without changing files:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --dry-run
 ```
 
-## Optional automatic Langfuse tracing (Pi)
+## Optional automatic Langfuse tracing (Pi and Claude Code)
 
 ```bash
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --langfuse
 ```
 
-Explicitly opts this repository into the official Pi plugin (`@langfuse/pi-observability-plugin@0.1.2`). Requires Pi on PATH and a project you have chosen to trust in Pi, and delegates registration to its native project package installer, preserving unrelated settings. Configure credentials once per developer, outside Git; see [Pi tracing setup, privacy, and verification](pi-setup.md#automatic-langfuse-tracing). Session prompts, outputs, tool data, and images are uploaded when tracing is enabled. Other harnesses are not instrumented by this flag.
+Explicitly opts this repository into both official plugins: Pi `0.1.2` and Claude Code `1.2.1`. Requires both CLIs, a runtime for Claude's Python hook, and a project you have chosen to trust in Pi. Registration is delegated to native project-scoped package/plugin managers, preserving unrelated settings and hooks. Configure credentials once per developer for each harness, outside Git; see [Langfuse setup, privacy, and verification](langfuse-setup.md). After setup and approvals, new sessions in both harnesses trace automatically. Prompts, outputs, tool data, and images can be uploaded. Other harnesses and the application's own runtime are not instrumented.
 
-`--dry-run --langfuse` only describes registration and does not invoke Pi. Missing Pi, malformed settings, and unsafe settings paths fail before brain writes. Package installation happens after the brain pull; if it fails (including a project-trust refusal), brain files remain installed and the error gives the native retry command. For a fresh/untrusted repo, review the installed files and start Pi to make your trust decision before retrying. Commit `.pi/settings.json`, ignore `.pi/npm/`, and start a new trusted Pi session. Subsequent pulls without the flag preserve Pi registration. No automatic credential copying, trust grant, or global package registration occurs.
+`--dry-run --langfuse` describes both registrations without invoking CLIs. Missing CLI/runtime, malformed settings, and unsafe settings paths fail before brain writes. Package installation happens after the brain pull; failures can leave the brain and/or Pi setup installed. Errors describe the partial state and retry action. For a fresh/untrusted repo, review the installed files and start Pi to make your trust decision before retrying. Commit `.pi/settings.json` and `.claude/settings.json`, ignore `.pi/npm/`, and start new approved sessions in each harness. Subsequent pulls without the flag preserve both registrations. No automatic credential copying, saved trust grant, or globally enabled plugin is introduced; native managers may maintain per-user caches/install records.
 
 ## Ownership and updates
 
@@ -30,7 +30,7 @@ Explicitly opts this repository into the official Pi plugin (`@langfuse/pi-obser
 
 **Only `AGENTS.md` is patched:** shared sections come from the current brain, while the existing `## This project` instructions are preserved. Exact links to relocated brain files are adjusted to their tool-local paths; custom project paths are left alone. An initial install without `AGENTS.md` uses the source template. If an existing file lacks that heading or contains it more than once, the pull stops before changing files; identify the project-specific section rather than guessing which instructions to keep.
 
-Application code, the project's `README.md`, real `.env` files, and other files outside the installed brain are untouched. The command does not write global settings or configure credentials/MCP servers. Only the explicit `--langfuse` option delegates project Pi package registration; these settings remain Pi-owned, outside the brain's replace/prune manifest. Authentication remains a separate step described in `references/tool-auth.md`.
+Application code, the project's `README.md`, real `.env` files, and other files outside the installed brain are untouched. The command does not write global settings or configure credentials/MCP servers. Only the explicit `--langfuse` option delegates project Pi/Claude plugin registration; those settings remain harness-owned, outside the brain's replace/prune manifest. Authentication remains a separate step described in `references/tool-auth.md`.
 
 Commit or stash your work before pulling. Do not edit installed files or run another pull concurrently. The installer preflights paths and uses per-file atomic writes, but an interrupted update is not a repository-wide transaction.
 

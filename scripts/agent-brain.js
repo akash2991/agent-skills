@@ -3,10 +3,10 @@
 
 const path = require('path');
 const { pullInstall } = require('./lib/pull-install');
-const { LANGFUSE_PACKAGE, preflightLangfuse, installLangfuse } = require('./lib/langfuse');
+const { LANGFUSE_PACKAGE, CLAUDE_MARKETPLACE, CLAUDE_PLUGIN, preflightLangfuse, installLangfuse } = require('./lib/langfuse');
 
 function help() {
-  console.log(`Usage: agent-brain pull [--target <existing-dir>] [--dry-run] [--langfuse]\n\nPull the complete agent brain into a repository.\nReplaces brain-owned files; preserves only AGENTS.md's "## This project" section.\nNo backups are created. Use Git to review or revert changes.\n\nOptions:\n  --target <existing-dir>  Install into this existing directory (default: current directory)\n  --dry-run                Show the planned changes without writing files\n  --langfuse               Register the official Langfuse Pi plugin locally (requires Pi)\n                           Opt-in: session content is sent to your Langfuse project\n  --help, -h               Show help\n`);
+  console.log(`Usage: agent-brain pull [--target <existing-dir>] [--dry-run] [--langfuse]\n\nPull the complete agent brain into a repository.\nReplaces brain-owned files; preserves only AGENTS.md's "## This project" section.\nNo backups are created. Use Git to review or revert changes.\n\nOptions:\n  --target <existing-dir>  Install into this existing directory (default: current directory)\n  --dry-run                Show the planned changes without writing files\n  --langfuse               Register official Pi + Claude Langfuse plugins (requires both CLIs)\n                           Opt-in: session content is sent to your Langfuse project\n  --help, -h               Show help\n`);
 }
 
 function parse(argv) {
@@ -50,7 +50,7 @@ try {
   console.log(`target: ${result.targetRoot}`);
   if (parsed.langfuse) {
     console.log(parsed.dryRun
-      ? `would register ${LANGFUSE_PACKAGE} using pi install --local (no credentials copied)`
+      ? `would register ${LANGFUSE_PACKAGE} using pi install --local\nwould register ${CLAUDE_PLUGIN} from ${CLAUDE_MARKETPLACE} using Claude project-scope plugin commands (no credentials copied)`
       : installLangfuse(result.targetRoot));
   }
 } catch (err) {
