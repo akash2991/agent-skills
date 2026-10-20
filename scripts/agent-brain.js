@@ -3,9 +3,10 @@
 
 const path = require('path');
 const { pullInstall } = require('./lib/pull-install');
+const { LANGFUSE_PACKAGE, preflightLangfuse, installLangfuse } = require('./lib/langfuse');
 
 function help() {
-  console.log(`Usage: agent-brain pull [--target <existing-dir>] [--dry-run]\n\nPull the complete agent brain into a repository.\nReplaces brain-owned files; preserves only AGENTS.md's "## This project" section.\nNo backups are created. Use Git to review or revert changes.\n\nOptions:\n  --target <existing-dir>  Install into this existing directory (default: current directory)\n  --dry-run                Show the planned changes without writing files\n  --help, -h               Show help\n`);
+  console.log(`Usage: agent-brain pull [--target <existing-dir>] [--dry-run] [--langfuse]\n\nPull the complete agent brain into a repository.\nReplaces brain-owned files; preserves only AGENTS.md's "## This project" section.\nNo backups are created. Use Git to review or revert changes.\n\nOptions:\n  --target <existing-dir>  Install into this existing directory (default: current directory)\n  --dry-run                Show the planned changes without writing files\n  --langfuse               Register the official Langfuse Pi plugin locally (requires Pi)\n                           Opt-in: session content is sent to your Langfuse project\n  --help, -h               Show help\n`);
 }
 
 function parse(argv) {
@@ -20,6 +21,8 @@ function parse(argv) {
       opts.target = path.resolve(rest[++i]);
     } else if (arg === '--dry-run') {
       opts.dryRun = true;
+    } else if (arg === '--langfuse') {
+      opts.langfuse = true;
     } else if (arg === '--help' || arg === '-h') {
       return { help: true };
     } else {
@@ -41,9 +44,15 @@ if (parsed.error) {
 }
 
 try {
+  if (parsed.langfuse && !parsed.dryRun) preflightLangfuse(parsed.target);
   const result = pullInstall({ target: parsed.target, dryRun: parsed.dryRun });
   console.log(result.message);
   console.log(`target: ${result.targetRoot}`);
+  if (parsed.langfuse) {
+    console.log(parsed.dryRun
+      ? `would register ${LANGFUSE_PACKAGE} using pi install --local (no credentials copied)`
+      : installLangfuse(result.targetRoot));
+  }
 } catch (err) {
   console.error(err.message);
   process.exit(err.code === 'PULL_CONFLICT' ? 1 : 2);

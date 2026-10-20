@@ -1,0 +1,5 @@
+{
+  "packages": [
+    "npm:@langfuse/pi-observability-plugin@0.1.2"
+  ]
+}

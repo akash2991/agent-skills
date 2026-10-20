@@ -14,13 +14,23 @@ Preview without changing files:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --dry-run
 ```
 
+## Optional automatic Langfuse tracing (Pi)
+
+```bash
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --langfuse
+```
+
+Explicitly opts this repository into the official Pi plugin (`@langfuse/pi-observability-plugin@0.1.2`). Requires Pi on PATH and a project you have chosen to trust in Pi, and delegates registration to its native project package installer, preserving unrelated settings. Configure credentials once per developer, outside Git; see [Pi tracing setup, privacy, and verification](pi-setup.md#automatic-langfuse-tracing). Session prompts, outputs, tool data, and images are uploaded when tracing is enabled. Other harnesses are not instrumented by this flag.
+
+`--dry-run --langfuse` only describes registration and does not invoke Pi. Missing Pi, malformed settings, and unsafe settings paths fail before brain writes. Package installation happens after the brain pull; if it fails (including a project-trust refusal), brain files remain installed and the error gives the native retry command. For a fresh/untrusted repo, review the installed files and start Pi to make your trust decision before retrying. Commit `.pi/settings.json`, ignore `.pi/npm/`, and start a new trusted Pi session. Subsequent pulls without the flag preserve Pi registration. No automatic credential copying, trust grant, or global package registration occurs.
+
 ## Ownership and updates
 
 **This repository is the source of truth for brain files.** Skills, personas, references, templates, commands, `SOUL.md`, and `.env.example` are replaced with the source version, even if existing copies differ. There are no backups or local-override lists: use Git to review and revert changes. Files previously installed by the tool but no longer supplied by the brain are removed, including edited copies.
 
 **Only `AGENTS.md` is patched:** shared sections come from the current brain, while the existing `## This project` instructions are preserved. Exact links to relocated brain files are adjusted to their tool-local paths; custom project paths are left alone. An initial install without `AGENTS.md` uses the source template. If an existing file lacks that heading or contains it more than once, the pull stops before changing files; identify the project-specific section rather than guessing which instructions to keep.
 
-Application code, the project's `README.md`, real `.env` files, and other files outside the installed brain are untouched. The command does not write global settings or configure credentials/MCP servers. Authentication remains a separate step described in `references/tool-auth.md`.
+Application code, the project's `README.md`, real `.env` files, and other files outside the installed brain are untouched. The command does not write global settings or configure credentials/MCP servers. Only the explicit `--langfuse` option delegates project Pi package registration; these settings remain Pi-owned, outside the brain's replace/prune manifest. Authentication remains a separate step described in `references/tool-auth.md`.
 
 Commit or stash your work before pulling. Do not edit installed files or run another pull concurrently. The installer preflights paths and uses per-file atomic writes, but an interrupted update is not a repository-wide transaction.
 

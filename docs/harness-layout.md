@@ -49,7 +49,7 @@ Do not infer persona discovery from skill discovery:
 - `.pi/agents/`: project personas discovered by **pi-herdr-agents**, the extension used here, not Pi core.
 - Keep command templates in each harness's documented command/prompt directory. Codex global custom prompts require a separate user-controlled copy; the installer does not write to the home directory.
 
-The installer adjusts command skill paths to `.agents/skills/` except for Claude's `.claude/skills/`. It does not overwrite harness settings, MCP configuration, global configuration, or trust decisions.
+The installer adjusts command skill paths to `.agents/skills/` except for Claude's `.claude/skills/`. It does not overwrite harness settings, MCP configuration, global configuration, or trust decisions. **Explicit opt-in exception:** `agent-brain pull --langfuse` delegates to `pi install --local npm:@langfuse/pi-observability-plugin@0.1.2` after pulling brain files. Pi merges its own project package registration; `.pi/settings.json` and `.pi/npm/` are not brain-managed assets and are never copied, pruned, or replaced by the brain. Default pull does not register telemetry. See [Pi setup](pi-setup.md#automatic-langfuse-tracing) for credentials, privacy, verification, and limitations.
 
 ## Runtime checks versus documentation
 
