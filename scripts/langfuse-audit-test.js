@@ -38,6 +38,22 @@ test('privacy scan detects every synthetic secret/PII class in all supported sur
   for (const value of Object.values(canaries)) assert.ok(!JSON.stringify(result).includes(value), 'report must not echo input content');
 });
 
+test('escaped canaries remain detectable in decoded strings and JSON-encoded API fields', () => {
+  for (const password of ['SYNTHETIC"PASSWORD\\ONLY', 'SYNTHETIC\nPASSWORD\tONLY', 'SYNTHETIC\rPASSWORD\u0000ONLY']) {
+    const c = { ...canaries, password };
+    for (const row of [
+      { input: password, output: { content: password }, metadata: { nested: [{ note: password }] } },
+      { input: JSON.stringify({ content: password }), output: JSON.stringify({ nested: [password] }), metadata: JSON.stringify({ note: password }) }
+    ]) {
+      const result = auditPrivacy([row], c);
+      assert.equal(result.status, 'leak_detected');
+      assert.equal(result.canaries.password.status, 'persisted');
+      assert.deepEqual(result.canaries.password.observationCounts, { input: 1, output: 1, metadata: 1 });
+      assert.ok(!JSON.stringify(result).includes(password));
+    }
+  }
+});
+
 test('missing observations/canaries never count as successfully redacted', () => {
   for (const rows of [undefined, []]) assert.equal(auditPrivacy(rows, canaries).status, 'incomplete');
   assert.equal(auditPrivacy([{}], {}).status, 'incomplete');
@@ -79,6 +95,25 @@ test('child capture requires matching parent trace/session and actual nested wor
     assert.equal(auditChild(rows, child, true).status, 'partial');
   }
   assert.equal(auditChild(nested(), child, false).status, 'partial');
+});
+
+test('missing, empty or invalid identity fields never certify child linkage', () => {
+  for (const value of [undefined, null, '', '   ', 42]) {
+    const rows = nested();
+    for (const row of rows) row.traceId = value;
+    assert.equal(auditChild(rows, child, true).status, 'incomplete');
+  }
+  for (const field of ['id', 'parentObservationId', 'sessionId']) {
+    const rows = nested();
+    delete rows[1][field];
+    assert.equal(auditChild(rows, row => row.name === 'Subagent: synthetic test', true).status, 'incomplete');
+  }
+  const missingParentId = nested(); delete missingParentId[0].id;
+  assert.equal(auditChild(missingParentId, child, true).status, 'partial');
+  const missingWorkId = nested(); delete missingWorkId[2].id;
+  assert.equal(auditChild(missingWorkId, child, true).status, 'partial');
+  const selfParent = nested(); selfParent[1].parentObservationId = selfParent[1].id;
+  assert.equal(auditChild(selfParent, child, true).status, 'partial');
 });
 
 test('duplicate dispatch and child execution cannot pass agent-tree checks', () => {

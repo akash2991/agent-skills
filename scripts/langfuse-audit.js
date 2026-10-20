@@ -6,6 +6,30 @@
 const fs = require('node:fs');
 const CANARIES = ['langfuse_key', 'provider_key', 'password', 'email', 'ssn'];
 
+function containsCanary(value, canary) {
+  // Inspect decoded content, not JSON.stringify(value): serialization can hide
+  // quotes, backslashes and control characters that persisted literally. API
+  // I/O fields may themselves contain JSON text, so decode those layers too.
+  const pending = [value];
+  const seen = new Set();
+  while (pending.length) {
+    const item = pending.pop();
+    if (typeof item === 'string') {
+      if (item.includes(canary)) return true;
+      if (seen.has(item)) continue;
+      seen.add(item);
+      try {
+        const decoded = JSON.parse(item);
+        if (decoded !== item) pending.push(decoded);
+      } catch { /* Ordinary text is not JSON. */ }
+    } else if (item && typeof item === 'object' && !seen.has(item)) {
+      seen.add(item);
+      for (const [key, field] of Object.entries(item)) pending.push(key, field);
+    }
+  }
+  return false;
+}
+
 function auditPrivacy(rows, canaries) {
   if (!Array.isArray(rows) || !rows.length || !canaries || CANARIES.some(key => typeof canaries[key] !== 'string' || !canaries[key])) {
     return { status: 'incomplete', observationCount: Array.isArray(rows) ? rows.length : 0 };
@@ -14,7 +38,7 @@ function auditPrivacy(rows, canaries) {
   for (const key of CANARIES) {
     const counts = {};
     for (const field of ['input', 'output', 'metadata']) {
-      counts[field] = rows.filter(row => JSON.stringify(row?.[field] ?? '').includes(canaries[key])).length;
+      counts[field] = rows.filter(row => containsCanary(row?.[field], canaries[key])).length;
     }
     findings[key] = { status: Object.values(counts).some(Boolean) ? 'persisted' : 'not_observed', observationCounts: counts };
   }
@@ -33,8 +57,14 @@ function auditChild(rows, matchesChild, runtimeCompleted) {
   const children = rows.filter(row => row && matchesChild(row));
   if (children.length !== 1) return { status: children.length ? 'ambiguous' : 'missing', runtimeCompleted: runtimeCompleted === true, childObservationCount: children.length };
   const child = children[0];
-  const parent = rows.find(row => row && row.id === child.parentObservationId && row.traceId === child.traceId);
-  const nested = rows.filter(row => row && row.parentObservationId === child.id && row.traceId === child.traceId);
+  const nonempty = value => typeof value === 'string' && value.trim().length > 0;
+  const identified = row => row && nonempty(row.id) && nonempty(row.traceId);
+  if (!identified(child) || !nonempty(child.parentObservationId) || !nonempty(child.sessionId)) {
+    return { status: 'incomplete', runtimeCompleted: runtimeCompleted === true, childObservationCount: 1 };
+  }
+  const parent = rows.find(row => identified(row) && row.id !== child.id && row.id === child.parentObservationId
+    && row.traceId === child.traceId && ['SPAN', 'AGENT'].includes(row.type));
+  const nested = rows.filter(row => identified(row) && row.parentObservationId === child.id && row.traceId === child.traceId);
   const generations = nested.filter(row => row.type === 'GENERATION');
   const tools = nested.filter(row => row.type === 'TOOL');
   const duplicateDispatch = rows.some(row => row && ['Tool: Agent', 'Tool: subagent'].includes(row.name)
