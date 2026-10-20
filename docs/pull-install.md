@@ -14,13 +14,23 @@ Preview without changing files:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --dry-run
 ```
 
+## Optional automatic Langfuse tracing (Pi and Claude Code)
+
+```bash
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --langfuse
+```
+
+Explicitly opts this repository into both official plugins: Pi `0.1.2` and Claude Code `1.2.1`. Requires both CLIs, a runtime for Claude's Python hook, and a project you have chosen to trust in Pi. Registration is delegated to native project-scoped package/plugin managers, preserving unrelated settings and hooks. Configure credentials once per developer for each harness, outside Git; see [Langfuse setup, privacy, and verification](langfuse-setup.md). After setup and approvals, new sessions in both harnesses trace automatically. Prompts, outputs, tool data, and images can be uploaded. Other harnesses and the application's own runtime are not instrumented.
+
+`--dry-run --langfuse` describes both registrations without invoking CLIs. Missing CLI/runtime, malformed settings, and unsafe settings paths fail before brain writes. Package installation happens after the brain pull; failures can leave the brain and/or Pi setup installed. Errors describe the partial state and retry action. For a fresh/untrusted repo, review the installed files and start Pi to make your trust decision before retrying. Commit `.pi/settings.json` and `.claude/settings.json`, ignore `.pi/npm/`, and start new approved sessions in each harness. Subsequent pulls without the flag preserve both registrations. No automatic credential copying, saved trust grant, or globally enabled plugin is introduced; native managers may maintain per-user caches/install records.
+
 ## Ownership and updates
 
 **This repository is the source of truth for brain files.** Skills, personas, references, templates, commands, `SOUL.md`, and `.env.example` are replaced with the source version, even if existing copies differ. There are no backups or local-override lists: use Git to review and revert changes. Files previously installed by the tool but no longer supplied by the brain are removed, including edited copies.
 
 **Only `AGENTS.md` is patched:** shared sections come from the current brain, while the existing `## This project` instructions are preserved. Exact links to relocated brain files are adjusted to their tool-local paths; custom project paths are left alone. An initial install without `AGENTS.md` uses the source template. If an existing file lacks that heading or contains it more than once, the pull stops before changing files; identify the project-specific section rather than guessing which instructions to keep.
 
-Application code, the project's `README.md`, real `.env` files, and other files outside the installed brain are untouched. The command does not write global settings or configure credentials/MCP servers. Authentication remains a separate step described in `references/tool-auth.md`.
+Application code, the project's `README.md`, real `.env` files, and other files outside the installed brain are untouched. The command does not write global settings or configure credentials/MCP servers. Only the explicit `--langfuse` option delegates project Pi/Claude plugin registration; those settings remain harness-owned, outside the brain's replace/prune manifest. Authentication remains a separate step described in `references/tool-auth.md`.
 
 Commit or stash your work before pulling. Do not edit installed files or run another pull concurrently. The installer preflights paths and uses per-file atomic writes, but an interrupted update is not a repository-wide transaction.
 

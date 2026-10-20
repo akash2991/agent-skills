@@ -19,6 +19,18 @@ Review the installed resources before granting project trust. Start a new pi ses
 /brain-status
 ```
 
+## Automatic Langfuse tracing
+
+Opt in when importing the brain into each consuming repository:
+
+```bash
+npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --langfuse
+```
+
+This now registers **both Pi and Claude Code** through their native plugin managers. Requires both CLIs, a runtime for Claude's Python hook, per-developer credentials, and project approval. After setup, new sessions in each harness trace automatically. Ordinary imports without the flag do not enable telemetry.
+
+See [Langfuse setup](langfuse-setup.md) for the single shared installation contract, credential configuration, privacy/disable controls, verification, and upstream limitations. Pi's private credential file is not automatically shared with Claude.
+
 ## MCP
 
 pi's MCP adapter reads the project `.mcp.json`; Linear needs `"auth": "oauth"` there. See [references/tool-auth.md](../references/tool-auth.md).
