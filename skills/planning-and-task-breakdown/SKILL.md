@@ -98,7 +98,7 @@ Apply `continuous-delivery` when judging the cycle's product outcome; preparator
 - Write `tasks/plan.md` using the template below. Never overwrite an incomplete plan for different work; stop and ask. Revise the same work's plan in place.
 - Through `linear`, create or refine the project, milestones, focused issues, native estimates, dependency relations, and cycle assignments. The plan is an ordered index of real Linear identifiers, never a duplicate TODO tracker. Only when no tracker is configured, use `tasks/todo.md` as the task-list fallback; a failed tracker call does not authorize a second tracker.
 - The appropriate engineer owns the full technical plan; the user reviews and approves it before implementation starts.
-- Checkpoint after every two or three tasks and at each milestone: tests pass, the build is clean, and the core flow works. Keep HLD/LLD current; a changed design goes through review before recutting dependent issues.
+- Checkpoint after every two or three tasks and at each milestone: tests pass, the build is clean, and the core flow works; the user reviews before the next phase. Keep HLD/LLD current; a changed design goes through review before recutting dependent issues.
 
 ### 9. Close every cycle with evidence
 

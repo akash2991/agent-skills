@@ -57,7 +57,7 @@ A design decides once, for the whole module, what a line of code cannot: which s
 | "Types will emerge from the code." | Then every engineer invents their own. Types first is how parallel work stays consistent. |
 | "The class diagram is overhead." | It is where composition and inheritance get decided deliberately instead of by accident. |
 | "The coding rules are for the code review, not the design." | A design that cannot satisfy them is rewritten before implementation; the review is too late. |
-| "The LLD is done once written." | Obtain user review before deriving dependent implementation issues. If design changes, review the affected sections before recutting those issues and keep the LLD in sync with the resulting code. |
+| "The LLD is done once written." | Obtain user review before deriving dependent implementation issues. If design changes, review the affected sections before recutting those issues. Update the LLD in the same PR that changes the code so the reviewed design and implementation stay in sync. |
 | "Keep the LLD in the agent brain so agents find it." | It lives in `docs/` or `<service>/docs/`, never in the agent brain. |
 
 ## Red Flags

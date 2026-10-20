@@ -39,6 +39,17 @@
         "Patterns used are named with the problem they solve",
         "Obtains user review of the LLD before handing it off for precise implementation issue scope and estimates; unresolved placeholders are not executable"
       ]
+    },
+    {
+      "id": 2,
+      "kind": "dialogue",
+      "prompt": "The user reviewed the revised orders LLD before we recut implementation tickets. Our implementation PR now changes the contract and class structure further. Can we leave the LLD update for another PR because the design already passed review?",
+      "expected_output": "Keeps both obligations: review changed design before recutting dependent issues, and update the LLD in the same PR as the code changes.",
+      "expectations": [
+        "Does not treat prior design review as a substitute for keeping documentation current",
+        "Updates the LLD in the same PR that changes the contract or class structure",
+        "Obtains review of changed design before recutting dependent implementation issues"
+      ]
     }
   ]
 }

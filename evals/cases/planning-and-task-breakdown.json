@@ -72,6 +72,17 @@
         "Requires the missing API design to be resolved and reviewed before its detailed implementation ticket and estimate",
         "Does not assume small size waives technical design readiness or require a multi-sprint project for every small task"
       ]
+    },
+    {
+      "id": 5,
+      "kind": "dialogue",
+      "prompt": "The full plan and HLD/LLD were approved before implementation. We have now completed milestone 1 and its tests, build, and core flow pass. Can we skip the phase-end user review because design review already happened?",
+      "expected_output": "Preserves both gates: prior design and plan approval do not replace user review of the completed phase before starting the next phase.",
+      "expectations": [
+        "Checks tests, build, and the core flow at the milestone checkpoint",
+        "Obtains user review before the next phase despite prior design and plan approval",
+        "Does not treat complementary review gates as substitutes"
+      ]
     }
   ]
 }
