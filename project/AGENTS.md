@@ -21,16 +21,15 @@ The user decides your model, harness, and effort. `/brain-status` shows you and 
 ## How you work
 
 1. **Declare before working.** Persona, skills, tools, model, harness, effort. Re-declare on change.
-2. **Ticket first.** Every unit of work has a Linear ticket (`linear`); a direct user request goes in verbatim.
-3. **Scope before execution.** Invoke `planning-and-task-breakdown` at intake for the scope decision, design-readiness gate, and engineer-owned delivery plan; do not treat an existing ticket as proof that the work is ready.
-4. **Every issue moves through the team's Linear workflow** (`linear`), from request to production. It is the default, not the law: skip the states the work does not need and record each skip on the issue with the reason; so is a user's short-circuit.
-5. **Deliver continuously** (`continuous-delivery`, `references/development-loop.md`). Contract first (`development-setup`); feature flags or no entry point for unfinished work; the app works after every commit.
-6. **Always a PR, never a direct merge.** Review may be optional on the ticket; a security audit never holds a PR; merge commit, then delete the branch (`git-workflow-and-versioning`).
-7. **The conventions are not overridable.** Every rule in the convention skills and every rule in this file. An override is accepted only on an explicit user instruction: apply it, note it on the ticket, and record it in `docs/LEARNINGS.md`. A brownfield repository gets a conformance table and moves incrementally.
-8. **Truth over reports.** Label facts `VERIFIED NOW`, `REPORTED`, `HISTORICAL`, `PLANNED`, or `UNKNOWN`. A missing value is `UNKNOWN`, never zero.
-9. **Ask on ambiguity.** Complex technical choices and unclear requirements go to the user.
-10. **Record what would change a rule, as it happens.** When the user overrides a convention, corrects what a rule or skill told you to do, or you hit a gap in a skill or work around one, write a learning note in `docs/LEARNINGS.md` the moment it occurs; the file says what counts and how to write the note. Ordinary requests and one-off preferences go on the ticket, not there. A correction written down is corrected for every future agent; one made only in chat is corrected once.
-11. **Read only what you decide with** (`references/context-scope.md`). Documents live in the project (`references/documentation-map.md`).
+2. **Ticket first; scope before execution.** Every unit of work has a Linear ticket (`linear`); a direct user request goes in verbatim. Invoke `planning-and-task-breakdown` at intake for the scope decision, design-readiness gate, and engineer-owned delivery plan; do not treat an existing ticket as proof that the work is ready.
+3. **Every issue moves through the team's Linear workflow** (`linear`), from request to production. It is the default, not the law: skip the states the work does not need and record each skip on the issue with the reason; so is a user's short-circuit.
+4. **Deliver continuously** (`continuous-delivery`, `references/development-loop.md`). Contract first (`development-setup`); feature flags or no entry point for unfinished work; the app works after every commit.
+5. **Always a PR, never a direct merge.** Review may be optional on the ticket; a security audit never holds a PR; merge commit, then delete the branch (`git-workflow-and-versioning`).
+6. **The conventions are not overridable.** Every rule in the convention skills and every rule in this file. An override is accepted only on an explicit user instruction: apply it, note it on the ticket, and record it in `docs/LEARNINGS.md`. A brownfield repository gets a conformance table and moves incrementally.
+7. **Truth over reports.** Label facts `VERIFIED NOW`, `REPORTED`, `HISTORICAL`, `PLANNED`, or `UNKNOWN`. A missing value is `UNKNOWN`, never zero.
+8. **Ask on ambiguity.** Complex technical choices and unclear requirements go to the user.
+9. **Record what would change a rule, as it happens.** When the user overrides a convention, corrects what a rule or skill told you to do, or you hit a gap in a skill or work around one, write a learning note in `docs/LEARNINGS.md` the moment it occurs; the file says what counts and how to write the note. Ordinary requests and one-off preferences go on the ticket, not there. A correction written down is corrected for every future agent; one made only in chat is corrected once.
+10. **Read only what you decide with** (`references/context-scope.md`). Documents live in the project (`references/documentation-map.md`).
 
 ## Your personas
 
