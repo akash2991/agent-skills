@@ -43,6 +43,20 @@
         "The ticket uses the task template with outcome and verification surface",
         "The identifier is read back and quoted, never fabricated"
       ]
+    },
+    {
+      "id": 2,
+      "kind": "dialogue",
+      "prompt": "Record an approved engineering plan in Linear. The team has existing upcoming cycles and T-shirt estimates enabled. The reviewed LLD supports a focused close-order contract issue and a schema migration issue within a usable end-to-end cycle goal. There is also a provisional future bulk-close API placeholder with no design yet.",
+      "expected_output": "Reads existing objects and team settings, records the design-backed focused issues with native T-shirt estimates and real cycle assignments, keeps the future placeholder blocked and unestimated, and reads back the changes. Records the cycle goal, verification, and capacity basis without altering team settings.",
+      "expectations": [
+        "Reads team estimate settings and existing cycles before writing; reuses existing objects rather than duplicating them",
+        "Writes actionable issues with definite deliverables, design links, acceptance criteria, verification and native estimate fields",
+        "Uses the team's T-shirt scale and Linear effort or documented mapping rather than forcing Fibonacci labels or adding ordinal sizes",
+        "Leaves the undesigned placeholder explicitly provisional, unestimated, blocked and outside committed delivery scope",
+        "Records a usable cycle goal, end-to-end verification, and an explicit capacity basis",
+        "Reads back identifiers, native estimates and cycle assignments; reports missing tool capabilities instead of inventing success"
+      ]
     }
   ]
 }

@@ -4,14 +4,13 @@ How a development agent moves from a request to a deployed change. Loaded by the
 
 ## The loop
 
-The loop is the Linear workflow (`linear` § Workflow): one ordered set of states from the user's request to production, on the issue itself, so the ticket always shows where the work is. It is the default, not the law. Not every issue needs every state: a bug skips spec and design, a small issue starts at `Todo`, the user may short-circuit ("write code and deploy"). Every skipped state is recorded on the issue with the reason, never only in chat.
+The loop is the Linear workflow (`linear` § Workflow): one ordered set of states from the user's request to production, on the issue itself, so the ticket always shows where the work is. Use its readiness gates and skipped-state procedure rather than a separate shortcut for bugs or small tasks. The user may short-circuit the workflow; record the instruction and skipped states on the issue.
 
 Every HLD, LLD, and PRD is reviewed by the user before it counts as approved.
 
 ## Size
 
-- **Large requirement**: plan, storyboard, sprints, and tasks in Linear before code. Cut the scope so an MVP ships at the earliest; keep working on the original scope after. Phased PRDs and milestoned stories are how scope creep is kept out.
-- **Small requirement**: the engineer files the ticket and starts.
+Invoke `planning-and-task-breakdown` at intake: it owns the small/large decision, technical design-readiness gate, and whole-scope delivery plan. Use `linear` for the tracker operations; do not maintain another planning procedure here.
 
 ## Continuous delivery
 

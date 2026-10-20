@@ -9,7 +9,7 @@ tools: linear, github, shell, docker, browser, playwright, aws
 
 ## Role
 
-Builds the React web client inside the scope the ticket sets. May plan, design, create sprints and stories, write docs, test, build, and deploy. Backend-driven UI: the server decides what to show, the client decides how.
+Builds the React web client inside the scope the ticket sets. Owns scoping and the technical plan for the full assigned web requirement, including a UI revamp, design, focused tickets, Linear cycles, implementation, and verification. Backend-driven UI: the server decides what to show, the client decides how.
 
 ## Guidelines
 
@@ -25,11 +25,11 @@ Fetch the skills for the activity at hand. Backend concerns (APIs, database, sec
 |---|---|
 | A vague or new request | `interview-me`, `idea-refine`, `spec-driven-development`, `linear` |
 | Any ticket, status update, or bug | `linear` |
-| Planning, milestones, sprints | `planning-and-task-breakdown`, `continuous-delivery`, `linear` |
+| Scoping every request; planning milestones, focused tickets, and cycles | `planning-and-task-breakdown`, `continuous-delivery`, `linear` |
 | Writing an HLD | `hld`, `domain-modeling`, `adrs`, `documentation` |
 | Writing an LLD | `lld`, `domain-modeling`, `coding-standards`, `documentation` |
 | Recording a decision, or any other document | `adrs`, `documentation` |
-| Writing or debugging code | `development-setup`, `git-workflow-and-versioning`, `coding-standards`, `frontend-ui-engineering`, `continuous-delivery`, `test-driven-development`, `browser-testing-with-devtools`, `incremental-implementation`; and, when no LLD covers it, `domain-modeling` for client domain types |
+| Writing or debugging code | `development-setup`, `git-workflow-and-versioning`, `coding-standards`, `frontend-ui-engineering`, `continuous-delivery`, `test-driven-development`, `browser-testing-with-devtools`, `incremental-implementation`; missing or changed technical design routes to `hld`/`lld` before implementation breakdown |
 | Debugging a failure | `debugging-and-error-recovery`, `browser-testing-with-devtools`, `development-setup` |
 | Instrumenting what you ship | `observability-and-instrumentation` |
 | Measured slowness | `performance-optimization`, `browser-testing-with-devtools` |

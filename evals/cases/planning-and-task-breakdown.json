@@ -2,56 +2,75 @@
   "skill_name": "planning-and-task-breakdown",
   "trigger": {
     "positive": [
-      {
-        "prompt": "Break this spec into small verifiable tasks with acceptance criteria",
-        "top_k": 3
-      },
-      {
-        "prompt": "Turn the PRD into an ordered task list we can execute",
-        "top_k": 3
-      },
-      {
-        "prompt": "Break the approved implementation plan for the payments service into milestones ordered by earliest usable outcome, with a foundation task first",
-        "top_k": 3
-      },
-      {
-        "prompt": "Plan the next sprint with a points capacity and close the last one with a review of delivered, spilled, and mis-estimated points",
-        "top_k": 3
-      },
-      {
-        "prompt": "We discovered unplanned work while building checkout; classify it and decide whether it enters scope or becomes a later ticket",
-        "top_k": 3
-      }
+      { "prompt": "Break this spec into small verifiable tasks with acceptance criteria", "top_k": 3 },
+      { "prompt": "Turn the PRD into an ordered task list we can execute", "top_k": 3 },
+      { "prompt": "Break the approved implementation plan for the payments service into milestones ordered by earliest usable outcome, with a foundation task first", "top_k": 3 },
+      { "prompt": "Plan the next sprint with a points capacity and close the last one with a review of delivered, spilled, and mis-estimated points", "top_k": 3 },
+      { "prompt": "We discovered unplanned work while building checkout; classify it and decide whether it enters scope or becomes a later ticket", "top_k": 3 },
+      { "prompt": "Scope this UI revamp before execution: decide the planning owner, design prerequisites, focused tickets, and usable sprint outcomes", "top_k": 3 }
     ],
     "negative": [
-      {
-        "prompt": "Debug the crash on startup",
-        "owner": "debugging-and-error-recovery"
-      },
-      {
-        "prompt": "Reassign this Linear issue to the backend engineer through the Linear MCP server and post a status update",
-        "owner": "linear"
-      },
-      {
-        "prompt": "Encode the output so it is safe against XSS",
-        "owner": "security-and-hardening"
-      }
+      { "prompt": "Debug the crash on startup", "owner": "debugging-and-error-recovery" },
+      { "prompt": "Reassign this Linear issue to the backend engineer through the Linear MCP server and post a status update", "owner": "linear" },
+      { "prompt": "Encode the output so it is safe against XSS", "owner": "security-and-hardening" }
     ]
   },
   "evals": [
     {
       "id": 1,
-      "prompt": "Break the attached notifications spec into an executable plan.",
-      "expected_output": "A plan in tasks/plan.md with milestones ordered by earliest usable outcome, a foundation task first, small vertical-slice tasks with acceptance criteria, verification commands, disjoint owned paths, points, and dependencies, indexed to tracker ids",
-      "files": [
-        "planning-and-task-breakdown"
-      ],
+      "kind": "dialogue",
+      "prompt": "Break the notifications spec and its current user-reviewed HLD/LLD into an executable plan. The Linear team uses Fibonacci estimates.",
+      "expected_output": "An engineer-owned full-scope plan indexed to Linear issues and real cycles, with usable milestones and cycle goals, focused foundation issues, design-backed tasks, native estimates, acceptance criteria, verification, disjoint owned paths, and dependency order",
       "expectations": [
-        "Milestone 1 delivers a usable outcome, not just infrastructure",
-        "A foundation task is identified that blocks the parallel tasks",
-        "Every task has acceptance criteria, a verification command, and points at or below 8",
-        "Tasks are vertical slices ordered by dependency, and no two concurrent tasks share an owned path",
+        "Classifies scope and identifies the appropriate engineer before implementation",
+        "Uses the reviewed HLD/LLD to define exact implementation deliverables",
+        "Milestone 1 and each delivery cycle have a usable outcome, not just infrastructure",
+        "Separates independent foundation deliverables and records their actual dependent issues",
+        "Every actionable task has acceptance criteria, verification, design references, and an estimate on the team's configured scale",
+        "Tasks compose into vertical slices and no two concurrent tasks share owned paths",
         "No implementation code is written during planning"
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "dialogue",
+      "prompt": "Revamp the entire web UI: navigation, account screens, and checkout. There is no current HLD or LLD. Make all implementation tickets now, estimate them, and fill the next three sprints. We probably need some database and API work, but the endpoints are not decided.",
+      "expected_output": "Scopes the full request as large and assigns the web engineer the web plan, coordinating backend ownership for server work. Creates the design documentation work first. Keeps early API/schema placeholders provisional and unestimated, obtains review of required HLD/LLD, and only then derives precise issues and commits them to usable Linear cycles.",
+      "expectations": [
+        "Records full scope, boundaries and unknowns, classifies it large, and names the appropriate engineering owners",
+        "The first actionable technical ticket produces missing design docs with user review as acceptance criteria",
+        "Uses HLD for components and communication, and LLD for exact API contracts and schema",
+        "Does not invent endpoint lists/counts, implementation estimates, or committed cycle assignments before design review",
+        "Any early API/schema placeholders remain explicitly provisional, blocked and unestimated",
+        "Retains later requested scope after the MVP and does not treat a documentation-only cycle as a usable product increment"
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "dialogue",
+      "prompt": "The reviewed orders LLD specifies POST /orders/{id}/close, its errors and idempotency, an order-status migration, and the matching UI interaction. Plan the work in our existing Linear cycles. The team uses XS/S/M/L/XL estimates. Someone suggests one ticket called Build order closing, then a database sprint, an API sprint, and a UI sprint.",
+      "expected_output": "Rejects the vague ticket and layer-only cycles. Derives focused contract, migration, endpoint, UI, and verification issues from the LLD; estimates in the team's native T-shirt scale; fits an integrated usable slice into actual cycles while preserving a working product.",
+      "expectations": [
+        "Rejects Build order closing as an executable ticket containing several independent deliverables",
+        "Allows focused technical deliverables such as a contract or schema migration with clear acceptance criteria and design links",
+        "Records dependencies without allowing conflicting concurrent owned paths",
+        "Uses native T-shirt estimates and real existing cycle ids; does not silently switch the team to points",
+        "Uses Linear effort or its documented mapping for capacity, not addition of ordinal labels or invented conversion",
+        "Each delivery cycle ends in an exercised usable flow, not an isolated layer or deferred integration",
+        "Reuses approved design rather than creating redundant documentation work"
+      ]
+    },
+    {
+      "id": 4,
+      "kind": "dialogue",
+      "prompt": "Scope three separate requests: correct a typo in the README; implement one validation rule already specified in the current approved LLD; add an apparently small API whose request, errors, and persistence have not been designed. Do we need a whole project and sprints for each?",
+      "expected_output": "Keeps the typo and design-ready rule as focused single-ticket work, recording design non-applicability or the existing LLD link. The undesigned API needs a bounded design ticket before detailed implementation scoping, despite looking small. Does not impose a project or multi-cycle plan on every small request.",
+      "expectations": [
+        "Performs the small/large scope check before execution for all three requests",
+        "Uses a single focused ticket for the typo without manufacturing an HLD/LLD",
+        "Reuses the current reviewed LLD for the validation rule without redundant design work",
+        "Requires the missing API design to be resolved and reviewed before its detailed implementation ticket and estimate",
+        "Does not assume small size waives technical design readiness or require a multi-sprint project for every small task"
       ]
     }
   ]

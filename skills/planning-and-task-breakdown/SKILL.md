@@ -1,6 +1,6 @@
 ---
 name: planning-and-task-breakdown
-description: How a requirement becomes incremental delivery — a plan document, milestones ordered by earliest usable outcome, fixed-length sprints with a points capacity, stories, and small verifiable tasks with acceptance criteria, disjoint owned paths, and dependency order, with a foundation task first so parallel work is safe; scope discipline (phased PRDs, milestoned stories, discovered work classified before it enters scope); and a sprint review at every close. Use when you have a spec, PRD, or reviewed design and must break it into tasks, when a task feels too large to start, when a large requirement arrives ("plan this out"), when a sprint starts or ends, when scope changes mid-milestone, or when unplanned work is discovered.
+description: Scopes work before execution, distinguishing one focused ticket from a large engineer-owned plan; gates detailed technical tickets on reviewed HLD/LLD; breaks the full scope into milestones, estimated issues, and Linear cycles that each deliver a working, usable increment. Covers acceptance criteria, dependencies, disjoint owned paths, capacity, scope changes, and cycle reviews. Use when a request arrives and needs sizing, when you have a spec, PRD, or reviewed design to break into tasks, when a task is too large or vague, when planning a UI revamp or other large requirement, when a sprint starts or ends, or when unplanned work is discovered.
 category: process
 ---
 
@@ -8,194 +8,181 @@ category: process
 
 ## Overview
 
-Favor quick, incremental delivery over a complete feature. The hierarchy is project → milestones → sprints → stories → tasks. Each milestone gives a user something they can use; each sprint is a fixed time box with a points capacity; each task is small enough to implement, test, and verify in one focused session, with one goal and owned paths disjoint from every other task in flight; shared definitions are built first by one engineer so everyone else can work in parallel. Sprint reviews make spillover and estimation error visible so the next sprint is planned better.
+Scope first, design before detailed technical breakdown, then deliver usable increments. The appropriate discipline engineer owns the plan for the whole requested scope, not just the next implementation task. A small request may need one focused issue; a large request needs a project, milestones, and issues assigned to Linear cycles. Each cycle leaves the product working and adds a usable outcome toward the full scope.
 
-The plan lives in `tasks/plan.md`; the work lives in Linear, in Linear's terms: a feature is a **project**, divided into **milestones**, each made of **issues**; an issue is the smallest unit tracked and the one an agent works on (what this skill calls a task); a story from the PRD is delivered by the issues of the milestone that ships it; a sprint is a **cycle**. This skill decides what they contain; `linear` says how to create them.
+The plan lives in `tasks/plan.md`; the work lives in Linear. A PRD story may require several focused technical issues. This skill owns scope, design readiness, and decomposition; `linear` owns tracker objects and operations; `continuous-delivery` owns the usable-increment standard. Personas and commands route here rather than maintain alternative planning steps.
 
 ## When to Use
 
-- You have a spec, PRD, or reviewed HLD and need to break it into implementable units.
-- A large requirement arrives, even as "plan this out" or "build feature X": it gets a plan, milestones, sprints, stories, and tasks before code.
-- A task feels too large or vague to start; the implementation order isn't obvious; work must be parallelised across agents.
-- A sprint starts and needs planning, or ends and needs a review; a milestone closes and the next needs planning.
-- Scope changes mid-milestone, or unplanned work is discovered.
-- NOT for single-file changes with obvious scope: a ticket, then start.
-- NOT before design approval for large work: planning against an unapproved design creates rework.
-- NOT for creating the Linear objects: `linear`.
+- At intake, to decide whether one ticket suffices or the work needs a larger plan.
+- A large requirement arrives, such as a UI revamp, even before design exists.
+- A spec, PRD, or reviewed design needs an executable breakdown.
+- A task is vague, dependencies are unclear, or agents will work in parallel.
+- A cycle starts or ends, scope changes, or unplanned work is discovered.
+- For small, obvious work, perform the scope check below and stop at one ticket; do not manufacture a project or a multi-sprint plan.
+- NOT for creating or updating Linear objects: `linear`.
 
 ## Process
 
-### 1. Read, write no code
+### 1. Scope the request before execution
 
-Operate read-only: the spec or PRD with its acceptance criteria and success target, the HLD, the domain model and key interfaces, the existing code and its conventions, and the open milestones in Linear. Map dependencies between components; note risks and unknowns. The output is a plan and tickets, never implementation.
+Read the request, affected code and existing design, and current Linear work. Record the intended outcome, boundaries, non-goals, unknowns, and whether the scope is **small** or **large**. Scope size is a routing decision, not an implementation estimate.
 
-### 2. Map the dependency graph
+- **Small:** one definite deliverable with known boundaries and a verification surface fits one focused ticket. Reuse current, reviewed design where it covers the change. A design-free chore needs no new HLD/LLD; record why design is not applicable. Small size does not excuse unresolved technical design.
+- **Large:** multiple independently verifiable deliverables, flows, or components need a plan for the whole request. Select the appropriate engineer from the project's `AGENTS.md` persona table. For cross-discipline scope, identify the lead and delegate each discipline's design and tickets to its engineer, with shared dependencies explicit.
+
+Do not implement during scoping. Preserve the full requested scope, including later phases, rather than shrinking the request to an MVP and forgetting the rest.
+
+### 2. Resolve the design before detailed technical tickets
+
+For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", with user review as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
+
+Use `hld` for component boundaries and communication; `lld` for exact contracts, schema, and internals. Those skills own document content and review.
+
+Reuse approved documents that already answer these questions; do not rewrite them for ceremony. Write or revise the applicable HLD/LLD sections and obtain the user's review before deriving detailed implementation tickets, estimates, or cycle commitments. An approved HLD permits tickets for decisions it actually settles; API or schema details left open require the LLD first. A document still awaiting review is not approved.
+
+Before that gate, high-level placeholders such as "Database schema needed" or "API work needed" are allowed in the backlog, explicitly **provisional, unestimated, blocked on design, and not executable**. Do not invent endpoint names, endpoint counts, exact scope, or delivery promises from these placeholders. Promote or split them after design review without creating duplicates.
+
+### 3. Map dependencies from the reviewed design
+
+Read the applicable HLD/LLD, PRD or issue-level requirements, domain model, existing code, and open milestones. Map component and issue dependencies; every dependency's shape must be resolved before implementation relies on it. Link each proposed technical issue to the design section that fixes its scope. Check that dependencies are acyclic and place high-risk work early.
+
+### 4. Cut milestones and stories from the first usable outcome
+
+Find the smallest flow a user or consuming service can exercise end to end. Cut milestones backwards from the full scope: each has a usable outcome, budget, verification command or manual flow, and explicit later scope. Order by user value and dependencies. The MVP is milestone 1; infrastructure alone is not a product milestone. Deterministic stubs are allowed only when the milestone explicitly calls for them; report that outcome as mock-backed, not production-complete.
+
+Build one complete path at a time, not all schema, then all APIs, then all UI:
 
 ```
-Database schema
-    ├── API models/types
-    │       ├── API endpoints
-    │       │       └── Frontend API client
-    │       │               └── UI components
-    │       └── Validation logic
-    └── Seed data / migrations
+Bad:  Cycle 1 all schema · Cycle 2 all APIs · Cycle 3 all UI · Cycle 4 integration
+Good: Cycle 1 close one order end to end · Cycle 2 bulk close with partial-failure handling
 ```
 
-Implementation order follows the graph bottom-up. A dependency's shape is resolved before anything is built on it.
+Stories describe user-observable outcomes and satisfy INVEST (independent, negotiable, valuable, estimable, small, testable). Technical issues beneath a story may deliver contracts, schema, or documentation individually; they need not each pretend to be a whole vertical slice. Their cycle must compose them into a usable increment. Every design module maps to a story; MVP stories come first.
 
-### 3. Cut milestones from the first usable outcome
+### 5. Write focused issues, including foundations
 
-Find the smallest slice a user (or a consuming service) can exercise end to end; deterministic stubs are allowed when the milestone says so. Cut milestones backwards from the full scope: each adds one usable outcome, has a budget, and a verification command or manual check. Order by user value, then by unblocking other services. The MVP is milestone 1; "infrastructure only" is not a milestone.
+One definite, observable deliverable per issue. "Build the feature", "Implement the backend", and "Do the UI revamp" are project-sized intentions, not executable tickets. Examples of bounded goals (implementation from reviewed design; documentation to establish it):
 
-### 4. Identify the foundation task
+- "Define the close-order API contract from LLD §4.2."
+- "Deliver the orders status schema migration from LLD §3."
+- "Replace the account-menu layout while preserving keyboard navigation."
+- "Create checkout HLD for service ownership and communication."
 
-For milestone 1, and any later milestone that introduces new shared definitions: folder structure, shared types, API models and contracts, domain model definitions, test scaffolding, basic startup. One engineer owns it; nothing else in the milestone starts until it is merged. It is the cheapest task in the plan and unblocks all parallelism.
+Each actionable issue carries acceptance criteria, verification, owned paths, interfaces consumed/provided, design references (or justified non-applicability for nontechnical work), dependencies, and an estimate. Documentation acceptance is reviewed artifacts; implementation acceptance includes tests and a working app. A ticket is not bounded merely because its title is short.
 
-### 5. Slice vertically into stories
+Identify the smallest shared foundation needed by the next slice. If contracts, schema, scaffolding, and types are independent deliverables, create separate focused foundation issues, not one kitchen-sink task. Each foundation blocks only its dependants. Record real dependencies between all issues; dependent work starts only after its prerequisites are merged. Independent work can run concurrently.
 
-Build one complete feature path at a time, not all the schema, then all the API, then all the UI:
+Owned paths of concurrent issues must be disjoint. If two need the same file, extract shared definitions into one prerequisite or serialize the work. Keep each PR independently deployable, flagged off when incomplete, and inside the PR size limit.
 
-```
-Bad:   Task 1 entire schema · Task 2 all endpoints · Task 3 all UI · Task 4 connect
-Good:  Story 1 user can register (schema + API + UI) · Story 2 user can log in · Story 3 user can create a task
-```
+Split a ticket when it has independent goals, spans unrelated subsystems, cannot fit one focused session, or remains too uncertain to estimate. A single contract may require several acceptance criteria; do not remove necessary criteria to make it appear small.
 
-A story is a user-observable outcome, INVEST (independent, negotiable, valuable, estimable, small, testable), pointed 1, 2, 3, 5, or 8, split when larger, target median 3. Every design module maps to at least one story; MVP stories come first.
+### 6. Estimate using the team's Linear scale
 
-### 6. Write tasks
+Estimate relative effort, complexity, and uncertainty, not file count or a fixed conversion to hours. Use comparable completed issues as anchors; split large or uncertain work before committing it to a cycle. Provisional implementation placeholders stay unestimated until design resolves them.
 
-One goal per task, in one observable sentence. Each carries: acceptance criteria (testable; each gets a test), a verification command that runs in this repository, owned paths, interfaces consumed and provided, the LLD section, dependencies, and points. It depends only on merged tasks or the foundation task, and its PR stays inside the PR size limit and is deployable on its own, flagged off if the feature is incomplete.
+Invoke `linear` to read the team's scale, set native estimates, and handle unavailable settings. It owns supported scales, T-shirt effort mapping, and capacity calculations; do not maintain another conversion here.
 
-Owned paths of concurrent tasks are disjoint. When two tasks need the same file: split the file, extract a shared contract owned by one task, serialise the tasks, or bundle them into one assignment. Never let two engineers edit one file concurrently.
+### 7. Plan delivery in Linear cycles
 
-| Points | Files | Scope | Example |
-|---|---|---|---|
-| 1 | 1 | single function or config change | add a validation rule |
-| 2 | 1–2 | one component or endpoint | a new API endpoint |
-| 3 | 3–5 | one feature slice | the registration flow |
-| 5 | 5–8 | multi-component feature | search with filtering and pagination |
-| 8 | 8+ | the maximum; split before it enters a sprint | |
+Invoke `linear` to select real scheduled **cycles** and read capacity, rather than invent a sprint calendar. Record the evidence or explicit assumption behind the capacity chosen.
 
-Split further when a task would take more than one focused session, its acceptance criteria need more than three bullets, it touches two independent subsystems, or its title contains "and".
+Select focused issues in dependency order to fit capacity, with a **working product and a demonstrable usable increment at the end of every delivery cycle**. Name the end-to-end goal and verification flow before filling the cycle. Include the necessary contract, schema, implementation, integration, and tests for that slice in its plan. Reduce the slice if it cannot fit; do not move all integration to a later cycle. Each cycle must move toward the full requested outcome, not just keep the old product running unchanged.
 
-### 7. Plan sprints
+Milestone dates and future cycles remain forecasts; only design-backed issues are executable commitments. High-level placeholders can show later scope without promised cycle dates.
 
-Sprints are fixed length (default one week) with a points capacity from the last sprint's delivered points; the first sprint's capacity is an explicit, recorded assumption. Sprint 1 of a milestone starts with the foundation task and then the first usable vertical slice (login API → home API → API client → login screen → home screen). Later sprints each add usable value. Pull tasks by priority until capacity is reached; the rest stay in the milestone backlog. High-risk tasks go early.
+Apply `continuous-delivery` when judging the cycle's product outcome; preparatory design tickets are not evidence of a delivered product increment.
 
-Parallelise only where it does not raise integration risk: independent slices and tests for merged features are safe; migrations, shared state, and dependency chains are sequential; anything sharing a contract waits for the contract.
+### 8. Record and approve the plan
 
-### 8. Order and checkpoint
+- Write `tasks/plan.md` using the template below. Never overwrite an incomplete plan for different work; stop and ask. Revise the same work's plan in place.
+- Through `linear`, create or refine the project, milestones, focused issues, native estimates, dependency relations, and cycle assignments. The plan is an ordered index of real Linear identifiers, never a duplicate TODO tracker. Only when no tracker is configured, use `tasks/todo.md` as the task-list fallback; a failed tracker call does not authorize a second tracker.
+- The appropriate engineer owns the full technical plan; the user reviews and approves it before implementation starts.
+- Checkpoint after every two or three tasks and at each milestone: tests pass, the build is clean, and the core flow works. Keep HLD/LLD current; a changed design goes through review before recutting dependent issues.
 
-Every task leaves the app working. A verification checkpoint after every two or three tasks and at every milestone: tests pass, the build is clean, the core flow works end to end, the user reviews before the next phase.
+### 9. Close every cycle with evidence
 
-### 9. Record it
-
-- The plan in `tasks/plan.md` (template below). **Never overwrite an incomplete plan**: if the file exists with unchecked work for different work, stop and ask; if it is the same work being revised, update in place.
-- Milestones, sprints, stories, and tasks in Linear with labels, points, and `blocks` relations from the foundation task. The plan's task list is an ordered index of Linear ids, never a duplicate checklist. `tasks/todo.md` is used only when no tracker is configured.
-- The user reviews and approves the plan before execution.
-
-### 10. Close every sprint with a review
-
-Delivered points; spilled-over points, each re-pointed with the reason, never silently carried; estimation error per ticket with the cause; unplanned work pulled in; blockers hit; the capacity for the next sprint. Posted as the sprint review on the cycle. Re-cut the milestone when the review says the plan is wrong.
-
-### 11. Keep the design current
-
-Update the service `HLD.md` and `LLD.md` with the sections the plan defines.
+Record the usable outcome actually demonstrated and its verification, not only ticket counts. Report delivered work, spillover with reasons and revised estimates, estimation error, unplanned work, blockers, and the next cycle's capacity basis. Linear's automatic rollover is not acceptance of the old plan: review and re-plan rolled-over issues. Re-cut scope when a cycle misses its usable goal; do not represent layer-only progress as a successful product increment.
 
 ## Scope discipline
 
-- Requirements are gathered before they are cut; phased PRDs and milestoned stories keep scope creep out.
-- Discovered work is classified before it enters scope: MVP requirement, MVP blocker, or later. Only the first two enter automatically; everything else becomes a ticket in the backlog with a reason. Deferred work is always marked explicitly.
-- Every story carries the PM's success target from the PRD; engineers do not invent one.
-- Where a slice is technically impossible, the ticket says so.
-
-## Milestone record
-
-```markdown
-## Milestone <n>: <name>
-- Usable outcome: <what a user can do after this>
-- Budget: <input>/<output> tokens from the team allocation (cost <x or UNKNOWN>)
-- Verification: `<command>` or <manual flow>
-- Foundation task: <ticket> (owner)
-- Sprints: <sprint 1: dates, capacity, planned points> · <sprint 2: ...>
-- Stories and tasks: <ticket ids, with depends-on and points>
-- Deferred to later milestones: <list, with reason>
-```
+- Gather requirements before decomposition; phased PRDs and milestones preserve the whole request.
+- Classify discovered work as MVP requirement, MVP blocker, or later. Only the first two enter automatically; other work becomes backlog issues with reasons. Re-check design and capacity before committing additions.
+- Use the PM's PRD success target where applicable; engineers do not invent product targets. Technical requirements use their agreed measurable outcome.
+- If a usable slice is technically impossible, state the blocker on the ticket and seek the explicit delivery override; do not silently turn a cycle into an unusable intermediate state.
 
 ## Plan document template
 
 ```markdown
-# Implementation Plan: <feature>
+# Implementation Plan: <request>
 
-## Overview
-<one paragraph>
+## Scope
+<full outcome, boundaries, non-goals, small/large rationale, lead engineer and discipline owners>
 
-## Decisions
-<links to the HLD tradeoffs and ADRs this plan builds on>
+## Design readiness
+<design ticket ids, reviewed HLD/LLD sections, unresolved questions and provisional placeholders>
 
 ## Milestones
-<milestone records, in order>
+- Usable outcome: <what a user can do>
+- Budget: <allocation and basis, or UNKNOWN>
+- Verification: <command or manual flow>
+- Prerequisites: <focused foundation issue ids>
+- Deferred scope: <what comes later and why>
 
-## Task index
-<ordered Linear ids per milestone and sprint; checkpoints between phases>
+## Cycles and task index
+<real Linear cycle ids/dates, usable goal, verification, scale, capacity/basis, planned effort>
+<ordered issue ids per milestone/cycle, dependencies, checkpoints; no duplicate checklist>
 
-## Risks and mitigations
-| Risk | Impact | Mitigation |
-|---|---|---|
-
-## Open questions
-<what needs the user>
+## Risks and open questions
+<risks, mitigations, decisions still needed from the user>
 ```
 
 ## Interaction with other skills
 
-- Upstream: `prd-writing` for the stories and success targets; `hld` and `lld` for the design the tasks implement.
-- Alongside: `linear` creates the objects this skill defines; `continuous-delivery` decides what a shippable slice is; `development-setup` puts the contract first so parallel tasks do not block.
-- Downstream: `test-driven-development` writes the test behind every acceptance criterion; `git-workflow-and-versioning` sets the PR size a task must fit.
+- Upstream: `prd-writing` supplies product stories and success targets; `hld` and `lld` resolve design before precise technical decomposition.
+- Alongside: `linear` operates projects, issues, estimates, and cycles; `continuous-delivery` defines shippability; `development-setup` supports contract-first parallel implementation.
+- Downstream: `test-driven-development` verifies acceptance criteria; `git-workflow-and-versioning` sets the PR size and release constraints.
 
 ## Common Rationalizations
 
 | Rationalization | Reality |
 |---|---|
-| "I'll figure it out as I go." | That is how work becomes a tangled mess. Ten minutes of planning saves hours; written plans survive session boundaries. |
-| "The tasks are obvious." | Write them down anyway. Explicit tasks surface hidden dependencies and forgotten edge cases. |
-| "We'll build everything then integrate." | Integration at the end is where projects die. A usable slice per milestone finds problems early. |
-| "Milestone 1 can include the nice UI too." | If it is not needed to exercise the outcome, it is milestone 2. |
-| "Everyone can start now, we'll merge conflicts later." | Concurrent edits to shared definitions cause rework. The foundation task removes that. |
-| "More engineers in parallel means faster." | Only when it does not raise integration risk. Capacity and disjoint paths keep integration safe. |
-| "This discovered work is obviously in scope." | It is classified first; only MVP requirements and MVP blockers enter automatically. |
-| "I'll pick a success target myself." | The PM sets it in the PRD. |
-| "Budgets are the PM's problem." | The budget decides routing. Without it you cannot route. |
-| "We'll just move unfinished tickets to the next sprint." | Silent carry-over hides estimation error. Record the spillover, its reason, and re-point it. |
-| "The old plan is stale, I'll replace it." | Unchecked tasks may be mid-build in another session. Stop and ask. |
+| "It's small, so I'll start coding." | Scope it first; one ticket may suffice, but missing technical design is still a gate. |
+| "Planning only starts after design." | Intake scoping and the first documentation ticket come before design; detailed implementation breakdown comes after it. |
+| "We know APIs are needed; let's estimate ten of them." | That is a provisional work area, not ten known deliverables. Resolve the LLD first. |
+| "Build the feature is a clear ticket." | It hides multiple outcomes. Each issue needs one definite deliverable and proof. |
+| "Every ticket must be a whole feature slice." | A contract or schema issue can be focused; the cycle must combine issues into a usable increment. |
+| "The foundation ticket can include all shared work." | Independent deliverables get separate prerequisite issues and real dependency edges. |
+| "The first sprint is all infrastructure." | Each delivery cycle must produce a usable product increment; planning artifacts are not that increment. |
+| "Linear rolled it over, so the next cycle is planned." | Record the reason, reassess the estimate, and re-check capacity and usable outcome. |
+| "The old plan is stale, I'll replace it." | Incomplete work may be in flight. Revise the same scope or ask before replacing another plan. |
 
 ## Red Flags
 
-- Implementation started without a plan and tickets; tasks in a markdown list but not in Linear.
-- Milestone 1 has no usable outcome, only infrastructure; a milestone with no verification command.
-- Two ready tasks list the same path; a task depends on something not merged and not the foundation task.
-- A task that says "implement the feature" with no acceptance criteria or verification; a story above 8 points in a sprint unsplit; all tasks at the maximum size.
-- Sprint 1 of a milestone does not end in something a user can exercise.
-- No checkpoints between phases; dependency order not considered; high-risk work left for last.
-- Discovered work entering scope without a class; a story with no success target.
-- A sprint closed without a review, or with tickets carried over without a reason.
-- A `tasks/plan.md` with unchecked tasks for different work overwritten without asking.
+- Coding before the small/large scope decision or before the required design review.
+- Detailed implementation estimates or cycle commitments derived from an unreviewed design or vague placeholder.
+- A ticket titled "build feature"; foundation work bundled across independent goals.
+- No design reference for a technical implementation issue, or endpoint counts guessed before the LLD.
+- Parallel tasks sharing owned paths or starting before required contracts land.
+- A delivery cycle with only documents, infrastructure, or isolated layers; no demonstrable usable outcome.
+- Points hard-coded despite a different team scale; estimates only in prose; fictitious cycle ids.
+- Silent spillover, undocumented scope additions, or an incomplete unrelated plan overwritten.
 
 ## Verification
 
-Before execution starts:
+Before implementation:
 
-- [ ] Every milestone has a usable outcome, budget, verification, and a foundation task where shared definitions are introduced; MVP stories are first.
-- [ ] Every design module maps to a story; every story is INVEST and at most 8 points; dependencies are acyclic.
-- [ ] Every task has one goal, testable acceptance criteria, a verification command that runs, owned paths disjoint from every in-flight task, and dependencies only on merged work or the foundation task.
-- [ ] Every sprint has a record with capacity and planned points; sprint 1 starts with the foundation task and ends in a usable slice.
-- [ ] Deferred and discovered work is classified and marked with a reason; every story carries its success target.
-- [ ] The plan is in `tasks/plan.md` with an index of Linear ids, no incomplete plan was overwritten, and the user approved it.
+- [ ] Scope is classified small/large, boundaries are clear, and the appropriate engineer owns the entire plan.
+- [ ] Missing technical design was handled by the first documentation ticket; applicable HLD/LLD sections are current and user-reviewed before detailed implementation tickets.
+- [ ] Early placeholders are provisional and blocked; every executable issue has one definite goal, design basis, acceptance criteria, verification, owned paths, and dependencies.
+- [ ] Native Linear estimates use the team's configured scale, with capacity based on delivery evidence or an explicit assumption.
+- [ ] Every delivery cycle is a real Linear cycle with a working, usable outcome, verification, and a feasible dependency-ordered issue set.
+- [ ] The full scope and deferred work remain visible, the user approved the plan, and no incomplete unrelated plan was overwritten.
 
-At every sprint close:
+At every cycle close:
 
-- [ ] The review records delivered, spilled (re-pointed, with reasons), estimation error, unplanned work, and next capacity.
+- [ ] The usable increment is verified; delivered work, spillover reasons and re-estimates, estimation error, unplanned work, blockers, and next capacity are recorded.
 
 ## See Also
 
-Acceptance criteria are per task and answer "did we build the right thing?". They sit on top of the project-wide Definition of Done, the standing bar every task clears before it counts as done: `../../references/definition-of-done.md`.
+Acceptance criteria are per issue; the standing completion bar is `../../references/definition-of-done.md`.

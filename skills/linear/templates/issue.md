@@ -1,10 +1,14 @@
 # Issue
 
-The body of every issue. Fill every field the work type warrants; say when a field does not apply. An issue that delivers a PRD story fills Story, Acceptance criteria, and Success target; a chore fills only what a reader needs.
+The body of every issue, using the scope and readiness decisions from `planning-and-task-breakdown`. Fill applicable fields and explain omissions. Estimate and cycle below mirror the native Linear fields; they do not replace them.
 
 ```markdown
 User prompt (verbatim, when direct): "<...>"
-Outcome: <what is true when done>
+Outcome: <one observable deliverable that is true when done>
+Out of scope: <explicit exclusions>
+Readiness: actionable | provisional (blocked on design issue <id>)
+Estimate: <value and team scale; set native field, or unestimated while provisional>
+Cycle: <native cycle id when committed; none while provisional>
 Story: <the PRD story this delivers, or n/a>
 Acceptance criteria:
 - [ ] <criterion>
@@ -19,6 +23,6 @@ Blocked stop condition: <when to stop and report that no defensible path remains
 Workflow states skipped / overrides: <state: reason, or none>
 Persona: <who works it>
 Blocked by: <issue ids>
-Design: <HLD/LLD section, or none>
+Design: <reviewed HLD/LLD section and review evidence; for a design issue, required inputs and artifact to produce; for nontechnical work, why not applicable>
 PR: <url once raised>
 ```

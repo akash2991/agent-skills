@@ -1,18 +1,18 @@
 {
   "$comment": "The organisation's Linear workflow: one per team, in order. type is Linear's state category. builtin marks a state Linear reserves: enabling triage creates it, and Linear refuses both to create it and to write to it, so the script only checks it is there and the description below is documentation only. scripts/create-workflow.sh creates the rest; SKILL.md explains them.",
   "states": [
-    { "name": "Triage",      "type": "triage",    "builtin": true, "description": "A request arrived in the user's words, not yet classified. Leaves with a persona, a scope class, and a size: small to Todo, large to Spec." },
+    { "name": "Triage",      "type": "triage",    "builtin": true, "description": "A request arrived in the user's words. Leaves with an owning persona, scope boundaries and size: design-ready small work to Todo, unclear intent to Spec, missing technical design to a documentation issue in Design." },
     { "name": "Backlog",     "type": "backlog",   "description": "Accepted, not planned into a cycle." },
-    { "name": "Todo",        "type": "unstarted", "description": "Ready: the design section, the contract, and the dependencies it needs exist." },
+    { "name": "Todo",        "type": "unstarted", "description": "One bounded deliverable is ready: implementation has reviewed design and settled contracts; documentation has clear design questions and artifact acceptance criteria." },
     { "name": "Spec",        "type": "started",   "description": "Intent being pinned down: interview, refine, spec; a feature gets its phased PRD. Leaves when the user reviewed the PRD or the spec is on the issue." },
     { "name": "Design",      "type": "started",   "description": "HLD, LLD, ADRs; contracts and the DB model. Leaves when the user reviewed the design and the contracts exist." },
-    { "name": "Planned",     "type": "started",   "description": "The project's milestones and issues are cut and the foundation issue identified. Leaves when the issues are in a cycle with owned paths." },
+    { "name": "Planned",     "type": "started",   "description": "Reviewed design is decomposed into focused issues and dependencies. Leaves when actionable issues have native estimates, owned paths and cycle assignments with usable goals." },
     { "name": "In Progress", "type": "started",   "description": "Code and tests in the agent's own environment. Leaves when the PR is raised." },
     { "name": "In Review",   "type": "started",   "description": "PR open; findings inline and as review issues; every thread resolved. Leaves when approved, or review made optional and CI green." },
     { "name": "QA",          "type": "started",   "description": "Independent verification of a milestone's usable outcome, end to end and under concurrency. A failure is a bug issue." },
     { "name": "Merged",      "type": "started",   "description": "In main, releasable, changelog line added; build and deploy pending. Leaves when deployed." },
     { "name": "Blocked",     "type": "started",   "description": "Cannot continue; the status update carries the blocker block. Returns to the state it left." },
-    { "name": "Done",        "type": "completed", "description": "Deployed and exercised where the issue says (production by default). A regression is a new bug." },
+    { "name": "Done",        "type": "completed", "description": "Deliverable verified: code deployed and exercised where specified (production by default); design-only artifacts committed and user-reviewed. A regression is a new bug." },
     { "name": "Canceled",    "type": "canceled",  "description": "Will not be done." },
     { "name": "Duplicate",   "type": "duplicate", "builtin": true, "description": "Another issue tracks it; related as duplicate." }
   ]

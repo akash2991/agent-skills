@@ -36,7 +36,8 @@
         "Types and interfaces are given as code",
         "Every endpoint has an error model",
         "Migrations include rollback steps",
-        "Patterns used are named with the problem they solve"
+        "Patterns used are named with the problem they solve",
+        "Obtains user review of the LLD before handing it off for precise implementation issue scope and estimates; unresolved placeholders are not executable"
       ]
     }
   ]
