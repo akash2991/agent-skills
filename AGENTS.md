@@ -30,6 +30,17 @@ docs/            anatomies and per-tool setup guides
 | Trigger and routing evals | `node scripts/run-evals.js --min-rank1 80` |
 | Assemble the brain from `manifest.json` | `node scripts/build-brain.js` → `build/` |
 
+## Mandatory double-pass PR review
+
+This gate applies to the brain repository itself, not automatically to projects consuming it. Changes here can propagate to every repository that installs or updates from the brain, so every change—including documentation and instruction changes—must follow this workflow:
+
+1. **Raise the PR.** The authoring agent opens a PR with the changes and verification evidence.
+2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one using **GPT-6.1 Soul**, the other using **Opus 5.5**. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
+3. **Third-agent synthesis.** A separate agent using **GPT-6 Astra** examines the original PR and both submitted reviews, reconciles conflicting findings, and posts a combined assessment and required fixes on the PR. It does not substitute for either independent pass.
+4. **Resolve before merge.** Address the required fixes and record their disposition and verification on the PR. Reviews and synthesis must cover the final revision; changed content must receive the applicable review passes and synthesis before merge.
+
+This is mandatory, including for changes already in progress. Local checks or a single review do not satisfy it. Use authenticated, exact model identifiers when launching the agents; if a required model is unavailable or its identifier is unclear, stop at that gate and ask the user rather than substitute another model or claim completion. Do not merge until both independent passes and the third-agent synthesis are complete.
+
 ## Conventions for this repository
 
 - **Single source of truth comes first.** Edit each skill, persona, reference, template, or shared instruction only at its source here; generated and installed copies are outputs. Use native shared discovery before adding copies. Before changing harness layout, inspect existing tracked files/settings and verify the discovery rules in [docs/harness-layout.md](docs/harness-layout.md). Folder presence alone is not a reason to copy. Do not introduce wrappers, symlinks, new layouts, or settings without approval.
