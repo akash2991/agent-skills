@@ -196,6 +196,8 @@ test('public SDK emits exact stable IDs, parent context, backdated timestamps an
   assert.equal(tool.spanContext().traceId, base().traceId);
   assert.equal(root.startTime[0] * 1000 + root.startTime[1] / 1e6, base().startTime);
   assert.equal(root.endTime[0] * 1000 + root.endTime[1] / 1e6, base().endTime);
+  assert.equal(root.attributes['langfuse.observation.type'], 'generation');
+  assert.equal(tool.attributes['langfuse.observation.type'], 'tool');
   assert.equal(root.attributes['langfuse.observation.model.name'], base().model);
   assert.deepEqual(JSON.parse(root.attributes['langfuse.observation.usage_details']), base().usage);
   assert.deepEqual(JSON.parse(root.attributes['langfuse.observation.cost_details']), base().cost);
@@ -205,6 +207,32 @@ test('public SDK emits exact stable IDs, parent context, backdated timestamps an
   const exported = JSON.stringify(spans.map(span => ({ name: span.name, attributes: span.attributes, status: span.status, events: span.events, links: span.links, resource: span.resource.attributes })));
   for (const canary of CANARIES) assert.ok(!exported.includes(canary));
   assert.ok(!exported.includes('skillsUsed'));
+});
+
+test('replay coalesces older actor revisions and preserves typed IDs and AGENT semantics', async t => {
+  const stateDir = sandbox(t);
+  const context = { ...base().context, projectId: `project-${'a'.repeat(32)}`, worktreeId: `worktree-${'b'.repeat(32)}` };
+  const latest = base({ type: 'AGENT', endTime: base().endTime + 100, outcome: 'completed', context });
+  queueObservation(latest, { stateDir });
+  queueObservation(base({ type: 'AGENT', outcome: 'unknown', context }), { stateDir });
+  const spans = [];
+  const result = await flushOutbox({ stateDir, dependencyRoot, exporterFactory: captureFactory(spans) });
+  assert.equal(result.accepted, 1); assert.equal(result.queued, 0); assert.equal(spans.length, 1);
+  assert.equal(spans[0].attributes['langfuse.observation.type'], 'agent');
+  assert.equal(JSON.parse(spans[0].attributes['langfuse.observation.metadata.outcome']), 'completed');
+  assert.equal(JSON.parse(spans[0].attributes['langfuse.observation.metadata.projectId']), context.projectId);
+});
+
+test('parallel flushes cannot post an older actor revision after a newer one', async t => {
+  const stateDir = sandbox(t); const seen = [];
+  queueObservation(base(), { stateDir });
+  const factory = () => ({ export(spans, callback) { setTimeout(() => { seen.push(...spans.map(span => span.endTime[0] * 1000 + span.endTime[1] / 1e6)); callback({ code: 0 }); }, 30); }, async shutdown() {} });
+  const first = flushOutbox({ stateDir, dependencyRoot, exporterFactory: factory });
+  queueObservation(base({ endTime: base().endTime + 100 }), { stateDir });
+  const second = flushOutbox({ stateDir, dependencyRoot, exporterFactory: factory });
+  await Promise.all([first, second]);
+  assert.deepEqual(seen, [base().endTime, base().endTime + 100]);
+  assert.equal(fs.readdirSync(path.join(stateDir, 'outbox')).length, 0);
 });
 
 test('offline, exporter failures, throws and timeouts retain metadata-only replay with stable IDs', async t => {
@@ -265,7 +293,7 @@ test('late callbacks cannot delete retries; acknowledgements remove only their e
 
 test('queue capacity, bounded flushes, tampered records and unsafe state paths fail closed', async t => {
   const stateDir = sandbox(t);
-  for (let i = 0; i < OUTBOX_LIMITS.records; i++) assert.equal(queueObservation(base(), { stateDir }).queued, true);
+  for (let i = 0; i < OUTBOX_LIMITS.records; i++) assert.equal(queueObservation(base({ id: (i + 1).toString(16).padStart(16, '0') }), { stateDir }).queued, true);
   assert.deepEqual(queueObservation(base(), { stateDir }), { queued: false, reason: 'capacity' });
   const spans = [];
   const result = await flushOutbox({ stateDir, dependencyRoot, exporterFactory: captureFactory(spans) });
@@ -313,6 +341,16 @@ test('local synthetic HTTP transport uses safe OTLP and requires real callback s
   const span = JSON.parse(wire.body).resourceSpans[0].scopeSpans[0].spans[0];
   assert.equal(span.spanId, base().id); assert.equal(span.traceId, base().traceId);
   assert.equal(span.startTimeUnixNano, String(BigInt(base().startTime) * 1000000n));
+  for (const [body, succeeds] of [
+    [{ data: { id: 'synthetic-receipt', timestamp: '2026-01-01T00:00:00Z', name: 'synthetic-ingestion', payload: {} } }, true],
+    [{ partialSuccess: { rejectedSpans: '0' } }, true],
+    [{ error: 'SYNTHETIC_REJECTION' }, false]
+  ]) {
+    queueObservation(base(), { stateDir }); responseBody = JSON.stringify(body);
+    const result = await flushOutbox({ stateDir, dependencyRoot, credentials });
+    assert.equal(result.accepted > 0, succeeds);
+    assert.equal(result.verified, false);
+  }
 });
 
 test('API emits no raw content or arbitrary errors to stdout/stderr', t => {

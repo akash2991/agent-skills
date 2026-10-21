@@ -34,6 +34,7 @@ class TestFlow {
       resolveLaunch: ({ nonce, launchId }) => this.launches.get(nonce || launchId) || null
     };
   }
+  createToolLaunch(run) { return this.store.createLaunch(run, { multiUse: true }); }
   id(seed) { return crypto.createHash('sha256').update(String(seed)).digest('hex').slice(0, 16); }
   readState(key) { return structuredClone(this.states.get(key)); }
   writeState(key, data) { this.states.set(key, structuredClone(data)); }
@@ -80,7 +81,7 @@ class TestFlow {
       if (!run) continue;
       const record = { ...entry.record, traceId: run.traceId, sessionId: run.sessionId,
         parentId: entry.record.type === 'AGENT' ? run.parentSpanId : run.rootSpanId,
-        context: Object.fromEntries(['persona', 'ticketId', 'effort', 'requestedModel', 'invokedSkills', 'loadedSkills']
+        context: Object.fromEntries(['persona', 'ticketId', 'requestedEffort', 'requestedModel', 'invokedSkills', 'loadedSkills']
           .filter(k => run[k] !== undefined).map(k => [k, run[k]])) };
       this.records.set(id, record);
     }
@@ -90,7 +91,10 @@ class TestFlow {
     const match = typeof text === 'string' && text.match(/^\/brain (backend-engineer|test-engineer) (ABC-\d+)\b/);
     return match ? this.update(run, { persona: match[1], ticketId: match[2] }) : run;
   }
+  knownPersona(_cwd, name) { return ['backend-engineer', 'test-engineer'].includes(name); }
+  knownSkill(_cwd, name) { return ['coding-standards', 'test-driven-development'].includes(name); }
   captureSkill(run, { toolName, input, success, invoked }) {
+    if (!success) return run;
     const skill = toolName === 'Skill' ? input?.skill :
       input?.file_path?.match(/\/skills\/([^/]+)\/SKILL\.md$/)?.[1];
     if (!['coding-standards', 'test-driven-development'].includes(skill)) return run;
@@ -113,7 +117,8 @@ function driver(flow = new TestFlow()) {
   }, { flow, clock: () => now++, flushTimeoutMs: 25 }) };
 }
 function childRun(flow, id) {
-  return flow.session(`session-test:agent:${flow.id(`claude:session-test:${id}`)}`);
+  const hex = crypto.createHash('sha256').update(`claude:session-test:${id}`).digest('hex');
+  return flow.session(`${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`);
 }
 function rows(flow, type) { return [...flow.records.values()].filter(r => r.type === type); }
 function transcript(file, messages) {
@@ -208,8 +213,8 @@ test('transcript identity dedup, latest usage, exact timing, incomplete tails an
   assert.equal(generations.length, 1);
   assert.equal(generations[0].startTime, first.timestamp);
   assert.equal(generations[0].endTime, later.timestamp);
-  assert.deepEqual(generations[0].usage, { input_tokens: 12, output_tokens: 7,
-    cache_read_input_tokens: 3, cache_creation_input_tokens: 4, ephemeral_5m_input_tokens: 4 });
+  assert.deepEqual(generations[0].usage, { input: 12, output: 7,
+    cache_read_input_tokens: 3, cache_creation_input_tokens: 4 });
   await hook('Stop', { transcript_path: file });
   assert.equal(rows(flow, 'GENERATION').length, 1);
   fs.appendFileSync(file, partial.slice(90) + '\n');
@@ -221,7 +226,7 @@ test('transcript identity dedup, latest usage, exact timing, incomplete tails an
   transcript(file, [later]);
   await hook('Stop', { transcript_path: file });
   assert.equal(rows(flow, 'GENERATION').length, 2);
-  assert.equal(rows(flow, 'GENERATION').find(g => g.id === generations[0].id).usage.output_tokens, 7);
+  assert.equal(rows(flow, 'GENERATION').find(g => g.id === generations[0].id).usage.output, 7);
   const saved = JSON.stringify([...flow.states]);
   assert.ok(!saved.includes('SYNTHETIC_PRIVATE'));
   assert.ok(!saved.includes('content'));
@@ -251,7 +256,7 @@ test('actual model, effort, brain command, invoked versus loaded skills, and too
     command_args: 'backend-engineer ABC-91 private trailing instructions', prompt: 'private expanded text',
     declared_skills: ['never-used'] });
   await hook('PreToolUse', { tool_name: 'Skill', tool_use_id: 'skill-1', tool_input: { skill: 'coding-standards' }, effort: { level: 'xhigh' } });
-  assert.deepEqual(flow.session('session-test').invokedSkills, ['coding-standards']);
+  assert.equal(flow.session('session-test').invokedSkills, undefined, 'a planned invocation is not successful execution');
   assert.equal(flow.session('session-test').loadedSkills, undefined);
   await hook('PostToolUse', { tool_name: 'Skill', tool_use_id: 'skill-1', tool_input: { skill: 'coding-standards' },
     tool_response: { text: 'private loaded skill' } });
@@ -262,7 +267,7 @@ test('actual model, effort, brain command, invoked versus loaded skills, and too
   await hook('Stop', { effort: { level: 'high' }, last_assistant_message: 'private answer' });
   const agent = rows(flow, 'AGENT')[0];
   assert.equal(agent.model, 'claude-sonnet-4-6');
-  assert.equal(agent.context.effort, 'high');
+  assert.equal(agent.context.requestedEffort, 'high');
   assert.equal(agent.context.persona, 'backend-engineer');
   assert.equal(agent.context.ticketId, 'ABC-91');
   assert.deepEqual(agent.context.invokedSkills, ['coding-standards', 'test-driven-development']);
@@ -281,7 +286,7 @@ test('known native brain persona is evidence, but arbitrary persona/model labels
   await hook('Stop', { transcript_path: file });
   assert.equal(rows(flow, 'GENERATION').length, 1, 'unknown labels do not discard actual message usage');
   assert.equal(rows(flow, 'GENERATION')[0].model, undefined);
-  assert.equal(rows(flow, 'GENERATION')[0].usage.input_tokens, 10);
+  assert.equal(rows(flow, 'GENERATION')[0].usage.input, 10);
   assert.ok(!JSON.stringify([...flow.states, ...flow.records]).includes('PRIVATE_GATEWAY_MODEL_LABEL'));
 });
 
@@ -464,7 +469,7 @@ test('stdin JSON parser is byte-bounded and never exposes parser excerpts', asyn
 
 test('CLI uses only stdin, emits only native Bash JSON, and fails open without payload logging', t => {
   const dir = sandbox(t);
-  for (const name of ['claude.cjs', 'claude-hook.cjs']) {
+  for (const name of ['claude.cjs', 'claude-hook.cjs', 'privacy.cjs']) {
     fs.copyFileSync(path.join(__dirname, '../runtime/langfuse', name), path.join(dir, name));
   }
   // A transport-free module in an isolated fixture, never the real flow.
@@ -476,7 +481,7 @@ test('CLI uses only stdin, emits only native Bash JSON, and fails open without p
         sessionId:'test-session',nativeSessionId:'session-test',startedAt:1800000000000 };
       return { id:s=>crypto.createHash('sha256').update(s).digest('hex').slice(0,16),
         session:()=>run,resolve:r=>r,readState:k=>state.get(k),writeState:(k,v)=>state.set(k,v),
-        submit:()=>{},flush:async()=>{},store:{createLaunch:()=>({nonce:'testnonce'})} };
+        submit:()=>{},flush:async()=>{},createToolLaunch:()=>({nonce:'testnonce'}),store:{createLaunch:()=>({nonce:'testnonce'})} };
     };
   `);
   const cli = path.join(dir, 'claude-hook.cjs');

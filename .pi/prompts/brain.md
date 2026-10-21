@@ -17,4 +17,6 @@ Harness: pi
 Effort: <thinking effort>
 ```
 
+When first-party brain tracing is enabled, record the adopted persona with the `brain_context` tool, then record its ticket ID as soon as that ticket is established. Pass only those non-secret identifiers, never task text or credentials. Update the structured context when persona or ticket changes; a prose declaration is not telemetry state. Skill attribution comes from observed invocations/loads, not the persona's permitted-skills list.
+
 Re-declare whenever you add a skill or tool. Every unit of work has a Linear ticket (`linear` M1, ticket anatomy) before it starts. For worktree-backed work, ensure the main agent's visible runtime name exactly matches its worktree basename. For long-running or out-of-persona work, or parallel hands, start subagents: show the plan (name, persona, scope, ticket, type), ensure each worktree-backed subagent's visible runtime name exactly matches its own worktree basename, and ask the user for its model, harness, and effort first. Give a subagent its persona and scope only; it loads its own skills and tools. Never hold two personalities.

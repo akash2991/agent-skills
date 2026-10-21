@@ -4,6 +4,7 @@
 // projection below may cross the flow/state boundary; never checkpoint a row.
 const fs = require('node:fs');
 const path = require('node:path');
+const { safeIdentity } = require('./privacy.cjs');
 
 const HOOK_EVENTS = Object.freeze([
   'SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PreToolUse',
@@ -15,14 +16,11 @@ const TOOLS = new Set(['Agent', 'Task', 'Bash', 'PowerShell', 'Read', 'Write', '
   'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput',
   'TaskStop', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode', 'ToolSearch',
   'SubagentHandback', 'EndConversation']);
-// Native agent_type is untrusted free text. Only these first-party role labels
-// may become persona metadata; generic/custom types do not imply a brain role.
-const BRAIN_PERSONAS = new Set(['product-manager', 'backend-engineer', 'web-engineer',
-  'mobile-engineer', 'scout', 'code-reviewer', 'test-engineer', 'security-auditor',
-  'web-performance-auditor']);
+// Native agent_type is untrusted free text. Brain roles are verified against
+// installed/source persona files by the flow, never a duplicate role registry.
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
-const USAGE_KEYS = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens',
-  'cache_read_input_tokens'];
+const USAGE_KEYS = { input_tokens: 'input', output_tokens: 'output',
+  cache_creation_input_tokens: 'cache_creation_input_tokens', cache_read_input_tokens: 'cache_read_input_tokens' };
 const MAX_SCAN_BYTES = 32 * 1024 * 1024;
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
 
@@ -43,11 +41,10 @@ function requestedModel(value) {
   return ['opus', 'sonnet', 'haiku', 'inherit'].includes(value) ? value : model(value);
 }
 function toolName(value) {
-  return TOOLS.has(value) ? value : typeof value === 'string' && value.startsWith('mcp__') ? 'MCP' : 'Tool';
+  return TOOLS.has(value) ? value : safeIdentity(value) || 'Tool';
 }
-function agentName(value) {
-  return BRAIN_PERSONAS.has(value) || ['Explore', 'Plan', 'general-purpose'].includes(value)
-    ? value : undefined;
+function agentName(value, knownPersona) {
+  return knownPersona ? value : safeIdentity(value);
 }
 function timestamp(value) {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
@@ -55,18 +52,25 @@ function timestamp(value) {
 }
 function usage(value) {
   const result = {};
-  for (const key of USAGE_KEYS) {
-    if (Number.isSafeInteger(value?.[key]) && value[key] >= 0) result[key] = value[key];
+  for (const [native, canonical] of Object.entries(USAGE_KEYS)) {
+    if (Number.isSafeInteger(value?.[native]) && value[native] >= 0) result[canonical] = value[native];
   }
-  for (const key of ['ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens']) {
-    if (Number.isSafeInteger(value?.cache_creation?.[key]) && value.cache_creation[key] >= 0) {
-      result[key] = value.cache_creation[key];
+  // TTL buckets are a breakdown of the aggregate, not additional tokens.
+  // Exporting both makes Langfuse sum the same cache-write tokens twice.
+  if (result.cache_creation_input_tokens === undefined) {
+    const buckets = ['ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens'].map(key => value?.cache_creation?.[key]);
+    if (buckets.some(Number.isSafeInteger) && buckets.every(number => number === undefined || (Number.isSafeInteger(number) && number >= 0))) {
+      result.cache_creation_input_tokens = buckets.reduce((sum, number) => sum + (number || 0), 0);
     }
   }
   return result;
 }
 function namespace(sessionId, childId) { return `claude:${sessionId}:${childId}`; }
-function childSession(flow, sessionId, childId) { return `${sessionId}:agent:${flow.id(namespace(sessionId, childId))}`; }
+function childSession(flow, sessionId, childId) {
+  // A deterministic native child identity, not a hash of payload content.
+  const hex = require('node:crypto').createHash('sha256').update(namespace(sessionId, childId)).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 function key(flow, kind, ...ids) { return `claude:${kind}:${flow.id(JSON.stringify(ids))}`; }
 function callerIdentity(run) {
   // A Pre/Post pair belongs to this run, even if the native session's current
@@ -81,9 +85,10 @@ function record(run, fields) {
     nativeSessionId: run.nativeSessionId, ...fields };
 }
 function agentRecord(run, now, terminal, actualModel) {
+  const startTime = timestamp(run.startedAt) || now;
   return record(run, { id: run.rootSpanId, parentId: run.parentSpanId || null,
-    type: 'AGENT', name: 'Claude agent', startTime: timestamp(run.startedAt) || now,
-    endTime: terminal?.endTime || now, outcome: terminal?.outcome || 'unknown',
+    type: 'AGENT', name: 'Claude agent', startTime,
+    endTime: Math.max(startTime, terminal?.endTime || now), outcome: terminal?.outcome || 'unknown',
     ...(actualModel ? { model: actualModel, provider: 'anthropic' } : {}) });
 }
 
@@ -178,6 +183,7 @@ function reconcileTranscript(flow, run, file, childId) {
     if (row.type !== 'assistant' || !identity(row.message?.id)) return;
     if (!hasRuntimeModel(row.message.model)) return;
     const actualModel = model(row.message.model);
+    run = flow.update(run, { observedModel: actualModel || null });
     const id = flow.id(`claude:generation:${run.nativeSessionId}:${row.message.id}`);
     const stateKey = key(flow, 'generation', run.nativeSessionId, id);
     const previous = flow.readState(stateKey);
@@ -202,12 +208,12 @@ function reconcileTranscript(flow, run, file, childId) {
   if (next) flow.writeState(cursorKey, next);
 }
 
-async function boundedFlush(flow, timeoutMs = 500) {
+async function boundedFlush(flow, timeoutMs = 2500) {
   let timer;
   try {
     await Promise.race([
-      Promise.resolve().then(() => flow.flush()),
-      new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })
+      Promise.resolve().then(() => flow.flush({ timeoutMs })),
+      new Promise(resolve => { timer = setTimeout(resolve, timeoutMs + Math.min(1000, timeoutMs)); })
     ]);
   } finally { clearTimeout(timer); }
 }
@@ -215,6 +221,8 @@ async function boundedFlush(flow, timeoutMs = 500) {
 /** Handle one native hook. Returns only a PreToolUse input update, or null.
  * A supplied flow makes this module usable without loading the transport. */
 async function handleClaudeHook(payload, options = {}) {
+  const env = options.env || process.env;
+  if (['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED'].some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()))) return null;
   if (!payload || !HOOK_EVENTS.includes(payload.hook_event_name)) return null;
   const sessionId = identity(payload.session_id);
   if (!sessionId) return null;
@@ -224,42 +232,50 @@ async function handleClaudeHook(payload, options = {}) {
   const childId = identity(payload.agent_id);
   if ((event === 'SubagentStart' || event === 'SubagentStop') && !childId) return null;
   const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
-  const flow = options.flow || require('./flow.cjs').createFlow({ harness: 'claude', cwd });
+  const flow = options.flow || require('./flow.cjs').createFlow({ harness: 'claude', cwd, env });
   const now = options.clock ? options.clock() : Date.now();
   const nativeSessionId = childId ? childSession(flow, sessionId, childId) : sessionId;
   const pendingIdentity = childId ? namespace(sessionId, childId) : undefined;
+  const knownPersona = flow.knownPersona?.(cwd, payload.agent_type) === true;
   let run = flow.session(nativeSessionId) || flow.begin({ nativeSessionId, cwd,
-    ...(pendingIdentity ? { pendingIdentity } : {}), agentName: agentName(payload.agent_type) });
+    ...(pendingIdentity ? { pendingIdentity } : {}), agentName: agentName(payload.agent_type, knownPersona) });
   // Only the shared flow may resolve/rebase ancestry. SubagentStart's agent_id
   // is the NEW child, never evidence of its caller or dispatch tool ID.
   run = flow.resolve(run) || run;
-  if (!run.persona && BRAIN_PERSONAS.has(payload.agent_type)) {
+  if (!run.persona && knownPersona) {
     run = flow.update(run, { persona: payload.agent_type, agentName: payload.agent_type });
   }
   const modelKey = key(flow, 'model', nativeSessionId);
   const observedModel = event === 'SessionStart' ? model(payload.model) :
     event === 'PostModelSwitch' ? model(payload.to_model) : undefined;
-  if (observedModel) flow.writeState(modelKey, { model: observedModel });
+  if (observedModel) {
+    flow.writeState(modelKey, { model: observedModel });
+    run = flow.update(run, { requestedModel: observedModel });
+  }
   const actualModel = observedModel || flow.readState(modelKey)?.model;
   const effort = EFFORTS.has(payload.effort?.level) ? payload.effort.level : undefined;
-  if (effort) run = flow.update(run, { effort });
+  if (effort) run = flow.update(run, { requestedEffort: effort });
 
   if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
     const promptId = identity(payload.prompt_id);
-    // Immutable per-prompt timestamps make replay after Stop harmless. Without
-    // a prompt identity, conservatively reuse the existing activity marker.
+    // Identified prompts can be deduplicated. Native versions that omit the
+    // identifier still emit a fresh Submit for each turn; reusing the previous
+    // marker would falsely keep a second, interrupted turn completed. Expansion
+    // belongs to the existing Submit when no prompt identifier is supplied.
     const activityKey = key(flow, 'activity', nativeSessionId);
-    const promptKey = promptId ? key(flow, 'prompt', nativeSessionId, promptId) : activityKey;
-    const activity = flow.readState(promptKey) || { startedAt: now,
-      ...(promptId ? { promptId: flow.id(promptId) } : {}) };
     const current = flow.readState(activityKey);
+    const promptKey = promptId ? key(flow, 'prompt', nativeSessionId, promptId) : activityKey;
+    const priorActivity = promptId ? flow.readState(promptKey) : event === 'UserPromptExpansion' ? current : undefined;
+    const activity = priorActivity || { startedAt: now,
+      ...(promptId ? { promptId: flow.id(promptId) } : {}) };
     flow.writeState(promptKey, activity);
     if (!current || activity.startedAt >= current.startedAt) {
       flow.writeState(activityKey, activity);
       run = flow.captureBrainCommand(run, event === 'UserPromptExpansion'
         ? { commandName: payload.command_name, commandArgs: payload.command_args, cwd }
         : { text: payload.prompt, cwd });
-      if (event === 'UserPromptExpansion' && payload.expansion_type === 'slash_command') {
+      if (event === 'UserPromptExpansion' && payload.expansion_type === 'slash_command' &&
+        flow.knownSkill?.(cwd, payload.command_name)) {
         run = flow.captureSkill(run, { toolName: 'Skill', input: { skill: payload.command_name },
           cwd, success: true, invoked: true });
       }
@@ -283,7 +299,7 @@ async function handleClaudeHook(payload, options = {}) {
         const launchKey = key(flow, 'bash-launch', nativeSessionId, toolId);
         let launch = flow.readState(launchKey);
         if (!launch) {
-          const binding = flow.store.createLaunch(run, { multiUse: true });
+          const binding = flow.createToolLaunch(run);
           if (identity(binding?.nonce)) {
             launch = { nonce: binding.nonce };
             flow.writeState(launchKey, launch);
@@ -366,7 +382,7 @@ async function handleClaudeHook(payload, options = {}) {
   }
   const currentTerminal = terminal && (!activity || activity.startedAt <= terminal.endTime) ? terminal : undefined;
   flow.submit(run, [agentRecord(run, now, currentTerminal, actualModel)]);
-  await boundedFlush(flow, options.flushTimeoutMs ?? 500);
+  await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
   return output;
 }
 

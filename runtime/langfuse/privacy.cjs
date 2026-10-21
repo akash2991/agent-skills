@@ -8,7 +8,7 @@ const CONTEXT_FIELDS = Object.freeze([
   'evidenceSource'
 ]);
 const TYPES = new Set(['AGENT', 'GENERATION', 'TOOL', 'SPAN']);
-const OUTCOMES = new Set(['success', 'error', 'failed', 'completed', 'cancelled', 'aborted', 'timeout', 'unknown']);
+const OUTCOMES = new Set(['success', 'error', 'failed', 'completed', 'cancelled', 'aborted', 'timeout', 'unknown', 'interrupted']);
 const LIMITS = Object.freeze({ identity: 128, skills: 32, metrics: 24, recordBytes: 16384, literals: 64 });
 let sensitiveLiterals = [];
 
@@ -66,6 +66,12 @@ function safeIdentity(value) {
   return value;
 }
 
+function structuralIdentity(field, value) {
+  const prefix = field === 'projectId' ? 'project' : field === 'worktreeId' ? 'worktree' : null;
+  return prefix && typeof value === 'string' && new RegExp(`^${prefix}-[a-f0-9]{32}$`).test(value)
+    && !sensitiveLiterals.some(literal => value.toLowerCase().includes(literal)) ? value : undefined;
+}
+
 function requiredIdentity(value) { const safe = safeIdentity(value); if (!safe) invalid(); return safe; }
 function identifier(value, length) {
   if (typeof value !== 'string' || value.length !== length || !/^[a-f0-9]+$/i.test(value) || /^0+$/.test(value)
@@ -113,7 +119,8 @@ function sanitizeObservation(record) {
     const context = own(record, 'context');
     const normalized = {};
     for (const field of CONTEXT_FIELDS) {
-      const safe = safeIdentity(own(context, field));
+      const value = own(context, field);
+      const safe = structuralIdentity(field, value) || safeIdentity(value);
       if (safe) normalized[field] = safe;
     }
     for (const field of ['skillsInvoked', 'skillsLoaded']) {
@@ -140,4 +147,4 @@ function sanitizeObservation(record) {
   } catch { invalid(); }
 }
 
-module.exports = { sanitizeObservation, configurePrivacy, safeIdentity, CONTEXT_FIELDS, LIMITS };
+module.exports = { sanitizeObservation, configurePrivacy, safeIdentity, structuralIdentity, CONTEXT_FIELDS, LIMITS };

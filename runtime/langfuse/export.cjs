@@ -7,7 +7,7 @@ const https = require('node:https');
 const http = require('node:http');
 const { randomBytes } = require('node:crypto');
 const { setMaxListeners } = require('node:events');
-const { sanitizeObservation, safeIdentity, LIMITS } = require('./privacy.cjs');
+const { sanitizeObservation, safeIdentity, structuralIdentity, LIMITS } = require('./privacy.cjs');
 const { loadDependencies } = require('./dependencies.cjs');
 
 const OUTBOX_LIMITS = Object.freeze({ records: 256, bytes: 4 * 1024 * 1024, flush: 32, scan: 512 });
@@ -119,7 +119,7 @@ function loadCredentials({ env = process.env, home = os.homedir(), agentDir = pa
 }
 
 function readEntries(directory) {
-  const entries = [];
+  const latest = new Map();
   let invalid = 0;
   for (const name of filesIn(directory)) {
     if (!FILE_PATTERN.test(name)) { invalid++; continue; }
@@ -131,29 +131,35 @@ function readEntries(directory) {
       if (envelope.schema !== 1 || !/^[a-f0-9]{32}$/.test(envelope.version)
         || name !== `${record.traceId}-${record.id}-${envelope.version}.json`
         || JSON.stringify({ schema: 1, version: envelope.version, record }) !== bytes.toString('utf8')) throw new Error();
-      entries.push({ file, bytes, record });
+      const entry = { file, bytes, record, modified: fs.lstatSync(file, { bigint: true }).mtimeNs, superseded: [] };
+      const key = `${record.traceId}:${record.id}`;
+      const previous = latest.get(key);
+      if (!previous) latest.set(key, entry);
+      else if (record.endTime > previous.record.endTime || (record.endTime === previous.record.endTime && entry.modified > previous.modified)) {
+        entry.superseded = [...previous.superseded, previous]; latest.set(key, entry);
+      } else previous.superseded.push(entry);
     } catch { invalid++; }
-    if (entries.length >= OUTBOX_LIMITS.flush) break;
   }
-  return { entries, invalid };
+  return { entries: [...latest.values()].slice(0, OUTBOX_LIMITS.flush), invalid };
 }
 
 function sdkMask({ data }) {
-  if (typeof data === 'string') return safeIdentity(data) || null;
+  if (typeof data === 'string') return structuralIdentity('projectId', data) || structuralIdentity('worktreeId', data) || safeIdentity(data) || null;
   if (typeof data === 'number') return Number.isFinite(data) && data >= 0 && data <= 1e12 ? data : null;
   if (Array.isArray(data) && data.length <= LIMITS.skills && data.every(value => safeIdentity(value))) return data;
   return null;
 }
 function attributesFor(record) {
   const attrs = {
-    'langfuse.observation.type': record.type,
+    'langfuse.observation.type': record.type.toLowerCase(),
     'session.id': record.sessionId,
-    'langfuse.trace.name': record.name,
     'langfuse.observation.metadata.privacy': JSON.stringify('metadata-only'),
     'langfuse.observation.metadata.nativeSessionId': JSON.stringify(record.nativeSessionId)
   };
+  if (record.type === 'AGENT' && record.parentId === null) attrs['langfuse.trace.name'] = record.name;
   const tags = ['privacy:metadata-only', `type:${record.type.toLowerCase()}`];
   for (const [key, value] of Object.entries(record.context || {})) {
+    if (key === 'outcome' && value === 'unknown') continue;
     attrs[`langfuse.observation.metadata.${key}`] = JSON.stringify(value);
     // Loaded skill lists are never labelled "used" or "invoked".
     if (['projectId', 'projectName', 'persona', 'ticketId', 'runtimeName', 'harness'].includes(key)) tags.push(`${key}:${value}`);
@@ -165,7 +171,9 @@ function attributesFor(record) {
   if (record.toolName) attrs['langfuse.observation.metadata.toolName'] = JSON.stringify(record.toolName);
   if (record.usage) attrs['langfuse.observation.usage_details'] = JSON.stringify(record.usage);
   if (record.cost) attrs['langfuse.observation.cost_details'] = JSON.stringify(record.cost);
-  if (record.outcome) attrs['langfuse.observation.metadata.outcome'] = JSON.stringify(record.outcome);
+  // Unknown is absence of completion evidence, not a finished-span attribute
+  // to race against a later terminal update during asynchronous ingestion.
+  if (record.outcome && record.outcome !== 'unknown') attrs['langfuse.observation.metadata.outcome'] = JSON.stringify(record.outcome);
   return attrs;
 }
 
@@ -201,8 +209,8 @@ function transportExporter({ credentials, timeoutMs, signal }) {
             'x-langfuse-ingestion-version': '4', 'x-langfuse-sdk-name': 'agent-brain.metadata'
           }
         }, response => {
-          // OTLP may report partial rejection in a 200 response. Fail closed on
-          // any partialSuccess message and do not acknowledge queued spans.
+          // OTLP may report partial rejection in a 200 response. Do not
+          // acknowledge any batch with explicitly rejected or malformed counts.
           let responseBytes = 0;
           const chunks = [];
           response.on('data', chunk => {
@@ -215,7 +223,16 @@ function transportExporter({ credentials, timeoutMs, signal }) {
             try {
               const text = Buffer.concat(chunks).toString('utf8');
               const result = text ? JSON.parse(text) : {};
-              done(response.statusCode >= 200 && response.statusCode < 300 && result && !Array.isArray(result) && Object.keys(result).length === 0 ? 0 : 1);
+              const object = result && typeof result === 'object' && !Array.isArray(result);
+              const partials = [result?.partialSuccess, result?.data?.partialSuccess].filter(value => value !== undefined);
+              const rejected = partials.some(value => !value || typeof value !== 'object' ||
+                ![undefined, 0, '0'].includes(value.rejectedSpans));
+              const explicitError = result?.error || result?.success === false ||
+                (result?.errors && (!Array.isArray(result.errors) || result.errors.length));
+              // Langfuse may wrap its ingestion receipt in {data: ...}; an
+              // empty JSON body is not the only valid HTTP acknowledgement.
+              // This is transport acceptance only, never persistence proof.
+              done(response.statusCode >= 200 && response.statusCode < 300 && object && !rejected && !explicitError ? 0 : 1);
             } catch { done(1); }
           });
         });
@@ -231,7 +248,7 @@ function transportExporter({ credentials, timeoutMs, signal }) {
   };
 }
 
-async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependencyRoot, timeoutMs = 3000, exporterFactory } = {}) {
+async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependencyRoot, timeoutMs = 3000, exporterFactory, env = process.env } = {}) {
   const result = { queued: 0, accepted: 0, failed: 0, attempted: 0, invalid: 0, verified: false, status: 'offline' };
   let directory, entries;
   try {
@@ -242,10 +259,32 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
     result.invalid = read.invalid;
   } catch { result.status = 'state_unavailable'; return result; }
   if (!entries.length) { result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
-  const config = credentials === undefined && !exporterFactory ? loadCredentials() : validateCredentials(credentials, true);
+  const config = credentials === undefined && !exporterFactory ? loadCredentials({ env }) : validateCredentials(credentials, true);
   if (!config && !exporterFactory) return result;
-  // One whole-flush deadline, including an injected factory/SDK shutdown.
+  // Serialize senders so an older snapshot cannot be posted after a newer
+  // snapshot by a parallel hook. Never steal an abandoned lock.
   timeoutMs = Number.isFinite(timeoutMs) ? Math.max(10, Math.min(10000, Math.floor(timeoutMs))) : 3000;
+  const deadlineAt = Date.now() + timeoutMs;
+  const flushLock = path.join(stateDir, 'flush.lock');
+  let ownsLock = false;
+  while (Date.now() < deadlineAt) {
+    try { fs.mkdirSync(flushLock, { mode: 0o700 }); ownsLock = true; break; }
+    catch (error) {
+      if (error.code !== 'EEXIST') { result.status = 'state_unavailable'; return result; }
+      try {
+        const stat = fs.lstatSync(flushLock);
+        if (!stat.isDirectory() || stat.isSymbolicLink() || !privateOwner(stat) || (stat.mode & 0o077)) { result.status = 'state_unavailable'; return result; }
+      } catch (race) { if (race.code === 'ENOENT') continue; result.status = 'state_unavailable'; return result; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  if (!ownsLock) { result.status = 'busy'; return result; }
+  const unlock = () => { try { fs.rmdirSync(flushLock); } catch {} };
+  try { const fresh = readEntries(directory); entries = fresh.entries; result.invalid = fresh.invalid; }
+  catch { unlock(); result.status = 'state_unavailable'; return result; }
+  if (!entries.length) { unlock(); result.queued = filesIn(directory).length; result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
+  timeoutMs = deadlineAt - Date.now();
+  if (timeoutMs < 10) { unlock(); result.status = 'timeout'; return result; }
   const controller = new AbortController();
   // Per-flush only: at most one request and cancellation callback per span.
   setMaxListeners(OUTBOX_LIMITS.flush * 2 + 2, controller.signal);
@@ -284,7 +323,7 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
       async forceFlush() { await delegate.forceFlush?.(); }
     };
     const processor = new sdk.LangfuseSpanProcessor({
-      exporter, exportMode: 'immediate', mediaUploadEnabled: false,
+      exporter, exportMode: 'batched', mediaUploadEnabled: false,
       publicKey: '', secretKey: '', baseUrl: 'https://invalid.invalid',
       environment: 'metadata-only', release: 'metadata-only',
       flushAt: OUTBOX_LIMITS.flush, flushInterval: 1, timeout: timeoutMs / 1000,
@@ -328,12 +367,16 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
       if (privateRead(entry.file, MAX_FILE_BYTES).equals(entry.bytes)) {
         fs.unlinkSync(entry.file);
         result.accepted++;
+        for (const older of entry.superseded) {
+          try { if (privateRead(older.file, MAX_FILE_BYTES).equals(older.bytes)) fs.unlinkSync(older.file); } catch {}
+        }
       }
     } catch {}
   }
   result.failed = result.attempted - result.accepted;
   try { result.queued = filesIn(directory).length; } catch {}
   if (result.status === 'complete') result.status = result.failed ? 'failed' : 'transport_accepted';
+  unlock();
   return result;
 }
 

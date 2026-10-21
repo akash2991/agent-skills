@@ -62,6 +62,22 @@ if (process.argv[2] === '--worker') {
     });
   }
 
+  test('expired pending payloads never make provisional parents exportable', t => {
+    let now = Date.now();
+    const f = fixture(t, { now: () => now });
+    const child = f.run();
+    f.store.hold({ identity: { launchId: 'awaiting-exact-caller' }, run: child, records: [] });
+    now += 23 * 60 * 60 * 1000 + 59 * 60 * 1000;
+    const grandchild = f.store.createLaunch(child);
+    now += 2 * 60 * 1000;
+    assert.equal(f.store.resolveLaunch({ nonce: grandchild.nonce }), null);
+    assert.equal(f.store.inspectLaunch({ nonce: grandchild.nonce }).ancestryPending, true);
+    now += 25 * 60 * 60 * 1000;
+    const refreshed = f.store.updateRun(child, { persona: 'scout' });
+    const later = f.store.createLaunch(refreshed);
+    assert.equal(f.store.resolveLaunch({ nonce: later.nonce }), null, 'metadata refresh must not clear the unresolved lineage marker');
+  });
+
   test('root context is allocated before tools; turns share only the session and never ambient traceparent', t => {
     const f = fixture(t);
     const old = process.env.TRACEPARENT;
@@ -347,7 +363,7 @@ if (process.argv[2] === '--worker') {
     const child = f.run();
     const launch = f.store.createLaunch(parent, { launchId: 'stale-pane' });
     f.store.hold({ identity: { launchId: 'stale-pane' }, run: child, records: records(child) });
-    now += 3600001;
+    now += 24 * 3600000 + 1;
     assert.equal(f.store.resolveLaunch({ nonce: launch.nonce }), null);
     assert.deepEqual(f.store.takePending({ launchId: 'stale-pane' }), []);
     assert.throws(() => f.store.createLaunch(f.run(), { launchId: 'stale-pane' }), /expired/);
@@ -362,7 +378,7 @@ if (process.argv[2] === '--worker') {
     const launch = f.store.createLaunch(parent, { launchId: 'retained' });
     const state = JSON.parse(fs.readFileSync(f.store.file, 'utf8'));
     const template = Object.values(state.launches)[0];
-    for (let i = 1; i < 1024; i++) state.launches[`synthetic-${i}`] = { ...template, aliases: [`launchId:${i}`] };
+    for (let i = 1; i < 4096; i++) state.launches[`synthetic-${i}`] = { ...template, aliases: [`launchId:${i}`] };
     fs.writeFileSync(f.store.file, JSON.stringify(state));
     assert.throws(() => f.store.createLaunch(parent, { launchId: 'overflow' }), /capacity/);
     assert.equal(f.store.resolveLaunch({ nonce: launch.nonce }).parent.runId, parent.runId);

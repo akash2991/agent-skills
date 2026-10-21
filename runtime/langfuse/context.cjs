@@ -7,17 +7,20 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const { safeIdentity, structuralIdentity } = require('./privacy.cjs');
 
 const HOUR = 3600000;
-const TTL = { sessions: 7 * 24 * HOUR, runs: 24 * HOUR, launches: HOUR, pending: HOUR };
+// Permission/trust pauses can outlast an hour. Exact invocation identities
+// remain bound for a day; pane scopes additionally bind the native session ID.
+const TTL = { sessions: 7 * 24 * HOUR, runs: 7 * 24 * HOUR, launches: 24 * HOUR, pending: 24 * HOUR };
 const RETENTION = 24 * HOUR; // Expired aliases remain tombstones; never silently rebind a stale pane.
-const LIMIT = { sessions: 1024, runs: 2048, launches: 1024, pending: 256 };
+const LIMIT = { sessions: 1024, runs: 2048, launches: 4096, pending: 256 };
 const MAX_BYTES = 8 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUN_KEYS = new Set(['traceId', 'rootSpanId', 'parentSpanId', 'sessionId', 'nativeSessionId', 'runId',
   'projectId', 'projectName', 'worktreeId', 'branch', 'runtimeName', 'agentName', 'persona', 'ticketId',
   'ticketSource', 'harness', 'parentSessionId', 'skillsInvoked', 'skillsLoaded', 'startedAt',
-  'requestedModel', 'requestedEffort']);
+  'requestedModel', 'requestedEffort', 'observedModel', 'observedEffort', 'evidenceSource']);
 const RECORD_KEYS = new Set(['id', 'traceId', 'parentId', 'sessionId', 'nativeSessionId', 'type', 'name',
   'startTime', 'endTime', 'model', 'provider', 'usage', 'cost', 'context', 'outcome']);
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -52,7 +55,8 @@ function label(value) {
   if (value === undefined || value === null) return null;
   // Deliberately not a general text sanitizer: only normalized metadata tokens.
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_.:+-]{0,127}$/i.test(value) ||
-      /(?:password|secret|bearer|api[_-]?key|sk-[a-z0-9]{12})/i.test(value)) fail();
+      /(?:password|secret|bearer|api[_-]?key|sk-[a-z0-9]{12})/i.test(value) ||
+      !(safeIdentity(value) || structuralIdentity('projectId', value) || structuralIdentity('worktreeId', value))) fail();
   return value;
 }
 function modelName(value) {
@@ -63,7 +67,7 @@ function modelName(value) {
 }
 function branchName(value) {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_./+-]{0,199}$/i.test(value) || value.includes('..')) fail();
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_./+-]{0,199}$/i.test(value) || value.includes('..') || !safeIdentity(value)) fail();
   return value;
 }
 function ticket(value) {
@@ -86,10 +90,11 @@ function safeRun(input) {
   };
   if (!['pi', 'claude'].includes(input.harness)) fail();
   out.harness = input.harness;
-  for (const key of ['projectId', 'projectName', 'worktreeId', 'runtimeName', 'agentName', 'persona', 'requestedEffort']) {
+  for (const key of ['projectId', 'projectName', 'worktreeId', 'runtimeName', 'agentName', 'persona', 'requestedEffort', 'observedEffort', 'evidenceSource']) {
     out[key] = label(input[key]);
   }
   out.requestedModel = modelName(input.requestedModel);
+  out.observedModel = modelName(input.observedModel);
   out.branch = branchName(input.branch);
   out.ticketId = ticket(input.ticketId);
   if (!['explicit', 'inferred', 'unknown'].includes(input.ticketSource) ||
@@ -184,7 +189,7 @@ function project(cwd) {
   let branch = null;
   try { branch = branchName(git(actual, ['symbolic-ref', '--quiet', '--short', 'HEAD'])); } catch { /* unknown */ }
   return { projectId: `project-${hash(canonical).slice(0, 32)}`, projectName: safeLabel(rawName),
-    worktreeId: `worktree-${hash(top).slice(0, 32)}`, branch, runtimeName: safeLabel(path.basename(actual)) };
+    worktreeId: `worktree-${hash(top).slice(0, 32)}`, branch, runtimeName: safeLabel(path.basename(top)) };
 }
 function childMetadata(child = {}) {
   keys(child, new Set(['persona', 'agentName', 'ticketId']));
@@ -242,9 +247,10 @@ class ContextStore {
     prepareDirectory(this.stateDir);
     const deadline = Date.now() + 5000;
     for (;;) {
+      if (Date.now() >= deadline) throw new Error('Tracing state is busy');
       try { fs.mkdirSync(this.lock, { mode: 0o700 }); break; } catch (error) {
         if (error.code !== 'EEXIST') throw error;
-        checkDir(this.lock, true);
+        try { checkDir(this.lock, true); } catch (race) { if (race.code === 'ENOENT') continue; throw race; }
         if (Date.now() >= deadline) throw new Error('Tracing state is busy');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
@@ -296,15 +302,23 @@ class ContextStore {
   }
 
   _save(state, run, now) {
+    const sessionKey = this._sessionKey(run.harness, run.nativeSessionId);
+    const session = state.sessions[sessionKey];
+    const unresolved = state.runs[run.runId]?.unresolved || (session?.run.runId === run.runId && session.unresolved);
     state.runs[run.runId] = { run, expiresAt: now + TTL.runs,
-      ...(state.runs[run.runId]?.drained ? { drained: true } : {}) };
-    state.sessions[this._sessionKey(run.harness, run.nativeSessionId)] = { run, expiresAt: now + TTL.sessions };
+      ...(unresolved ? { unresolved: true } : {}), ...(state.runs[run.runId]?.drained ? { drained: true } : {}) };
+    state.sessions[sessionKey] = { run, expiresAt: now + TTL.sessions, ...(unresolved ? { unresolved: true } : {}) };
     return run;
   }
 
   getSession(harness, nativeSessionId) {
     const key = this._sessionKey(harness, nativeSessionId);
     return this._transaction(state => state.sessions[key]?.run || null);
+  }
+
+  getRun(runId) {
+    runId = uuid(runId);
+    return this._transaction(state => state.runs[runId]?.run || null);
   }
 
   _current(state, run) {
@@ -328,11 +342,17 @@ class ContextStore {
     keys(patch, RUN_KEYS);
     // Identity and lineage are immutable outside the atomic pending rebase.
     const mutable = new Set(['agentName', 'persona', 'ticketId', 'ticketSource', 'runtimeName',
-      'requestedModel', 'requestedEffort', 'skillsInvoked', 'skillsLoaded']);
+      'requestedModel', 'requestedEffort', 'observedModel', 'observedEffort', 'evidenceSource', 'skillsInvoked', 'skillsLoaded']);
     if (Object.keys(patch).some(key => !mutable.has(key))) fail();
     const original = safeRun(run);
-    return this._transaction((state, now) => this._save(state,
-      safeRun({ ...(state.runs[original.runId]?.run || original), ...patch }), now));
+    return this._transaction((state, now) => {
+      const current = state.runs[original.runId]?.run || original;
+      const next = { ...current, ...patch };
+      for (const key of ['skillsInvoked', 'skillsLoaded']) if (patch[key]) {
+        next[key] = [...new Set([...(current[key] || []), ...patch[key]])];
+      }
+      return this._save(state, safeRun(next), now);
+    });
   }
 
   createRun(options) {
@@ -370,7 +390,8 @@ class ContextStore {
     const parent = state.runs[binding.parent.runId]?.run || binding.parent;
     // Nested children cannot export against a provisional parent. Draining the
     // outer pending context rebases these bindings before they become usable.
-    const pendingRoots = new Set(Object.values(state.pending).map(item => item.run.rootSpanId));
+    const pendingRoots = new Set([...Object.values(state.pending).map(item => item.run.rootSpanId),
+      ...Object.values(state.runs).filter(item => item.unresolved).map(item => item.run.rootSpanId)]);
     let ancestor = parent;
     const visited = new Set();
     while (ancestor && !visited.has(ancestor.rootSpanId)) {
@@ -428,6 +449,18 @@ class ContextStore {
     return this._transaction((state, now) => this._resolved(state, this._binding(state, aliases, now), input.nonce || null));
   }
 
+  // Exact metadata inspection is not resolved lineage. Used only to walk the
+  // local dependency graph or edit an actor's own context while export is held.
+  inspectLaunch(input) {
+    const aliases = identity(input);
+    return this._transaction((state, now) => {
+      const binding = this._binding(state, aliases, now);
+      if (!binding) return null;
+      return { parent: this._current(state, binding.parent), expiresAt: binding.expiresAt,
+        ancestryPending: !this._resolved(state, binding) };
+    });
+  }
+
   // Optional exact, idempotent ownership claim. A different claimant cannot use
   // a single-use capability, even in a separate process. Read-only resolve is
   // intentionally available to the parent draining pending observations.
@@ -476,6 +509,9 @@ class ContextStore {
       if (stored?.drained) return { pending: false };
       state.pending[id] = { aliases, run: safe, records: normalized, digest, expiresAt: now + TTL.pending };
       this._save(state, safe, now);
+      state.runs[safe.runId].unresolved = true;
+      const session = state.sessions[this._sessionKey(safe.harness, safe.nativeSessionId)];
+      if (session.run.runId === safe.runId) session.unresolved = true;
       return { pending: true };
     });
   }
@@ -508,6 +544,9 @@ class ContextStore {
         for (const value of Object.values(state.sessions)) if (value.run.traceId === oldTrace && value.run.sessionId === oldSession) value.run = rebase(value.run);
         for (const value of Object.values(state.launches)) if (value.parent.traceId === oldTrace && value.parent.sessionId === oldSession) value.parent = rebase(value.parent);
         this._save(state, run, now);
+        delete state.runs[run.runId].unresolved;
+        const session = state.sessions[this._sessionKey(run.harness, run.nativeSessionId)];
+        if (session.run.runId === run.runId) delete session.unresolved;
         if (item.records.length) state.runs[run.runId].drained = true;
         delete state.pending[key];
         result.push({ run, records });

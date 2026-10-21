@@ -4,6 +4,7 @@
   "private": true,
   "type": "commonjs",
   "engines": { "node": ">=22" },
+  "pi": { "extensions": ["./pi.js"] },
   "dependencies": {
     "@langfuse/otel": "6.0.1",
     "@opentelemetry/api": "1.9.0",

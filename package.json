@@ -19,6 +19,11 @@
     "!skills/**/.terraform/**",
     "!skills/**/*.tfstate*",
     "!skills/**/terraform.tfvars",
+    "runtime/langfuse/*.cjs",
+    "runtime/langfuse/*.js",
+    "runtime/langfuse/package.json",
+    "runtime/langfuse/package-lock.json",
+    "runtime/langfuse/README.md",
     "agents/**",
     "references/**",
     "templates/**",
@@ -37,6 +42,7 @@
   "scripts": {
     "build": "node scripts/build-brain.js",
     "test:pull": "node --test scripts/agent-brain-pull-test.js scripts/langfuse-test.js scripts/langfuse-audit-test.js",
+    "test:langfuse-runtime": "node --test scripts/langfuse-runtime-*-test.js",
     "audit:langfuse": "node scripts/langfuse-audit.js",
     "test:langfuse-native": "node --test scripts/langfuse-native-test.js"
   }
