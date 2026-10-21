@@ -270,7 +270,10 @@ test('late callbacks cannot delete retries; acknowledgements remove only their e
   const stateDir = sandbox(t);
   queueObservation(base(), { stateDir });
   let callback;
-  await flushOutbox({ stateDir, dependencyRoot, timeoutMs: 20, exporterFactory: () => ({ export(spans, cb) { callback = cb; }, async shutdown() {} }) });
+  // Give process-identity/SDK setup time under parallel test load; this test
+  // requires an actually started export, then deliberately withholds its ACK.
+  await flushOutbox({ stateDir, dependencyRoot, timeoutMs: 1000, exporterFactory: () => ({ export(spans, cb) { callback = cb; }, async shutdown() {} }) });
+  assert.equal(typeof callback, 'function', 'the exporter must start before testing a late acknowledgement');
   const before = outbox(stateDir);
   callback({ code: 0 });
   assert.equal(outbox(stateDir), before);
