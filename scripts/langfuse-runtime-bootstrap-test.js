@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { spawnSync } = require('node:child_process');
 const bootstrap = require('../runtime/langfuse/bootstrap.js');
 const { main: claudeBootstrap } = require('../runtime/langfuse/bootstrap-claude.cjs');
 const { launch, parse } = require('../runtime/langfuse/launch.cjs');
@@ -24,6 +25,71 @@ test('pure filesystem bootstrap resolves an old worktree to opted-in principal r
   const gitdir = path.join(principal, '.git/worktrees/old-child'); fs.mkdirSync(gitdir, { recursive: true });
   fs.writeFileSync(path.join(gitdir, 'commondir'), '../..\n'); fs.writeFileSync(path.join(child, '.git'), `gitdir: ${gitdir}\n`);
   assert.equal(bootstrap.findRuntimeSync(child), entry);
+});
+
+test('actual Claude and Pi old-worktree bootstraps honor declarations from root and subdirectory', t => {
+  const root = fs.realpathSync(temp(t)); const principal = path.join(root, 'principal'); const child = path.join(root, 'old-child');
+  fs.mkdirSync(principal);
+  const git = args => {
+    const result = spawnSync('git', args, { cwd: principal, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git(['init', '-q']);
+  git(['-c', 'user.name=Bootstrap Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'old base']);
+  git(['worktree', 'add', '--detach', child, 'HEAD']);
+  const entry = runtime(principal);
+  fs.writeFileSync(entry, `module.exports = pi => {
+    globalThis.runtimeLoads++;
+    if (!globalThis[Symbol.for('agent-brain.observability.context-tool-proxy')]) pi.registerTool({name:'brain_context'});
+    return { start: async () => { globalThis.runtimeStarts++; } };
+  };`);
+  fs.writeFileSync(path.join(path.dirname(entry), 'claude.cjs'), 'exports.handleClaudeHook = async () => ({loaded:true});');
+  const subdir = path.join(child, 'nested/deeper'); fs.mkdirSync(subdir, { recursive: true });
+  const marker = path.join(child, '.agent-brain/tracing.json'); fs.mkdirSync(path.dirname(marker));
+  const piScript = `
+    globalThis.runtimeLoads = 0; globalThis.runtimeStarts = 0;
+    const handlers = {}; const tools = [];
+    require(${JSON.stringify(require.resolve('../runtime/langfuse/bootstrap.js'))})({
+      on: (name, fn) => { handlers[name] = fn; }, registerTool: tool => tools.push(tool.name)
+    });
+    const suppressed = process.env.LANGFUSE_TRACING_ENABLED;
+    handlers.session_start({}, {cwd:process.cwd(),isProjectTrusted:()=>process.env.TEST_TRUSTED==='true'})
+      .then(() => { console.log(JSON.stringify({loads:globalThis.runtimeLoads, starts:globalThis.runtimeStarts,
+        tools, suppressed, restored:process.env.LANGFUSE_TRACING_ENABLED})); handlers.session_shutdown?.(); });
+  `;
+  const declarations = [
+    ['absent', null],
+    ['disabled', JSON.stringify({ schema: 1, enabled: false, captureMode: 'metadata-only' })],
+    ['malformed', '{'],
+    ['missing adapter', JSON.stringify({ schema: 1, enabled: true, captureMode: 'metadata-only' })],
+    ['invalid value', 'null'],
+    ['invalid schema', JSON.stringify({ schema: 2, enabled: true, captureMode: 'metadata-only' })],
+    ['invalid runtime', JSON.stringify({ schema: 1, enabled: true, captureMode: 'metadata-only', runtime: '../escape' })]
+  ];
+  for (const [name, declaration] of declarations) {
+    if (declaration === null) fs.rmSync(marker, { force: true }); else fs.writeFileSync(marker, declaration);
+    const allowed = declaration === null;
+    for (const cwd of [child, subdir]) {
+      assert.equal(bootstrap.findRuntimeSync(cwd), allowed ? entry : null, `${name}: sync discovery`);
+      assert.equal(bootstrap.findRuntime(cwd), allowed ? entry : null, `${name}: Git discovery`);
+      const env = { PATH: process.env.PATH, LANGFUSE_TRACING_ENABLED: 'true', TEST_TRUSTED: 'true' };
+      const claude = spawnSync(process.execPath, [require.resolve('../runtime/langfuse/bootstrap-claude.cjs')], {
+        cwd, env, input: JSON.stringify({ cwd, hook_event_name: 'Stop' }), encoding: 'utf8', timeout: 10000
+      });
+      assert.equal(claude.status, 0, claude.stderr);
+      assert.equal(claude.stdout, allowed ? '{"loaded":true}' : '', `${name}: Claude executable`);
+      for (const trusted of [true, false]) {
+        const pi = spawnSync(process.execPath, ['-e', piScript], {
+          cwd, env: { ...env, TEST_TRUSTED: String(trusted) }, encoding: 'utf8', timeout: 10000
+        });
+        assert.equal(pi.status, 0, pi.stderr);
+        assert.deepEqual(JSON.parse(pi.stdout), {
+          loads: allowed && trusted ? 1 : 0, starts: allowed && trusted ? 1 : 0,
+          tools: allowed ? ['brain_context'] : [], suppressed: allowed ? 'false' : 'true', restored: 'true'
+        }, `${name}: Pi factory/start (trusted=${trusted})`);
+      }
+    }
+  }
 });
 
 test('untrusted project code is never executed and legacy suppression is restored', async t => {

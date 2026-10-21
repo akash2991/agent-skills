@@ -82,11 +82,33 @@ test('native discovery covers principal and old worktree; migration preserves se
   assert.ok(!state.files.some(file => ['.pi/settings.json', '.claude/settings.json', '.agent-brain/tracing.json'].includes(file.path)));
   assert.deepEqual(json(path.join(claude, 'settings.json')), globalSettings);
   assert.deepEqual(json(path.join(agent, 'trust.json')), trust);
+  // Instrument only this temporary installed fixture: discovery must not even
+  // evaluate the principal adapter when the old worktree explicitly refuses.
+  const adapterPath = path.join(root, '.agent-brain/observability/pi.js');
+  const loads = path.join(home, 'adapter-loads.txt');
+  fs.writeFileSync(adapterPath, fs.readFileSync(adapterPath, 'utf8').replace("'use strict';",
+    `'use strict';\nrequire('node:fs').appendFileSync(${JSON.stringify(loads)}, 'loaded\\n');`));
   await rpc(root, env);
   await rpc(old, env);
+  assert.equal(fs.readFileSync(loads, 'utf8').split('\n').filter(Boolean).length, 2);
   assert.ok(!fs.existsSync(path.join(root, '.agent-brain/observability/node_modules')), 'native startup must not install SDKs into the managed runtime');
   const order = fs.readFileSync(env.BRAIN_TEST_LOAD_ORDER_FILE, 'utf8');
   assert.ok(!order.includes('UNSAFE'), 'legacy factory must never enable itself in an opted-in worktree');
   assert.ok(order.split('\n').filter(Boolean).length >= 2);
   assert.ok(!fs.existsSync(path.join(old, '.agent-brain/observability')), 'old worktree must use trusted principal bootstrap, not new copied files');
+  const marker = path.join(old, '.agent-brain/tracing.json');
+  const subdir = path.join(old, 'nested/deeper');
+  fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.mkdirSync(subdir, { recursive: true });
+  const baselineLoads = fs.readFileSync(loads, 'utf8');
+  for (const declaration of [JSON.stringify({ schema: 1, enabled: false, captureMode: 'metadata-only' }), '{']) {
+    fs.writeFileSync(marker, declaration);
+    for (const cwd of [old, subdir]) {
+      await rpc(cwd, env);
+      assert.equal(fs.readFileSync(loads, 'utf8'), baselineLoads, 'explicit refusal must not evaluate principal runtime');
+    }
+  }
+  // Removing the declaration restores supported old-base fallback.
+  fs.rmSync(marker);
+  await rpc(subdir, env);
+  assert.equal(fs.readFileSync(loads, 'utf8'), baselineLoads + 'loaded\n');
 });

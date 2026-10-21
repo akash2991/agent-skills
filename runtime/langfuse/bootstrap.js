@@ -7,10 +7,14 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const GUARD = Symbol.for('agent-brain.observability.controller');
 
+// undefined means no declaration; null means an explicit refusal (including
+// unreadable/invalid declarations). Only absence permits principal fallback.
 function runtimeAt(root) {
+  const marker = path.join(root, '.agent-brain', 'tracing.json');
+  let stat;
+  try { stat = fs.lstatSync(marker); }
+  catch (error) { return error.code === 'ENOENT' ? undefined : null; }
   try {
-    const marker = path.join(root, '.agent-brain', 'tracing.json');
-    const stat = fs.lstatSync(marker);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) return null;
     const config = JSON.parse(fs.readFileSync(marker, 'utf8'));
     if (config.schema !== 1 || config.enabled !== true || config.captureMode !== 'metadata-only') return null;
@@ -27,7 +31,7 @@ function findRuntimeSync(cwd) {
   try { root = fs.realpathSync(cwd); } catch { return null; }
   while (true) {
     const direct = runtimeAt(root);
-    if (direct) return direct;
+    if (direct !== undefined) return direct;
     try {
       const git = path.join(root, '.git');
       const stat = fs.lstatSync(git);
@@ -36,7 +40,7 @@ function findRuntimeSync(cwd) {
         if (match) {
           const gitdir = path.resolve(root, match[1]);
           const common = path.resolve(gitdir, fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim());
-          if (path.basename(common) === '.git') return runtimeAt(path.dirname(common));
+          if (path.basename(common) === '.git') return runtimeAt(path.dirname(common)) || null;
         }
       }
       if (stat.isDirectory()) return null;
@@ -49,17 +53,23 @@ function findRuntimeSync(cwd) {
 
 function findRuntime(cwd, git = execFileSync) {
   const candidates = [cwd];
+  let current;
   try {
-    const output = git('git', ['-C', cwd, 'worktree', 'list', '--porcelain'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
-    const principal = output.split('\n').find(line => line.startsWith('worktree '));
-    if (principal) candidates.push(principal.slice(9));
-    const current = git('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    current = git('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     if (current) candidates.unshift(current);
   } catch { /* Non-Git directories require their own explicit opt-in marker. */ }
   for (const root of [...new Set(candidates)]) {
     const entry = runtimeAt(root);
-    if (entry) return entry;
+    if (entry !== undefined) return entry;
   }
+  if (!current) return null;
+  // Resolve the principal only after the current project's declaration has
+  // been checked, even when invoked below its root.
+  try {
+    const output = git('git', ['-C', cwd, 'worktree', 'list', '--porcelain'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
+    const principal = output.split('\n').find(line => line.startsWith('worktree '));
+    if (principal) return runtimeAt(principal.slice(9)) || null;
+  } catch { /* No principal fallback available. */ }
   return null;
 }
 
