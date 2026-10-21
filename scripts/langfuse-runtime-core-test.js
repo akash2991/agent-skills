@@ -305,8 +305,9 @@ test('queue capacity, bounded flushes, tampered records and unsafe state paths f
   assert.ok(second.invalid >= 1); assert.ok(fs.existsSync(file));
   const home = sandbox(t); const target = sandbox(t); const link = path.join(home, 'state'); fs.symlinkSync(target, link);
   assert.equal(queueObservation(base(), { stateDir: link }).queued, false);
-  fs.mkdirSync(path.join(target, 'queue.lock'), { mode: 0o700 });
-  assert.deepEqual(queueObservation(base(), { stateDir: target }), { queued: false, reason: 'busy' });
+  const held = require('../runtime/langfuse/locks.cjs').claimLock(target, 'queue');
+  try { assert.deepEqual(queueObservation(base(), { stateDir: target }), { queued: false, reason: 'busy' }); }
+  finally { held.release(); }
   fs.chmodSync(target, 0o755); assert.equal(queueObservation(base(), { stateDir: target }).queued, false);
 });
 

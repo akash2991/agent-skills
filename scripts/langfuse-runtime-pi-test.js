@@ -119,6 +119,15 @@ test('nested tool calls use their actual tool parent rather than the generation'
   assert.equal(child.parentId, parent.id);
 });
 
+test('native subagent error envelopes are failures without exporting their contents', async () => {
+  const h = harness();
+  await h.emit('before_agent_start', { messageType: 'user', prompt: 'test' });
+  await h.emit('tool_execution_start', { toolName: 'subagent', toolCallId: 'launch' });
+  await h.emit('tool_execution_end', { toolName: 'subagent', toolCallId: 'launch', isError: false, result: { details: { error: canary } } });
+  assert.equal(h.records.find(record => record.type === 'TOOL').outcome, 'error');
+  assert.equal(JSON.stringify(h.records).includes(canary), false);
+});
+
 test('shutdown does not extend a completed actor span into idle time', async () => {
   const h = harness();
   await h.emit('before_agent_start', { messageType: 'user', prompt: 'test' });

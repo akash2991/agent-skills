@@ -421,7 +421,8 @@ if (process.argv[2] === '--worker') {
     const launches = await Promise.all(Array.from({ length: 8 }, (_, i) => worker(f.stateDir, 'launch', { parent, launchId: `parallel-${i}` })));
     for (const launch of launches) assert.equal(f.store.resolveLaunch({ nonce: launch.nonce }).parent.runId, parent.runId);
     assert.equal(new Set(launches.map(value => value.nonce)).size, 8);
-    assert.deepEqual(fs.readdirSync(f.stateDir), ['context-v1.json']);
+    assert.deepEqual(fs.readdirSync(f.stateDir).sort(), ['context-claims', 'context-v1.json']);
+    assert.deepEqual(fs.readdirSync(path.join(f.stateDir, 'context-claims')), []);
   });
 
   test('single-use exact claims are cross-process atomic; multi-use is explicit', { timeout: 30000 }, async t => {

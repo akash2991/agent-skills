@@ -4,6 +4,7 @@
 // prompt, tool payload, raw launch identifier, cwd, or remote URL is stored here.
 const fs = require('node:fs');
 const os = require('node:os');
+const { claimLock } = require('./locks.cjs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
@@ -238,23 +239,18 @@ class ContextStore {
     this.now = now;
     prepareDirectory(this.stateDir);
     this.file = path.join(this.stateDir, 'context-v1.json');
-    this.lock = path.join(this.stateDir, '.context-lock');
   }
 
   _transaction(fn) {
-    // A single lock covers read/prune/claim/write. Never steal locks based on
-    // clocks or PIDs: doing so can create two writers. Orphan locks fail closed.
+    // The same crash-recoverable protocol covers every read/prune/claim/write.
     prepareDirectory(this.stateDir);
-    const deadline = Date.now() + 5000;
-    for (;;) {
-      if (Date.now() >= deadline) throw new Error('Tracing state is busy');
-      try { fs.mkdirSync(this.lock, { mode: 0o700 }); break; } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        try { checkDir(this.lock, true); } catch (race) { if (race.code === 'ENOENT') continue; throw race; }
+    const deadline = Date.now() + 5000, lock = claimLock(this.stateDir, 'context', { deadlineAt: deadline });
+    try {
+      while (lock.blocked()) {
         if (Date.now() >= deadline) throw new Error('Tracing state is busy');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
-    }
+    } catch (error) { lock.release(); throw error; }
     let temporary;
     try {
       const now = this.now();
@@ -291,8 +287,8 @@ class ContextStore {
       try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
       return result == null ? result : clone(result);
     } finally {
-      if (temporary) { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
-      fs.rmdirSync(this.lock);
+      try { if (temporary) { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } } }
+      finally { lock.release(); }
     }
   }
 

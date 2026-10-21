@@ -193,10 +193,11 @@ function createController(pi, options = {}) {
         return; // Actual child AGENT replaces the successful dispatch TOOL.
       }
     }
-    if (tool.args) state.run = flow.captureSkill(state.run, { toolName: tool.name, input: tool.args, cwd: ctx.cwd, success: !event.isError });
+    const failed = event.isError || (/^(subagent|subagent_resume)$/.test(tool.name) && Boolean(event.result?.details?.error));
+    if (tool.args) state.run = flow.captureSkill(state.run, { toolName: tool.name, input: tool.args, cwd: ctx.cwd, success: !failed });
     flow.submit(state.run, [{ id: tool.id, traceId: state.run.traceId, parentId: tool.parentId,
       sessionId: state.run.sessionId, nativeSessionId: state.run.nativeSessionId, type: 'TOOL', toolName: tool.name,
-      startTime: tool.start, endTime: clock(), outcome: event.isError ? 'error' : 'completed', context: state.run }]);
+      startTime: tool.start, endTime: clock(), outcome: failed ? 'error' : 'completed', context: state.run }]);
   });
   observe('model_select', (event, ctx) => { const state = current(); if (state) state.run = flow.update(state.run, { requestedModel: event.model?.id || ctx.model?.id }); });
   observe('thinking_level_select', (event, ctx) => { const state = current(); if (state) state.run = flow.update(state.run, { requestedEffort: event.level || event.thinkingLevel || effort(ctx) }); });

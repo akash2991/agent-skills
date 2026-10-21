@@ -9,6 +9,7 @@ const { randomBytes } = require('node:crypto');
 const { setMaxListeners } = require('node:events');
 const { sanitizeObservation, safeIdentity, structuralIdentity, LIMITS } = require('./privacy.cjs');
 const { loadDependencies } = require('./dependencies.cjs');
+const { claimLock } = require('./locks.cjs');
 
 const OUTBOX_LIMITS = Object.freeze({ records: 256, bytes: 4 * 1024 * 1024, flush: 32, scan: 512 });
 const FILE_PATTERN = /^[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{32}\.json$/;
@@ -58,11 +59,8 @@ function queueObservation(record, { stateDir = defaultStateDir() } = {}) {
   let file, lock, created = false;
   try {
     const directory = outboxDirectory(stateDir);
-    // A crash leaves a fail-closed lock rather than an unbounded queue. The
-    // owner may remove an abandoned empty queue.lock directory before retrying.
-    const lockPath = path.join(stateDir, 'queue.lock');
-    try { fs.mkdirSync(lockPath, { mode: 0o700 }); lock = lockPath; }
-    catch { return { queued: false, reason: 'busy' }; }
+    lock = claimLock(stateDir, 'queue', { deadlineAt: Date.now() + 500 });
+    if (lock.blocked()) return { queued: false, reason: 'busy' };
     const files = filesIn(directory);
     let bytes = 0;
     for (const name of files) {
@@ -81,7 +79,7 @@ function queueObservation(record, { stateDir = defaultStateDir() } = {}) {
   } catch {
     if (created) { try { fs.unlinkSync(file); } catch {} }
     return { queued: false, reason: 'state_unavailable' };
-  } finally { if (lock) { try { fs.rmdirSync(lock); } catch {} } }
+  } finally { lock?.release(); }
 }
 
 function validateCredentials(value, synthetic = false) {
@@ -261,25 +259,19 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
   if (!entries.length) { result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
   const config = credentials === undefined && !exporterFactory ? loadCredentials({ env }) : validateCredentials(credentials, true);
   if (!config && !exporterFactory) return result;
-  // Serialize senders so an older snapshot cannot be posted after a newer
-  // snapshot by a parallel hook. Never steal an abandoned lock.
+  // Serialize senders, recovering only uniquely named dead-process claims.
   timeoutMs = Number.isFinite(timeoutMs) ? Math.max(10, Math.min(10000, Math.floor(timeoutMs))) : 3000;
   const deadlineAt = Date.now() + timeoutMs;
-  const flushLock = path.join(stateDir, 'flush.lock');
-  let ownsLock = false;
-  while (Date.now() < deadlineAt) {
-    try { fs.mkdirSync(flushLock, { mode: 0o700 }); ownsLock = true; break; }
-    catch (error) {
-      if (error.code !== 'EEXIST') { result.status = 'state_unavailable'; return result; }
-      try {
-        const stat = fs.lstatSync(flushLock);
-        if (!stat.isDirectory() || stat.isSymbolicLink() || !privateOwner(stat) || (stat.mode & 0o077)) { result.status = 'state_unavailable'; return result; }
-      } catch (race) { if (race.code === 'ENOENT') continue; result.status = 'state_unavailable'; return result; }
+  let lock, acquired = false;
+  try {
+    lock = claimLock(stateDir, 'flush', { deadlineAt });
+    while (Date.now() < deadlineAt) {
+      if (!lock.blocked()) { acquired = true; break; }
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-  }
-  if (!ownsLock) { result.status = 'busy'; return result; }
-  const unlock = () => { try { fs.rmdirSync(flushLock); } catch {} };
+  } catch { lock?.release(); result.status = 'state_unavailable'; return result; }
+  if (!acquired) { lock.release(); result.status = 'busy'; return result; }
+  const unlock = () => lock.release();
   try { const fresh = readEntries(directory); entries = fresh.entries; result.invalid = fresh.invalid; }
   catch { unlock(); result.status = 'state_unavailable'; return result; }
   if (!entries.length) { unlock(); result.queued = filesIn(directory).length; result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }

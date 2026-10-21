@@ -8,7 +8,7 @@ Real native harness requests read only private temporary **synthetic** fixtures.
 
 Five deliberately invalid canaries covered a Langfuse-shaped key (also after a newline), provider-shaped key, password marker, email and SSN. Retrieved records had no input/output content, none of those canaries, and no configured secret literal. This is evidence for these executions and the metadata-only projection, not a guarantee about arbitrary operator labels or other exporters.
 
-Slop's main project settings/brain assets were not changed for these probes. Runs there used explicit per-process resources, synthetic ticket `TEST-17`, and no application edits. One owned temporary Herdr QA tab was closed after its result and server-side observations were inspected.
+Slop's main project settings/brain assets were not changed for these probes. Main-checkout runs used explicit per-process resources, synthetic ticket `TEST-17`, and no application edits. The stock-worktree cases installed/committed generated brain/runtime assets only in an isolated trusted QA parent branch and its children, not Slop main. One owned temporary daemon QA tab was closed after its result and server-side observations were inspected.
 
 ## Verified paths
 
@@ -17,6 +17,9 @@ Slop's main project settings/brain assets were not changed for these probes. Run
 | Pi direct | 6 | One AGENT, three actual-model generations, two tools; backend-engineer/ticket attribution and usage; trace `3717ee63de37dc53b9565ff1d752763d` |
 | Pi → Pi subprocess | 12 | Two AGENTs in one trace/session, each with generations/tools; child parent ID points at main AGENT; trace `6d76c19d2c50c590cdb375b4507f2b5d` |
 | Pi → Herdr daemon Pi pane | 12 | Exact prebound native session/pane; returned adapter acknowledgement followed by actual server retrieval; trace `9ae0aa1524de20f457c68fa859335e6d` |
+| Claude direct, after lock fix | 4 | Completed AGENT, two actual Opus 5.5 generations and Read; actual model also retained on root metadata; trace `36d0d89005d084a58c846acb402bab70` |
+| Stock Herdr worktree, after lock fix | 12 | Native project registration in both worktrees, automatic child-result delivery, two completed AGENTs with common project/trace/session and distinct worktree IDs; trace `79cd6d30c5398060cbb175f97669160a` |
+| Pi skill/error/abort | 11 | Actual slash expansion and definition read yielded exactly one invoked/loaded skill, not a permission inventory; real missing-file error, RPC abort and AGENT aborted state; trace `80efb3883c40f96d7e11a3c27a1b4deb` |
 | Claude native Agent | 7 | Main/child AGENTs, four generations and child Read under the correct child; actual `claude-opus-5-5`; trace `c8ad8838e362a825fb042f9e798d45f8` |
 | Pi → Claude subprocess | 11 | Shared trace/session across native GPT-6.1 Sol and Opus 5.5, separate actor roots and tools; persona/ticket fields; trace `0a658bb0095de3f5a9ff7928bd9088b4` |
 | Claude → Pi subprocess | 12 | Shared trace/session across the reverse harness direction, correct child AGENT parentage, model and usage fields; trace `1d9560d968588773c1dab46baed4d45d` |
@@ -33,12 +36,16 @@ These were not caught by component stubs alone:
 - A successful Langfuse ingestion receipt being rejected because it was wrapped in a nonempty JSON object.
 - Too-short Claude flush budgets, rejected canonical numeric usage checkpoints, duplicated cache TTL buckets, stale replay revisions and competing unfinished-root metadata.
 - Context editing being unnecessarily blocked while a native child's exact parent was still deferred.
+- A killed probe leaving a shared directory flush lock and preventing subsequent normal delivery. The process-identity claim protocol now covers enqueue, flush and context transactions; SIGKILL recovery, live-owner exclusion, PID reuse and concurrent critical sections have offline tests. A later ordinary native session automatically drained the previously blocked stock-worktree trace (`bf812a475b16194f9fc47a398c401d8e`, twelve nodes); the fresh corrected run above then verified both actors without manual replay.
+- Native Herdr dispatch returning an error envelope without its outer `isError` flag; the known error flag is captured without exporting the message.
+
+The focused runtime/adapter/context/privacy/installer/pull/audit/native-wiring suite passes **127 tests**. Native wiring remains a no-model/no-Langfuse suite, unlike the positive server-retrieved paths above.
 
 Known-pattern/literal defenses supplement the strict projection; regex masking is not the privacy boundary. Ingestion, session/trace identity, actor types, unique positive coverage and privacy were checked independently.
 
 ## Remaining acceptance and review
 
-This is not final-revision certification. Complete and record the stock Herdr worktree path and the selected real error/abort/flush/skill checks, then rerun affected paths after fixes. Native old-base discovery is a wiring test, not proof that every old branch or standalone third-party exporter is safe. Resume/persistent variants and unsupported native schemas must not be silently included in coverage claims.
+This is not completed final-revision certification. The selected stock-worktree, automatic replay, error/abort and invoked/loaded-skill checks above now have positive server-retrieved evidence. Rerun affected paths if review changes their implementation. Native old-base discovery is a wiring test, not proof that every old branch or standalone third-party exporter is safe. Resume/persistent variants and unsupported native schemas must not be silently included in coverage claims.
 
 Final independent GPT-6.1 Soul and Opus 5.5 passes, separate GPT-6 Astra synthesis, PR dispositions and final-revision coverage remain mandatory before merge. Slop's actual project registration follows that gate, not these per-process probes. Historical content traces are not retroactively scrubbed; if real credentials were captured by old content exporters, review access/retention and rotate affected credentials.
 

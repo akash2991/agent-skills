@@ -72,9 +72,11 @@ Live synthetic Pi tests on this remediation's working revision fetched actual ob
 - Native Claude Agent: seven unique nodes, two AGENTs and four actual Opus 5.5 generations, with the Read under the child.
 - Herdr daemon pane: twelve unique nodes under exact prebound native session/pane identities, verified after server retrieval rather than readiness alone.
 - Both cross-harness directions: Pi→Claude (eleven unique nodes) and Claude→Pi (twelve) shared the correct parent/child trace/session and persona/ticket context.
+- Stock Herdr worktree: twelve unique nodes with automatic result delivery, common project/trace/session, distinct worktree IDs and correct completed actor roots.
+- Native skill/error/abort: eleven unique nodes, exactly one actual invoked/loaded skill, real missing-file error and aborted AGENT; automatic default-outbox recovery after a terminated probe.
 - Native wiring: isolated principal/old-worktree discovery, legacy factory suppression, repeated setup, ordinary pulls and unrelated settings/trust preservation. No model requests in this suite.
 
-See the [remediation evidence and remaining checks](langfuse-remediation-2026-10-21.md). These do **not** yet certify the stock Herdr worktree path, every resume/persistent/error/abort variant, or the final revision. The remaining live checks and required independent review gate remain outstanding. Slop's main project tracing registration has not been changed; the Pi probes used explicit per-process extension loading and read only synthetic fixtures.
+See the [remediation evidence and remaining checks](langfuse-remediation-2026-10-21.md). These do **not** certify every resume/persistent/error/abort variant or complete the final-revision review gate. The remaining live checks and required independent review gate remain outstanding. Slop's main project tracing registration has not been changed; the Pi probes used explicit per-process extension loading and read only synthetic fixtures.
 
 Maintainer checks:
 
