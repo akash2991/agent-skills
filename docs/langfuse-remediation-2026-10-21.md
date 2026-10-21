@@ -39,7 +39,7 @@ These were not caught by component stubs alone:
 - A killed probe leaving a shared directory flush lock and preventing subsequent normal delivery. The process-identity claim protocol now covers enqueue, flush and context transactions; SIGKILL recovery, live-owner exclusion, PID reuse and concurrent critical sections have offline tests. A later ordinary native session automatically drained the previously blocked stock-worktree trace (`bf812a475b16194f9fc47a398c401d8e`, twelve nodes); the fresh corrected run above then verified both actors without manual replay.
 - Native Herdr dispatch returning an error envelope without its outer `isError` flag; the known error flag is captured without exporting the message.
 
-The focused runtime/adapter/context/privacy/installer/pull/audit/native-wiring suite passes **145 tests** after the review corrections below. An additional **120 repository tests**, validators, routing evals and build pass locally; no hosted CI checks were reported on the PR. Native wiring remains a no-model/no-Langfuse suite, unlike the positive server-retrieved paths above.
+The focused runtime/adapter/context/privacy/installer/pull/audit/native-wiring suite passed **145 tests** after the first review corrections below; the post-Astra follow-up now passes **215**. An additional **120 repository tests**, validators, routing evals and build pass locally; no hosted CI checks were reported on the PR. Native wiring remains a no-model/no-Langfuse suite, unlike the positive server-retrieved paths above.
 
 Known-pattern/literal defenses supplement the strict projection; regex masking is not the privacy boundary. Ingestion, session/trace identity, actor types, unique positive coverage and privacy were checked independently.
 
@@ -56,6 +56,18 @@ The [independent Soul review of `c4998f4`](https://github.com/akash2991/agent-sk
 Fresh post-correction native cross-harness runs were retrieved again: Pi→Claude `fa3fd282b69e2eb2534b3ac7d2ca20bd` (**11 unique nodes**) and Claude→Pi `da6189fdfce2fe0aabe7ad87b5ca3efc` (**12**). Both have two correctly parented completed AGENTs, backend-engineer/TEST-17 attribution, actual model/usage and no input/output/canaries/configured secret literal. These are targeted reruns, not a claim that every earlier live scenario was repeated.
 
 The prior exact Opus 5.5 native attempt timed out before a final report: actual model confirmed, seventeen successful tool calls, zero tool/permission errors. It is **not** a completed independent pass. Fresh independent passes and Astra synthesis on the corrected revision remain required.
+
+## Astra follow-up (not final approval)
+
+The [Astra synthesis of `be7c650`](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6315483739) confirmed six required fixes. The parent has integrated and tested all six: cwd-sensitive direct Pi refusal with explicit `--brain-tracing` for marker-absent runs; durable capture-order tickets/pre-send floors; actual initial/late single-use owner claims; unsupported-model invalidation; required own process birth identity; and identity-named temporary-lock recovery. Tests cover equal-timestamp/post-ACK restart replay, competing processes and unresolved descendants, current-vs-historical model state, and crash/paused-publisher boundaries. The 16,384-identity/4 MiB non-expiring revision ledger refuses new identities at capacity. Unticketed legacy records remain blocked/intact; ambiguous legacy lock state requires offline operator inspection. These limits must not be described as automatic migration or indefinite healthy operation.
+
+A separate intermittent defect found during parent verification is also fixed: native UUIDs are validated as typed identifiers rather than decoded like free-form labels. A deterministic fixture and 1,000 synthetic native IDs verify acceptance while generic encoded-label and configured-literal defenses remain enforced.
+
+The combined parent suite passes **215 tests**. Fresh server-retrieved reruns again show Pi→Claude `1979f8c7575950cf06c879670c677a58` (**11 unique nodes**) and Claude→Pi `845f2aad5ed00cda54a6203ac89eca77` (**12**), with correctly nested completed actors, actual model/usage, persona/ticket and no input/output/canaries/configured-secret literal. Marker-absent Pi runs used the new explicit flag. These fixtures explicitly allowed Bash for their controlled commands; they do **not** establish narrow-rule compatibility.
+
+**New confirmed rollout blocker:** On native Claude Code **2.1.306**, with ordinary settings sources disabled and only `Bash(printf *)` allowed, the control executed exactly one `printf BRAIN_PERMISSION_PROBE` successfully with zero denials. The metadata hook's automatic nonce prefix caused the same original command to be denied (one permission denial). Inline assignment, `env` and shell-wrapped alternatives were also denied in separate controlled checks. No blanket permission override or global permission rule was applied. Switching to an explicit traced-launch/context-helper protocol instead of automatic arbitrary-Bash rewriting needs an accepted design decision; current permission incompatibility is not a passed acceptance case.
+
+No broad rollout or Slop main registration occurred. The new fixes and any protocol change still need applicable final-revision reviews and synthesis; the earlier approvals/findings cover their pinned revision only.
 
 ## Remaining acceptance and review
 

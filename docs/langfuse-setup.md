@@ -2,6 +2,8 @@
 
 **Remediation is still under review.** The [historical live audit](langfuse-audit-2026-10-20.md) found sensitive synthetic content persisted by the official plugins and missing Herdr child observations. This revision replaces those exporters with first-party **metadata-only** adapters. Do not treat the old official-plugin setup, a draft PR, or unit tests as verified protection.
 
+**Do not roll out this draft yet.** A native Claude 2.1.306 control/traced comparison confirmed that automatic Bash nonce rewriting can invalidate a narrow existing allow rule. The implementation does not bypass that rule. An explicit-helper protocol versus automatic-rewrite approval trade-off and final-revision reviews remain unresolved; see the [runtime reliability limits](../runtime/langfuse/README.md#reliability-limits).
+
 This observes Pi/Claude development sessions, not the consuming application's AI calls. Ordinary brain pulls install resources but do not enable telemetry. The complete policy/protocol lives in [the runtime README](../runtime/langfuse/README.md).
 
 ## Install a reviewed revision
