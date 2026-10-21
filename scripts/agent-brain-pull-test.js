@@ -27,7 +27,7 @@ function tmpDir(name) {
 
 function sourceFixture() {
   const root = tmpDir('source');
-  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'docs', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
+  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'runtime', 'docs', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
     fs.cpSync(path.join(ROOT, entry), path.join(root, entry), { recursive: true });
   }
   return root;
@@ -296,7 +296,7 @@ test('brain files are replaced on first install and subsequent pulls without bac
   assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), expected);
   assert.deepEqual(fs.readFileSync(path.join(target, '.env.example')), fs.readFileSync(path.join(ROOT, 'project/.env.example')));
   assert.equal(fs.readFileSync(path.join(target, '.env'), 'utf8'), 'PROJECT_PRIVATE=untouched\n');
-  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')), ['install-state.json']);
+  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')).sort(), ['install-state.json', 'observability']);
 });
 
 test('updates and retired file pruning ignore local edits to brain-owned files', () => {

@@ -26,4 +26,8 @@ jobs:
           node --test scripts/validate-artifact-paths-test.js
           node --test scripts/validate-commands-test.js
           node --test scripts/agent-brain-pull-test.js
+      - name: Prepare pinned metadata tracing SDKs
+        run: npm ci --prefix runtime/langfuse --ignore-scripts --no-audit --no-fund --legacy-peer-deps
+      - name: Check tracing privacy, lineage, adapters and installer
+        run: node --test scripts/langfuse-test.js scripts/langfuse-audit-test.js scripts/langfuse-runtime-*-test.js
       - run: node scripts/build-brain.js

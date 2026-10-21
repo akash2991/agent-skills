@@ -2,6 +2,8 @@
 description: Show the main agent and every subagent with runtime name, worktree, persona, skills, tools, model, harness, thinking effort, and ticket
 ---
 
+When first-party brain tracing is enabled and `brain_context` is available, query it with no arguments before reporting your structured persona/ticket/runtime and observed skill state. Do not claim permitted or merely installed skills were invoked; distinguish loaded from invoked skills. Missing telemetry remains `UNKNOWN`, not inferred from prose declarations.
+
 Print the current state of the agents in this session, the main agent (you) first, then every subagent you started, one block each:
 
 ```

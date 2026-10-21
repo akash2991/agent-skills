@@ -69,6 +69,17 @@ pane=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdi
   (`development-setup` DS2) — `herdr-worktree-agent` supplies the worktree
   procedure; read-only reviewers can safely share.
 
+If first-party brain tracing is enabled for Pi/Claude, start through the exact-lineage helper rather than assuming the daemon inherits your environment:
+
+```bash
+node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" launch \
+  --pane "$pane" --harness claude --name "<approved-valid-runtime-name>" \
+  --cwd "$PWD" --model "<approved-model-id>" --effort "<approved-effort>" \
+  --persona "<adopted-persona>" --ticket "<established-ticket-id>"
+```
+
+The pane must be yours, at an idle shell, with that exact cwd. Omit persona/ticket options until they are established; never pass secrets or task bodies as context. The helper binds an exact native session ID before startup and supplies supported native adapter arguments, including for older worktree bases. Its acknowledgement is not proof of Langfuse ingestion. If startup is unconfirmed, inspect the existing pane; do not blindly launch a second agent. For stock Pi `subagent` calls, old-base worktree discovery requires the explicitly installed project-gated bootstrap. Other harness kinds remain uninstrumented; do not claim a shared tree for them.
+
 Then start an agent in that pane and **fire the brief without `--wait`**, so you
 can launch the next slice while this one works. **Address the agent by its pane
 id**, not a custom name:

@@ -18,6 +18,8 @@ A subagent is an agent you start. It is the same kind of agent as you. How it ru
 
 The user decides your model, harness, and effort. `/brain-status` shows you and every subagent: runtime name, worktree, persona, skills, tools, model, harness, effort, ticket.
 
+When first-party brain tracing is enabled, every persona may use its narrow context bookkeeping operation (`brain_context` in Pi, or the installed `brain-trace.cjs context` operation in Claude) to register/query non-secret persona and ticket identifiers. This does not grant other shell/application permissions. Declarations alone are not tracing state; unknown attribution stays `UNKNOWN`. Invoked skills and successfully loaded skill files are execution evidence, distinct from the persona's permitted-skills list. The runtime's metadata-only policy never authorizes sending task bodies, credentials, reasoning or attachments as labels.
+
 ## How you work
 
 1. **Declare before working.** Persona, skills, tools, model, harness, effort. Re-declare on change.
