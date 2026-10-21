@@ -543,7 +543,7 @@ function runBehavioral(skillName, dryRun) {
       const artifact = kind === 'dialogue'
         ? 'dialogue transcript; no fixture required'
         : `execution trace in workspace + ${fixtures} fixture(s)`;
-      console.log(`[dry-run] eval ${ev.id}: ${artifact}; claude -p --verbose --output-format stream-json --permission-mode acceptEdits --allowedTools ${EXECUTOR_TOOLS} --append-system-prompt <${skillName}/SKILL.md> < prompt-on-stdin`);
+      console.log(`[dry-run] eval ${ev.id}: ${artifact}; claude -p --verbose --output-format stream-json --permission-mode acceptEdits --allowedTools ${EXECUTOR_TOOLS} --add-dir <temporary skill snapshot> --append-system-prompt <${skillName}/SKILL.md with snapshot base path> < prompt-on-stdin`);
       continue;
     }
     const base = path.join(RESULTS_DIR, `${skillName}.eval-${ev.id}`);
@@ -558,13 +558,21 @@ function runBehavioral(skillName, dryRun) {
     // edit files and run commands in the throwaway workspace; without it,
     // headless denials would force the exact narrate-instead-of-perform
     // failure mode that trace grading exists to catch.
+    // Snapshot the current skill, not an ambient installed copy. Keeping it
+    // outside the fixture workspace avoids polluting execution artifacts and
+    // prevents accepted edits from changing the authoritative source checkout.
+    const skillSnapshot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-skills-eval-instructions-'));
     try {
+    const snapshotDir = path.join(skillSnapshot, skillName);
+    fs.cpSync(path.dirname(skillFile), snapshotDir, { recursive: true });
+    const snapshotFile = path.join(snapshotDir, 'SKILL.md');
     const trace = execFileSync(
       'claude',
       ['-p', '--verbose', '--output-format', 'stream-json',
         '--permission-mode', 'acceptEdits',
         '--allowedTools', EXECUTOR_TOOLS,
-        '--append-system-prompt', `Follow this skill exactly:\n\n${fs.readFileSync(skillFile, 'utf8')}`],
+        '--add-dir', snapshotDir,
+        '--append-system-prompt', `Follow this skill exactly. Its file is ${JSON.stringify(snapshotFile)}. Resolve skill-relative links and supporting files against ${JSON.stringify(snapshotDir)} and read them there when instructed. This is a temporary snapshot of the skill under evaluation, not an installed copy.\n\n${fs.readFileSync(snapshotFile, 'utf8')}`],
       { input: ev.prompt, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, cwd: workspace, timeout: EXECUTOR_TIMEOUT_MS },
     );
     const gradingInstructions = kind === 'dialogue'
@@ -603,6 +611,7 @@ function runBehavioral(skillName, dryRun) {
       // Clean up throwaway workspace to prevent leaking fixture data
       // into world-readable temp directories.
       try { fs.rmSync(workspace, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try { fs.rmSync(skillSnapshot, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
   }
   process.exit(failures ? 1 : 0);
