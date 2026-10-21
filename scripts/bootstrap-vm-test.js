@@ -22,7 +22,16 @@ const die=n=>process.exit(n),write=(p,s)=>{fs.mkdirSync(path.dirname(p),{recursi
 const create=(dir,name)=>write(path.join(dir,name),fs.readFileSync(e.TEST_DISPATCH));
 if(cmd==='id'){console.log(e.TEST_UID||'1000');die(0);}
 if(cmd==='uname'){console.log(args[0]==='-m'?(e.TEST_ARCH||'x86_64'):(e.TEST_OS||'Linux'));die(0);}
-if(cmd==='sudo'){if(e.FAIL_SUDO)die(1);if(args.includes('apt-get')&&!args.includes('--version')&&e.FAIL_APT)die(42);if(args.includes('install')&&args.includes('docker.io'))create(e.HOME+'/.local/bin','docker');console.log('stub sudo');die(0);}
+if(cmd==='sudo'){
+ if(e.FAIL_SUDO)die(1);
+ if(args.includes('apt-get')&&args.includes('install')&&!args.includes('--no-remove'))throw Error('apt package removals not protected');
+ if(args.includes('apt-get')&&!args.includes('--version')&&e.FAIL_APT)die(42);
+ if(args.includes('install')&&args.includes('docker.io')){
+  if(e.FAIL_DOCKER_CONFLICT){console.error('apt refuses package removal with --no-remove');die(100);}
+  create(e.HOME+'/.local/bin','docker');
+ }
+ console.log('stub sudo');die(0);
+}
 if(cmd==='flock')die(e.FAIL_LOCK?1:0);
 if(cmd==='timeout'){
  if(e.FAIL_TIMEOUT)die(124);
@@ -66,6 +75,7 @@ if(cmd==='npm'){
  if(!name)throw Error('unexpected npm package');
  create(prefix+'/bin',name);die(0);
 }
+if(cmd==='docker'&&args[0]==='compose'&&e.FAIL_COMPOSE)die(1);
 if(e.FAIL_VERIFY===cmd)die(1);
 console.log(cmd+' stub version');
 `;
@@ -216,6 +226,40 @@ test("fallback Node takes priority over an old user-local Node without overwriti
   f.clean();
 });
 
+test("Ubuntu profile startup restores fallback priority after bashrc and local-bin prepend", t => {
+  const f = fixture(t, { existing: true });
+  const local = path.join(f.home, ".local/bin");
+  f.seed(local, "node"); f.seed(local, "npm");
+  fs.writeFileSync(path.join(local, ".node-version"), "v20.19.0");
+  // Ubuntu noble's stock profile sources bashrc before prepending local/bin.
+  fs.writeFileSync(path.join(f.home, ".profile"), [
+    'if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi',
+    'if [ -d "$HOME/bin" ]; then PATH="$HOME/bin:$PATH"; fi',
+    'if [ -d "$HOME/.local/bin" ]; then PATH="$HOME/.local/bin:$PATH"; fi',
+    '',
+  ].join("\n"));
+  fs.writeFileSync(path.join(f.home, ".bashrc"), 'case $- in *i*) ;; *) return ;; esac\n');
+  success(f.run());
+  const r = spawnSync(bash, ["--noprofile", "--norc", "-ic", '. "$HOME/.profile"; node --version; . "$HOME/.config/vm-bootstrap-env.sh"; node --version'], {
+    env: f.env, encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.trim().split("\n"), ["v22.23.2", "v22.23.2"]);
+});
+
+test("env source repairs wrong managed order and duplicates while preserving unrelated PATH entries", t => {
+  const f = fixture(t, { existing: true }); success(f.run());
+  const node = `${f.home}/.local/lib/nodejs/node-v22.23.2-linux-x64/bin`;
+  const npm = `${f.home}/.local/share/npm/bin`;
+  const local = `${f.home}/.local/bin`;
+  const wrong = `${local}:${npm}:${node}:${f.bin}::${local}:${f.bin}:`;
+  const r = spawnSync(bash, ["-c", '. "$HOME/.config/vm-bootstrap-env.sh"; a=$PATH; . "$HOME/.config/vm-bootstrap-env.sh"; [[ $PATH == "$a" ]] || exit 1; printf "%s" "$PATH"'], {
+    env: { ...f.env, PATH: wrong }, encoding: "utf8",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, `${node}:${npm}:${local}:${f.bin}::${f.bin}:`);
+});
+
 test("supported Node without working npm installs official Node/npm instead of trusting node alone", t => {
   const f = fixture(t, { existing: true }); fs.unlinkSync(path.join(f.bin, "npm"));
   assert.ok(success(f.run()).installed.includes("node"));
@@ -234,6 +278,26 @@ test("optional Docker apt and verified Terraform binary execute on arm64", t => 
   const count = f.events().length;
   success(f.run(["--apply", "--with-terraform"]));
   assert.ok(!f.events().slice(count).some(e => e.cmd === "curl" && e.args[0] !== "--version"));
+  f.clean();
+});
+
+test("existing working Docker and Compose are skipped without requesting distro Docker packages", t => {
+  const f = fixture(t, { existing: true });
+  const s = success(f.run(["--apply", "--with-docker"]));
+  assert.ok(s.skipped.includes("docker"));
+  assert.ok(!s.installed.includes("docker"));
+  assert.ok(!f.events().some(e => e.cmd === "sudo" && e.args.includes("docker.io")));
+  assert.ok(f.events().filter(e => e.cmd === "sudo" && e.args.includes("install")).every(e => e.args.includes("--no-remove")));
+});
+
+test("an incomplete/conflicting Docker install fails without authorizing package removals", t => {
+  const f = fixture(t, { existing: true });
+  const before = fs.readFileSync(path.join(f.bin, "docker"), "utf8");
+  failure(f.run(["--apply", "--with-docker"], { FAIL_COMPOSE: "1", FAIL_DOCKER_CONFLICT: "1" }), /refuses package removal/);
+  const attempt = f.events().find(e => e.cmd === "sudo" && e.args.includes("docker.io"));
+  assert.ok(attempt && attempt.args.includes("--no-remove"));
+  assert.equal(fs.readFileSync(path.join(f.bin, "docker"), "utf8"), before);
+  assert.equal(fs.existsSync(path.join(f.home, ".local/bin/docker")), false);
   f.clean();
 });
 

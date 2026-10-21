@@ -31,7 +31,7 @@ check_host() {
   command -v flock >/dev/null || fail 'flock (util-linux) required'
   command -v timeout >/dev/null || fail 'GNU timeout (coreutils) required'
   command -v sudo >/dev/null || fail 'sudo required'
-  sudo -n apt-get --version >/dev/null || fail 'noninteractive sudo apt privileges required (authenticate with sudo first)'
+  sudo -n DEBIAN_FRONTEND=noninteractive apt-get --version >/dev/null || fail 'noninteractive sudo apt privileges required (authenticate with sudo first)'
 }
 working() { command -v "$1" >/dev/null && "$1" --version >/dev/null 2>&1; }
 node_sufficient() {
@@ -152,9 +152,23 @@ make_env() {
   # unrelated env file (or follow a symlink to one).
   printf '%s\n' '# Managed by vm-bootstrap; source from interactive shells or SSH explicitly.'
   # shellcheck disable=SC2016 # Literal variables belong to the generated file.
-  printf '%s\n' 'for _vm_path in "$HOME/.local/bin" "$HOME/.local/share/npm/bin" "$HOME/.local/lib/nodejs/node-v22.23.2-linux-'"$NODE_ARCH"'/bin"; do' \
-    '  case ":$PATH:" in *":$_vm_path:"*) ;; *) PATH="$_vm_path:$PATH" ;; esac' \
-    'done' 'unset _vm_path' 'export PATH'
+  printf '%s\n' '_vm_node="$HOME/.local/lib/nodejs/node-v22.23.2-linux-'"$NODE_ARCH"'/bin"' \
+    '_vm_npm="$HOME/.local/share/npm/bin"' '_vm_bin="$HOME/.local/bin"' \
+    '_vm_tail=${PATH-} _vm_clean= _vm_sep=' \
+    'while :; do' \
+    '  case $_vm_tail in' \
+    '    *:*) _vm_entry=${_vm_tail%%:*}; _vm_tail=${_vm_tail#*:}; _vm_more=1 ;;' \
+    '    *) _vm_entry=$_vm_tail; _vm_more=0 ;;' \
+    '  esac' \
+    '  case $_vm_entry in' \
+    '    "$_vm_node"|"$_vm_npm"|"$_vm_bin") ;;' \
+    '    *) _vm_clean=$_vm_clean$_vm_sep$_vm_entry; _vm_sep=: ;;' \
+    '  esac' \
+    '  [ "$_vm_more" -eq 1 ] || break' \
+    'done' \
+    'PATH="$_vm_node:$_vm_npm:$_vm_bin${_vm_sep:+:$_vm_clean}"' \
+    'unset _vm_node _vm_npm _vm_bin _vm_tail _vm_clean _vm_sep _vm_entry _vm_more' \
+    'export PATH'
 }
 setup_path() {
   # shellcheck disable=SC2016 # Literal source line, not this shell's HOME.
@@ -191,7 +205,7 @@ apply() {
   export PATH="$HOME/.local/lib/nodejs/node-v22.23.2-linux-$NODE_ARCH/bin:$HOME/.local/share/npm/bin:$HOME/.local/bin:$PATH"
   export DEBIAN_FRONTEND=noninteractive
   sudo -n DEBIAN_FRONTEND=noninteractive apt-get update
-  sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  sudo -n DEBIAN_FRONTEND=noninteractive apt-get install --no-remove -y \
     git gh ripgrep jq rsync curl ca-certificates unzip xz-utils build-essential pkg-config python3 python3-venv
   install_node
   install_npm_tool pnpm pnpm@9.15.9
@@ -199,10 +213,14 @@ apply() {
   prepare_installer_runner
   install_native_tools
   if [[ $WITH_DOCKER == true ]]; then
-    log 'Docker apt maintainer scripts may enable/start the daemon (explicit opt-in).'
-    sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2
-    if ! working docker || ! docker compose version >/dev/null; then fail 'verification failed: Docker/Compose'; fi
-    record installed docker
+    if working docker && docker compose version >/dev/null 2>&1; then
+      record skipped docker
+    else
+      log 'Docker apt maintainer scripts may enable/start the daemon (explicit opt-in); package removals are refused.'
+      sudo -n DEBIAN_FRONTEND=noninteractive apt-get install --no-remove -y docker.io docker-compose-v2
+      if ! working docker || ! docker compose version >/dev/null; then fail 'verification failed: Docker/Compose'; fi
+      record installed docker
+    fi
   fi
   if [[ $WITH_TERRAFORM == true ]]; then install_terraform; fi
   setup_path
