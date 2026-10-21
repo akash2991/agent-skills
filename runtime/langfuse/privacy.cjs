@@ -10,6 +10,7 @@ const CONTEXT_FIELDS = Object.freeze([
 const TYPES = new Set(['AGENT', 'GENERATION', 'TOOL', 'SPAN']);
 const OUTCOMES = new Set(['success', 'error', 'failed', 'completed', 'cancelled', 'aborted', 'timeout', 'unknown', 'interrupted']);
 const LIMITS = Object.freeze({ identity: 128, skills: 32, metrics: 24, recordBytes: 16384, literals: 64 });
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 let sensitiveLiterals = [];
 
 function invalid() { throw new Error('Invalid metadata-only observation'); }
@@ -66,13 +67,26 @@ function safeIdentity(value) {
   return value;
 }
 
+function nativeUuid(value) {
+  // Native UUIDs are typed identifiers, not free-form labels or encoded text.
+  // Decoding random UUID components can accidentally yield CR/LF or PII-like
+  // bytes and must not reject legitimate sessions. Literal defenses still apply.
+  return typeof value === 'string' && UUID.test(value)
+    && !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(value)
+    && !sensitiveLiterals.some(literal => value.toLowerCase().includes(literal)) ? value.toLowerCase() : undefined;
+}
 function structuralIdentity(field, value) {
+  if (['runId', 'parentSessionId'].includes(field)) return nativeUuid(value);
   const prefix = field === 'projectId' ? 'project' : field === 'worktreeId' ? 'worktree' : null;
   return prefix && typeof value === 'string' && new RegExp(`^${prefix}-[a-f0-9]{32}$`).test(value)
     && !sensitiveLiterals.some(literal => value.toLowerCase().includes(literal)) ? value : undefined;
 }
 
-function requiredIdentity(value) { const safe = safeIdentity(value); if (!safe) invalid(); return safe; }
+function requiredIdentity(value) {
+  const safe = typeof value === 'string' && UUID.test(value) ? nativeUuid(value) : safeIdentity(value);
+  if (!safe) invalid();
+  return safe;
+}
 function identifier(value, length) {
   if (typeof value !== 'string' || value.length !== length || !/^[a-f0-9]+$/i.test(value) || /^0+$/.test(value)
     || sensitiveLiterals.some(literal => value.toLowerCase().includes(literal))) invalid();
