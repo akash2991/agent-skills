@@ -39,9 +39,23 @@ These were not caught by component stubs alone:
 - A killed probe leaving a shared directory flush lock and preventing subsequent normal delivery. The process-identity claim protocol now covers enqueue, flush and context transactions; SIGKILL recovery, live-owner exclusion, PID reuse and concurrent critical sections have offline tests. A later ordinary native session automatically drained the previously blocked stock-worktree trace (`bf812a475b16194f9fc47a398c401d8e`, twelve nodes); the fresh corrected run above then verified both actors without manual replay.
 - Native Herdr dispatch returning an error envelope without its outer `isError` flag; the known error flag is captured without exporting the message.
 
-The focused runtime/adapter/context/privacy/installer/pull/audit/native-wiring suite passes **127 tests**. Native wiring remains a no-model/no-Langfuse suite, unlike the positive server-retrieved paths above.
+The focused runtime/adapter/context/privacy/installer/pull/audit/native-wiring suite passes **145 tests** after the review corrections below. An additional **120 repository tests**, validators, routing evals and build pass locally; no hosted CI checks were reported on the PR. Native wiring remains a no-model/no-Langfuse suite, unlike the positive server-retrieved paths above.
 
 Known-pattern/literal defenses supplement the strict projection; regex masking is not the privacy boundary. Ingestion, session/trace identity, actor types, unique positive coverage and privacy were checked independently.
+
+## Review corrections (repeat gate pending)
+
+The [independent Soul review of `c4998f4`](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6314503062) requested changes. All five findings now have implementation and offline regressions in the parent checkout:
+
+- **P1 opt-out:** absent declarations differ from disabled/invalid ones; current and nested refusals terminate both filesystem/Git discovery before principal fallback. Real bootstrap consumers and native wiring passed.
+- **P1 late attribution:** ticket ID/provenance are inherited as one validated pair. Continuing children capture after binding; changed historical rebases preserve the active native turn atomically.
+- **P2 deferred progress:** durable unqueued suffixes advance across count/byte capacity, rejection, restart and an enqueue/checkpoint crash boundary. Transfers reserve egress time; historical model/effort/skill evidence is preserved.
+- **P2 checkpoint lifecycle:** aggregate file/byte admission and seven-day conservative reclamation protect live, unresolved and replay dependencies; tests inspect actual directory usage.
+- **P2 model grammar:** recognized Claude `[1m]` context-window suffixes normalize to the canonical model through SessionStart, switches and transcript reconciliation; unsupported labels omit safely.
+
+Fresh post-correction native cross-harness runs were retrieved again: Pi→Claude `fa3fd282b69e2eb2534b3ac7d2ca20bd` (**11 unique nodes**) and Claude→Pi `da6189fdfce2fe0aabe7ad87b5ca3efc` (**12**). Both have two correctly parented completed AGENTs, backend-engineer/TEST-17 attribution, actual model/usage and no input/output/canaries/configured secret literal. These are targeted reruns, not a claim that every earlier live scenario was repeated.
+
+The prior exact Opus 5.5 native attempt timed out before a final report: actual model confirmed, seventeen successful tool calls, zero tool/permission errors. It is **not** a completed independent pass. Fresh independent passes and Astra synthesis on the corrected revision remain required.
 
 ## Remaining acceptance and review
 

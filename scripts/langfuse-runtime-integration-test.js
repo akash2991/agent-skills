@@ -7,7 +7,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { createFlow, ADAPTER_LIMITS } = require('../runtime/langfuse/flow.cjs');
 const { OUTBOX_LIMITS } = require('../runtime/langfuse/export.cjs');
-const { dependencyCacheDir } = require('../runtime/langfuse/dependencies.cjs');
+const { testDependencyRoot } = require('./lib/langfuse-test-dependencies.js');
 const { handleClaudeHook } = require('../runtime/langfuse/claude.cjs');
 const { runContext } = require('../runtime/langfuse/context-cli.cjs');
 
@@ -129,7 +129,7 @@ test('real disk outbox and pinned SDK drain deferred batches beyond count/byte c
   assert.ok(fs.readdirSync(pendingDir).length > 1, 'oversized suffix must fit bounded individual checkpoints');
   flow.store.createLaunch(parent, { launchId: 'large-exact-child', multiUse: true });
   const spans = []; let acknowledge = false;
-  const opts = { dependencyRoot: dependencyCacheDir(), timeoutMs: 30000, exporterFactory: () => ({
+  const opts = { dependencyRoot: testDependencyRoot(), timeoutMs: 30000, exporterFactory: () => ({
     export(batch, callback) { if (acknowledge) spans.push(...batch); callback({ code: acknowledge ? 0 : 1 }); },
     async shutdown() {}, async forceFlush() {}
   }) };
@@ -174,7 +174,7 @@ test('late historical rebase exports captured semantics through the real outbox 
   const second = flow.begin({ cwd, nativeSessionId });
   flow.store.createLaunch(parent, { launchId: 'historical-sdk-child', child: { persona: 'backend-engineer' } });
   const spans = [];
-  const result = await flow.flush({ dependencyRoot: dependencyCacheDir(), timeoutMs: 10000, exporterFactory: () => ({
+  const result = await flow.flush({ dependencyRoot: testDependencyRoot(), timeoutMs: 10000, exporterFactory: () => ({
     export(batch, callback) { spans.push(...batch); callback({ code: 0 }); },
     async shutdown() {}, async forceFlush() {}
   }) });
