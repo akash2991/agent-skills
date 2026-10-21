@@ -90,6 +90,43 @@ test('actual Claude and Pi old-worktree bootstraps honor declarations from root 
       }
     }
   }
+
+  // An opted-in Git root must not override a more-specific declaration at cwd
+  // or an intermediate ancestor. Exercise the real consumers, not only lookup.
+  const childEntry = runtime(child);
+  fs.copyFileSync(entry, childEntry);
+  fs.copyFileSync(path.join(path.dirname(entry), 'claude.cjs'), path.join(path.dirname(childEntry), 'claude.cjs'));
+  for (const declarationRoot of [path.join(child, 'nested'), subdir]) {
+    const nestedMarker = path.join(declarationRoot, '.agent-brain/tracing.json');
+    fs.mkdirSync(path.dirname(nestedMarker), { recursive: true });
+    const deeper = path.join(declarationRoot, 'descendant'); fs.mkdirSync(deeper, { recursive: true });
+    for (const [name, declaration] of declarations.filter(([, value]) => value !== null)) {
+      fs.writeFileSync(nestedMarker, declaration);
+      for (const cwd of [declarationRoot, deeper]) {
+        const label = `${name}: nested declaration at ${path.relative(child, declarationRoot)}, cwd=${path.relative(child, cwd)}`;
+        assert.equal(bootstrap.findRuntimeSync(cwd), null, `${label}: sync discovery`);
+        assert.equal(bootstrap.findRuntime(cwd), null, `${label}: Git discovery`);
+        const env = { PATH: process.env.PATH, LANGFUSE_TRACING_ENABLED: 'true' };
+        const claude = spawnSync(process.execPath, [require.resolve('../runtime/langfuse/bootstrap-claude.cjs')], {
+          cwd, env, input: JSON.stringify({ cwd, hook_event_name: 'Stop' }), encoding: 'utf8', timeout: 10000
+        });
+        assert.equal(claude.status, 0, claude.stderr);
+        assert.equal(claude.stdout, '', `${label}: Claude executable`);
+        for (const trusted of [true, false]) {
+          const pi = spawnSync(process.execPath, ['-e', piScript], {
+            cwd, env: { ...env, TEST_TRUSTED: String(trusted) }, encoding: 'utf8', timeout: 10000
+          });
+          assert.equal(pi.status, 0, pi.stderr);
+          assert.deepEqual(JSON.parse(pi.stdout), {
+            loads: 0, starts: 0, tools: [], suppressed: 'true', restored: 'true'
+          }, `${label}: Pi factory/start (trusted=${trusted})`);
+        }
+      }
+    }
+    fs.rmSync(nestedMarker);
+    assert.equal(bootstrap.findRuntimeSync(deeper), childEntry, 'absent nested marker permits root opt-in');
+    assert.equal(bootstrap.findRuntime(deeper), childEntry, 'Git discovery agrees after nested marker removal');
+  }
 });
 
 test('untrusted project code is never executed and legacy suppression is restored', async t => {

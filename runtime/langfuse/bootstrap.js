@@ -52,13 +52,27 @@ function findRuntimeSync(cwd) {
 }
 
 function findRuntime(cwd, git = execFileSync) {
-  const candidates = [cwd];
+  let start;
+  try { start = fs.realpathSync(cwd); } catch { return null; }
+  const candidates = [start];
   let current;
   try {
-    current = git('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (current) candidates.unshift(current);
+    const top = git('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (top) {
+      const root = fs.realpathSync(top);
+      // Check declarations from most to least specific, stopping at this Git
+      // root. A nested refusal must beat both root opt-in and principal fallback.
+      const relative = path.relative(root, start);
+      if (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+        current = root;
+        for (let ancestor = start; ancestor !== root;) {
+          ancestor = path.dirname(ancestor);
+          candidates.push(ancestor);
+        }
+      }
+    }
   } catch { /* Non-Git directories require their own explicit opt-in marker. */ }
-  for (const root of [...new Set(candidates)]) {
+  for (const root of candidates) {
     const entry = runtimeAt(root);
     if (entry !== undefined) return entry;
   }
