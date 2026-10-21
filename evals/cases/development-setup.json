@@ -3,6 +3,10 @@
   "trigger": {
     "positive": [
       {
+        "prompt": "Bootstrap an Ubuntu development VM with Herdr, Pi, Git, Node and Python tools so setup is repeatable",
+        "top_k": 3
+      },
+      {
         "prompt": "Set up my own git worktree, Docker containers and LocalStack before starting the ticket",
         "top_k": 3
       },

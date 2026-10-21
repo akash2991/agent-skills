@@ -1,6 +1,6 @@
 ---
 name: development-setup
-description: Development setup rules DS1–DS17 for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, matching main-agent and subagent names, independent Docker containers, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus shared EC2 dev machines with capacity and cost guards, Android builds on EC2, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when development or a mobile build runs in the cloud; or when agents, frontend, and backend work on one repository concurrently.
+description: Development setup rules DS1–DS17 for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, matching main-agent and subagent names, independent Docker containers, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus repeatable Ubuntu VM tool bootstrap, shared EC2 dev machines with capacity and cost guards, Android builds on EC2, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when bootstrapping development tools on an Ubuntu VM; when development or a mobile build runs in the cloud; or when agents, frontend, and backend work on one repository concurrently.
 category: delivery
 ---
 
@@ -53,6 +53,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 | DS9 | **A dependency's shape and type are resolved before anything else is done.** No code is written against a dependency on another service whose shape or type is still open. |
 
 ## Procedure
+
+For a repeatable install of Herdr, Pi, Git and the local development CLI set on an existing Ubuntu VM, use [vm-bootstrap.md](vm-bootstrap.md). Its bootstrap script installs tools only; it does not provision a machine, choose its lifecycle, or migrate credentials and sessions.
 
 1. Decide where the work runs: this machine by default, EC2 when the user or the ticket says so or this machine cannot run the stack. An Android build goes to EC2 by default; an iOS build goes to EAS only with explicit user permission (DS16).
 2. Locally: from the main repository, run `git worktree add ../<ticket>-<slug>` so the worktree is its sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts. In the cloud, apply the same naming rule to the clone at `~/work/<ticket>-<slug>`; run `scripts/cloud-reap.sh`, then `scripts/cloud-up.sh <ticket>`, which joins a machine with headroom or launches one (DS2, DS10–DS14, [cloud.md](cloud.md)).
