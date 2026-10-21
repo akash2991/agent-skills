@@ -1,6 +1,6 @@
 ---
 name: development-setup
-description: Development setup rules DS1–DS17 for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, matching main-agent and subagent names, independent Docker containers, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus shared EC2 dev machines with capacity and cost guards, Android builds on EC2, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when development or a mobile build runs in the cloud; or when agents, frontend, and backend work on one repository concurrently.
+description: Development setup rules DS1–DS19 for each agent's isolated environment — sibling git worktree, matching agent names, independent Docker containers, LocalStack, database snapshot or seed, observability, and cleanup after the PR — plus shared EC2 dev machines with capacity and cost guards, Android builds on EC2, approved iOS builds on EAS, persistent personal dev VMs, safe Mac-to-VM migration, and API contract-first parallel work with frontend mocking and backend returning labelled mock data. Use when starting any task that writes, runs, tests, debugs, or builds code; when development or a mobile build runs in the cloud; when agents, frontend, and backend work concurrently; or when migrating repositories, worktrees, stashes and sessions from a Mac to a persistent dev VM.
 category: delivery
 ---
 
@@ -16,6 +16,7 @@ What is in place before development starts: an environment that belongs to this 
 - Before running the app or tests for a ticket.
 - When several agents work on the same repository, or the frontend and the backend build the same feature at once.
 - When development runs on a cloud machine, or an Android or iOS app is built.
+- When setting up a persistent personal dev VM or migrating repositories, worktrees, credentials, or editor sessions from a Mac.
 - NOT for the branch, commit, and PR rules (`git-workflow-and-versioning`), how to slice and ship the work (`continuous-delivery`), the testing rules (`test-driven-development`), or the CI pipelines that build on every push (`ci-cd-and-automation`).
 
 ## Environment
@@ -31,7 +32,7 @@ What is in place before development starts: an environment that belongs to this 
 
 ## Cloud machines
 
-The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
+The disposable shared fleet's procedure, scripts, and one-time setup are in [cloud.md](cloud.md). DS10–DS15 govern that fleet, not a user-designated persistent machine. For persistent personal EC2 and Mac-to-VM migration, read [persistent-dev.md](persistent-dev.md) (DS18–DS19) before acting; never apply fleet termination or credential-transfer assumptions to those workflows.
 
 | ID | Rule |
 | --- | --- |
@@ -44,6 +45,13 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 | DS16 | **Android builds on EC2 by default; EAS is used solely for iOS.** During local development and testing, an Android build is the default because multiple Android builds are cheaper than iOS builds on EAS. An iOS build is only built with explicit user permission, to test UI bugs if any, because functionality should not differ between platforms. `scripts/android-ec2-build.sh` builds Android on an EC2 dev machine in Docker; `scripts/ios-eas-build.sh` builds iOS on EAS when the user explicitly approves it. The user may override either path; the choice and reason are recorded on the ticket. |
 | DS17 | **An iOS build on AWS is a 24-hour commitment.** An EC2 Mac runs on a dedicated host billed for at least 24 hours. This is an override path, not the default: ask with that stated (DS12), reuse an allocated host for every iOS build in those 24 hours instead of allocating another, and let the scheduled release free it at the 24-hour mark. |
 
+## Persistent machines and migration
+
+| ID | Rule |
+| --- | --- |
+| DS18 | **Choose the lifecycle before touching the machine.** A user-designated persistent personal dev VM stops when idle; its encrypted, backed-up home volume survives instance replacement. It is not part of the disposable `brain=dev` fleet and must never be targeted by that fleet's cleanup or termination scripts. Keep work and personal data separate, retain per-agent isolation, and record the lifecycle and recovery plan in `docs/DEVELOPMENT.md`. |
+| DS19 | **Migration copies and verifies; it never silently replaces or deletes.** Inventory both ends, approve scope and secret transfers, preserve exact repository/index/worktree/stash and session state, and stop on destination conflicts. Verify contents, not just status filenames or file sizes. Source deletion and live editor database writes each require explicit approval. Follow [persistent-dev.md](persistent-dev.md), not an untested ad-hoc mirroring script. |
+
 ## Parallel work
 
 | ID | Rule |
@@ -54,7 +62,7 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 
 ## Procedure
 
-1. Decide where the work runs: this machine by default, EC2 when the user or the ticket says so or this machine cannot run the stack. An Android build goes to EC2 by default; an iOS build goes to EAS only with explicit user permission (DS16).
+1. Decide where the work runs: this machine by default, EC2 when the user or the ticket says so or this machine cannot run the stack. First classify EC2 as disposable shared fleet or user-designated persistent personal dev (DS18); for persistent setup or migration, follow [persistent-dev.md](persistent-dev.md) rather than the fleet steps below. An Android build goes to EC2 by default; an iOS build goes to EAS only with explicit user permission (DS16).
 2. Locally: from the main repository, run `git worktree add ../<ticket>-<slug>` so the worktree is its sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts. In the cloud, apply the same naming rule to the clone at `~/work/<ticket>-<slug>`; run `scripts/cloud-reap.sh`, then `scripts/cloud-up.sh <ticket>`, which joins a machine with headroom or launches one (DS2, DS10–DS14, [cloud.md](cloud.md)).
 3. Start Docker and LocalStack for the services you touch (DS3, DS4), in the cloud as the Compose project `<ticket>-<slug>` on your own ports; snapshot or seed the database (DS5).
 4. Confirm the API contract, DB model, and every dependency's shape exist for the slice you are about to build (DS7–DS9); if not, that is the first task, not a thing to work around.
@@ -77,6 +85,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 | "Another agent's containers are already running, I'll reuse them." | Everything is ephemeral and belongs to this agent only (DS3). |
 | "I'll hit real AWS / the shared database for this test." | LocalStack and your own snapshot or seed (DS4, DS5). |
 | "I'll clean up the worktree later." | Open the PR, then remove the worktree, containers, and snapshot (DS2). |
+| "All EC2 dev machines should be terminated by the reaper." | Persistent personal machines have a separate stop-and-retain lifecycle and are never fleet cleanup targets (DS18). |
+| "The status filenames match, so the Mac copy is safe to delete." | Compare contents and index state, resolve destination conflicts, and obtain explicit deletion approval (DS19). |
 | "I'll launch my own machine; sharing is messy." | Join a machine with headroom; another launches only when the metrics say none has room (DS11). |
 | "The machine feels slow, I'll squeeze in anyway." | A machine without headroom by its metrics takes no one else (DS11). |
 | "A bigger machine would be faster; it's only a few dollars." | Any type but the default only with the user's explicit permission for that machine (DS12). |
@@ -98,6 +108,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 - Two agents sharing a container, a database, or a worktree (DS3, DS5).
 - Tests run against real AWS or a shared database (DS4, DS5).
 - Worktrees, containers, or snapshots left behind after the PR is open (DS2).
+- A persistent personal VM tagged `brain=dev` or targeted by fleet termination, or work and personal credentials mixed on it (DS18).
+- A migration resetting destination branches, clearing destination stashes, copying unapproved secrets, or declaring success from status filenames alone (DS19).
 - A machine launched while a live one had headroom, or an agent placed on a machine without it (DS11).
 - A machine of another type, a third live machine, or a new Mac host with no permission recorded on the ticket (DS12, DS17).
 - A `brain=dev` machine running with nobody using it, stopped instead of terminated, or listed by `cloud-reap.sh` after its agents left (DS13, DS14).
@@ -111,6 +123,8 @@ The procedure, the scripts, and the one-time setup are in [cloud.md](cloud.md).
 
 Before starting work:
 
+- [ ] For persistent machines or migration, the lifecycle, owner, approved scope, destination conflicts, storage and backup plan are recorded; the appropriate workflow in `persistent-dev.md` is used instead of fleet automation (DS18–DS19).
+
 - [ ] Each main agent and subagent has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is exactly that worktree's basename (DS2); or, in the cloud, `cloud-up.sh` placed you on a machine with headroom or launched the default type, or a type the user approved on the ticket (DS10–DS12).
 - [ ] For an Android build, EC2 was used, or the override to EAS is recorded on the ticket; for an iOS build, explicit user permission is recorded (DS16).
 - [ ] Docker containers and LocalStack are running for the services you touch and belong to this agent only (DS3, DS4).
@@ -121,4 +135,5 @@ Before finishing:
 
 - [ ] The app and tests were run inside this environment.
 - [ ] The PR is open, and the worktree, containers, and snapshot are removed (DS2).
-- [ ] In the cloud: the branch is pushed, `cloud-down.sh` removed your directory and containers, and `cloud-reap.sh` lists no machine without agents (DS14, DS15).
+- [ ] For migration, the content-level evidence report includes index, worktree, refs, stashes, sessions, exclusions and unresolved items; source data remains untouched without separate deletion approval (DS19).
+- [ ] In the disposable cloud fleet: the branch is pushed, `cloud-down.sh` removed your directory and containers, and `cloud-reap.sh` lists no machine without agents (DS14, DS15).

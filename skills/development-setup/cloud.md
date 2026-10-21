@@ -2,6 +2,8 @@
 
 How agents develop on shared EC2 machines and build the mobile app under `development-setup` DS10–DS17. The scripts are in `scripts/`, run from the project root (`android-ec2-build.sh` and `ios-eas-build.sh` from the app directory), and read the project's `.env`; the project's `.env.example` lists every variable.
 
+> This document is only for the disposable shared fleet. A user-designated persistent personal VM uses [persistent-dev.md](persistent-dev.md): stop when idle, retain its home volume, and never tag it `brain=dev` or target it with these termination scripts. Migration into an existing VM also follows that workflow, not fleet provisioning.
+
 ## One-time setup (the user)
 
 An agent never creates these; when one is missing, the script names it and the agent asks the user.

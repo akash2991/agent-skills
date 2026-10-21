@@ -109,7 +109,7 @@ Global defaults, binding in every project. Each row states the rule and the only
 | ID | Rule | Override considered only when |
 |---|---|---|
 | S7 | **PostgreSQL** (`database`). | — |
-| S8 | **Docker for development, locally or on a shared, short-lived EC2 machine; LocalStack for AWS.** A reproducible environment, not an infrastructure project; machines launched by metrics, another type only with the user's permission, an idle one terminated (`development-setup`). | the service is a pure library |
+| S8 | **Docker for development, locally or on a shared, short-lived EC2 machine; LocalStack for AWS.** A reproducible environment, not an infrastructure project; fleet machines launched by metrics, another type only with the user's permission, an idle fleet machine terminated. User-designated persistent personal VMs instead stop and retain backed-up home storage; never target them with fleet cleanup (`development-setup` DS18). | the service is a pure library |
 | S9 | **Terraform for AWS under `infra/`.** | a recorded decision |
 | S10 | **GitHub Actions for CI/CD**, deploy workflows per environment; what CI runs on every PR is `test-driven-development`. | a recorded decision |
 | S11 | **Prometheus (metrics), Grafana (dashboards), Loki (logs)**; what is emitted and when dashboards arrive is `observability-and-instrumentation`. | a recorded decision |
