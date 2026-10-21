@@ -62,3 +62,46 @@ test('unknown or unsafe model variants are omitted without aborting reconciliati
   assert.equal(generations[2].model, 'claude-sonnet-4-6');
   assert.equal(JSON.stringify(records).includes('CANARY_PRIVATE_PROVIDER'), false);
 });
+
+test('known to unsupported switch invalidates current attribution across restart without rewriting history', async t => {
+  const f = fixture(t);
+  await f.hook('SessionStart', { model: 'claude-opus-5-5[1m]' });
+  const transcript = path.join(f.cwd, 'historical.jsonl');
+  fs.writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: Date.now(), message: {
+    id: 'historical-native-message', model: 'claude-opus-5-5', usage: { input_tokens: 2, output_tokens: 3 }, content: []
+  } }) + '\n');
+  await f.hook('PostModelSwitch', { to_model: 'unrecognized-gateway-model' });
+  assert.equal(f.flow.session(f.sessionId).requestedModel, null);
+  assert.equal(f.flow.session(f.sessionId).observedModel, null);
+  // A new process reopens the actual durable checkpoint; no in-memory model
+  // variable can hide a stale value. Reconcile previously unread history too.
+  const flow = createFlow({ harness: 'claude', cwd: f.cwd, stateDir: path.join(f.cwd, 'state'), env: {},
+    queueObservation: record => { f.records.push(record); return { queued: true }; },
+    flushOutbox: async () => ({ accepted: 0, verified: false }) });
+  await handleClaudeHook({ cwd: f.cwd, session_id: f.sessionId, hook_event_name: 'Stop', transcript_path: transcript }, { flow });
+  const actor = f.records.filter(record => record.type === 'AGENT').at(-1);
+  assert.equal(actor.model, undefined);
+  assert.equal(actor.context.requestedModel, undefined);
+  assert.equal(actor.context.observedModel, undefined);
+  const generation = f.records.find(record => record.type === 'GENERATION');
+  assert.equal(generation.model, 'claude-opus-5-5');
+  assert.equal(generation.context.observedModel, 'claude-opus-5-5');
+  assert.deepEqual(generation.usage, { input: 2, output: 3 });
+  const files = fs.readdirSync(path.join(f.cwd, 'state', 'adapters')).filter(name => name.endsWith('.json'));
+  assert.ok(files.every(name => !fs.readFileSync(path.join(f.cwd, 'state', 'adapters', name), 'utf8').includes('unrecognized-gateway-model')));
+});
+
+test('unsupported to known switch restores current model and ordinary hooks retain it', async t => {
+  const { hook, records, flow, sessionId } = fixture(t);
+  await hook('SessionStart', { model: 'claude-opus-5-5' });
+  await hook('PostModelSwitch', { to_model: 'unrecognized-gateway-model' });
+  await hook('Stop');
+  assert.equal(records.filter(record => record.type === 'AGENT').at(-1).model, undefined);
+  await hook('PostModelSwitch', { to_model: 'claude-sonnet-4-6[1m]' });
+  await hook('Stop');
+  const actor = records.filter(record => record.type === 'AGENT').at(-1);
+  assert.equal(actor.model, 'claude-sonnet-4-6');
+  assert.equal(actor.context.requestedModel, 'claude-sonnet-4-6');
+  assert.equal(flow.session(sessionId).requestedModel, 'claude-sonnet-4-6');
+  assert.equal(JSON.stringify(records).includes('unrecognized-gateway-model'), false);
+});

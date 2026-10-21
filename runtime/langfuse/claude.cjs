@@ -249,13 +249,16 @@ async function handleClaudeHook(payload, options = {}) {
     run = flow.update(run, { persona: payload.agent_type, agentName: payload.agent_type });
   }
   const modelKey = key(flow, 'model', nativeSessionId);
-  const observedModel = event === 'SessionStart' ? model(payload.model) :
-    event === 'PostModelSwitch' ? model(payload.to_model) : undefined;
-  if (observedModel) {
-    flow.writeState(modelKey, { model: observedModel });
-    run = flow.update(run, { requestedModel: observedModel });
+  const modelEvent = event === 'SessionStart' && Object.hasOwn(payload, 'model') ||
+    event === 'PostModelSwitch' && Object.hasOwn(payload, 'to_model');
+  if (modelEvent) {
+    const configured = model(event === 'SessionStart' ? payload.model : payload.to_model);
+    // Null records explicit unknown current-model evidence, unlike no model
+    // event. Never persist the unsupported native label or reuse stale facts.
+    flow.writeState(modelKey, { model: configured || null });
+    run = flow.update(run, { requestedModel: configured || null, observedModel: null });
   }
-  const actualModel = observedModel || model(flow.readState(modelKey)?.model);
+  const actualModel = model(flow.readState(modelKey)?.model);
   const effort = EFFORTS.has(payload.effort?.level) ? payload.effort.level : undefined;
   if (effort) run = flow.update(run, { requestedEffort: effort });
 
@@ -369,6 +372,12 @@ async function handleClaudeHook(payload, options = {}) {
     // is no promise of capture after SIGKILL or an indefinitely delayed write.
     await new Promise(resolve => setTimeout(resolve, 20));
     reconcileTranscript(flow, run, transcript, childId);
+  }
+  // Reconciliation can discover historical known-model rows after a switch.
+  // Keep their generation evidence, but do not re-label the unknown current
+  // actor using those prior observations.
+  if (flow.readState(modelKey)?.model === null) {
+    run = flow.update(flow.resolve(run) || run, { requestedModel: null, observedModel: null });
   }
   const terminalKey = key(flow, 'terminal', nativeSessionId);
   let terminal = flow.readState(terminalKey);
