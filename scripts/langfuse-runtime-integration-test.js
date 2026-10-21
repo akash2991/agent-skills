@@ -5,8 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { spawn, spawnSync } = require('node:child_process');
 const { createFlow, ADAPTER_LIMITS } = require('../runtime/langfuse/flow.cjs');
-const { OUTBOX_LIMITS } = require('../runtime/langfuse/export.cjs');
+const { OUTBOX_LIMITS, flushOutbox } = require('../runtime/langfuse/export.cjs');
 const { testDependencyRoot } = require('./lib/langfuse-test-dependencies.js');
 const { handleClaudeHook } = require('../runtime/langfuse/claude.cjs');
 const { runContext } = require('../runtime/langfuse/context-cli.cjs');
@@ -193,6 +194,107 @@ test('late historical rebase exports captured semantics through the real outbox 
   assert.equal(metadata('observedEffort'), undefined, 'later observations cannot become earlier evidence');
   assert.equal(metadata('skillsLoaded'), undefined);
   assert.equal(flow.store.getSession('pi', nativeSessionId).runId, second.runId);
+});
+
+test('real capacity-deferred old revision never follows newer ACK/removal by another process, including equal timestamps', async t => {
+  for (const sameTimestamp of [false, true]) {
+    const { cwd } = fixture(t), stateDir = path.join(cwd, 'durable-revisions');
+    let flow = createFlow({ cwd, stateDir, env: {} });
+    const run = flow.begin({ cwd, nativeSessionId: crypto.randomUUID() }), now = Date.now();
+    const blockers = Array.from({ length: OUTBOX_LIMITS.records }, () => ({ id: flow.id(), type: 'GENERATION',
+      parentId: run.rootSpanId, startTime: now, endTime: now, outcome: 'completed' }));
+    assert.equal(flow.submit(run, blockers).queued, OUTBOX_LIMITS.records);
+    const old = { id: run.rootSpanId, parentId: null, type: 'AGENT', startTime: now, endTime: now, outcome: 'completed' };
+    assert.deepEqual(flow.submit(run, [old]), { queued: 0, pending: 1 });
+    const opts = { stateDir, dependencyRoot: testDependencyRoot(), exporterFactory: () => ({
+      export(spans, callback) { callback({ code: 0 }); }, async shutdown() {}, async forceFlush() {}
+    }) };
+    while (fs.readdirSync(path.join(stateDir, 'outbox')).length) assert.ok((await flushOutbox(opts)).accepted > 0);
+    const newer = { ...old, endTime: now + (sameTimestamp ? 0 : 1), outcome: 'aborted' };
+    const script = `const {createFlow}=require(${JSON.stringify(require.resolve('../runtime/langfuse/flow.cjs'))});
+      const {flushOutbox}=require(${JSON.stringify(require.resolve('../runtime/langfuse/export.cjs'))});
+      const flow=createFlow({cwd:${JSON.stringify(cwd)},stateDir:${JSON.stringify(stateDir)},env:{}});
+      const submitted=flow.submit(${JSON.stringify(run)},[${JSON.stringify(newer)}]);
+      const seen=[]; flushOutbox({stateDir:flow.stateDir,dependencyRoot:${JSON.stringify(testDependencyRoot())},
+        exporterFactory:()=>({export(spans,cb){seen.push(...spans.map(s=>JSON.parse(s.attributes['langfuse.observation.metadata.outcome'])));cb({code:0})},async shutdown(){}})
+      }).then(result=>console.log(JSON.stringify({submitted,result,seen})));`;
+    const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 15000 });
+    assert.equal(child.status, 0, child.stderr);
+    const ack = JSON.parse(child.stdout);
+    assert.equal(ack.result.accepted, 1); assert.deepEqual(ack.seen, ['aborted']);
+    assert.equal(fs.readdirSync(path.join(stateDir, 'outbox')).length, 0, 'newer ACK physically removed its queue entry');
+    const ledger = path.join(stateDir, 'revisions-v1.json');
+    fs.utimesSync(ledger, new Date(0), new Date(0)); // Floors cannot expire based on file age.
+    flow = createFlow({ cwd, stateDir, env: {} });
+    const seen = [];
+    const replay = await flow.flush({ ...opts, exporterFactory: () => ({
+      export(spans, callback) { seen.push(...spans); callback({ code: 0 }); }, async shutdown() {}
+    }) });
+    assert.equal(replay.deferred, 0); assert.equal(replay.queued, 0);
+    assert.equal(seen.length, 0, 'deferred obsolete revision is consumed without a stale outbound send');
+    if (!sameTimestamp) assert.deepEqual(flow.submit(run, [old]), { queued: 0, pending: 0, superseded: 1 });
+  }
+});
+
+function flowWorker(config) {
+  const script = `const {createFlow}=require(${JSON.stringify(require.resolve('../runtime/langfuse/flow.cjs'))});
+    const c=${JSON.stringify(config)};
+    const flow=createFlow({cwd:c.cwd,stateDir:c.stateDir,env:c.restart?{}:{PI_SUBAGENT_ID:c.alias}});
+    const run=c.restart?flow.session(c.nativeSessionId):flow.begin({cwd:c.cwd,nativeSessionId:c.nativeSessionId});
+    const now=Date.now(); const record=(f,r)=>({id:f.id(),parentId:r.rootSpanId,type:'GENERATION',startTime:now,endTime:now,outcome:'completed'});
+    if(!c.restart){flow.submit(run,[record(flow,run)]);
+      if(c.descendant){const launch=flow.createToolLaunch(run);const nested=createFlow({cwd:c.cwd,stateDir:c.stateDir,env:{BRAIN_TRACE_LAUNCH_ID:launch.nonce}});
+        const child=nested.begin({cwd:c.cwd,nativeSessionId:require('node:crypto').randomUUID()});nested.submit(child,[record(nested,child)]);}}
+    const seen=[];flow.flush({dependencyRoot:c.dependencyRoot,timeoutMs:10000,exporterFactory:()=>({export(spans,cb){seen.push(...spans.map(s=>({trace:s.spanContext().traceId,native:JSON.parse(s.attributes['langfuse.observation.metadata.nativeSessionId'])})));cb({code:0})},async shutdown(){}})})
+      .then(result=>console.log(JSON.stringify({run,resolved:!!flow.resolve(run),result,seen})));`;
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['-e', script]); let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject); child.on('exit', code => {
+      try { assert.equal(code, 0, stderr); resolve(JSON.parse(stdout)); } catch (error) { reject(error); }
+    });
+  });
+}
+
+test('actual two-process consumers enforce single-use ownership initially and after unresolved children/descendants', async t => {
+  for (const late of [false, true]) {
+    const { cwd } = fixture(t), stateDir = path.join(cwd, 'ownership');
+    const parentFlow = createFlow({ cwd, stateDir, env: {} });
+    const parent = parentFlow.begin({ cwd, nativeSessionId: crypto.randomUUID() }), alias = 'exact-stock-child';
+    let launch;
+    if (!late) launch = parentFlow.store.createLaunch(parent, { launchId: alias });
+    const configs = Array.from({ length: 2 }, () => ({ cwd, stateDir, alias, nativeSessionId: crypto.randomUUID(),
+      dependencyRoot: testDependencyRoot(), descendant: late }));
+    let results = await Promise.all(configs.map(flowWorker));
+    if (late) {
+      assert.ok(results.every(result => !result.resolved && !result.seen.length));
+      launch = parentFlow.store.createLaunch(parent, { launchId: alias });
+      results = await Promise.all(configs.map(config => flowWorker({ ...config, restart: true })));
+    }
+    assert.equal(results.filter(result => result.resolved).length, 1);
+    const winner = results.findIndex(result => result.resolved), loser = 1 - winner;
+    const seen = results.flatMap(result => result.seen);
+    assert.equal(seen.length, late ? 2 : 1, 'only the owner and its descendant can export');
+    assert.ok(seen.every(span => span.trace === parent.traceId));
+    assert.ok(!seen.some(span => span.native === configs[loser].nativeSessionId));
+    assert.equal(parentFlow.store.resolveLaunch({ nonce: launch.nonce }).parent.runId, parent.runId, 'parent inspection does not consume a launch');
+    const repeat = await flowWorker({ ...configs[winner], restart: true });
+    assert.equal(repeat.resolved, true, 'same native owner is idempotent after restart');
+    const conflict = await flowWorker({ ...configs[loser], restart: true });
+    assert.equal(conflict.resolved, false); assert.equal(conflict.seen.length, 0);
+    const escape = createFlow({ cwd, stateDir, env: {} });
+    const stillRejected = escape.begin({ cwd, nativeSessionId: configs[loser].nativeSessionId, parent });
+    assert.equal(escape.resolve(stillRejected), null, 'a later parent hint cannot erase a persisted conflicting launch');
+    const next = createFlow({ cwd, stateDir, env: { PI_SUBAGENT_ID: alias } });
+    const turn = next.begin({ cwd, nativeSessionId: configs[winner].nativeSessionId });
+    assert.equal(next.resolve(turn).parentSpanId, parent.rootSpanId, 'another turn retains the same owner');
+    const tool = parentFlow.createToolLaunch(parent);
+    for (let i = 0; i < 2; i++) {
+      const bashChild = createFlow({ cwd, stateDir, env: { BRAIN_TRACE_LAUNCH_ID: tool.nonce } });
+      const child = bashChild.begin({ cwd, nativeSessionId: crypto.randomUUID() });
+      assert.equal(bashChild.resolve(child).parentSpanId, parent.rootSpanId, 'explicit multi-use Bash capability remains reusable');
+    }
+  }
 });
 
 test('many completed Claude runs/tools/generations expire on disk while an active session retains replay state', async t => {

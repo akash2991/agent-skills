@@ -359,6 +359,43 @@ if (process.argv[2] === '--worker') {
     assert.equal(f.store.takePending({ launchId: 'early-grandchild' })[0].run.traceId, parent.traceId);
   });
 
+  test('projected launch references preserve exact matching without accepting mixed or forged scope handles', t => {
+    const f = fixture(t), parent = f.run();
+    const launch = f.store.createLaunch(parent, { launchId: 'private native alias', sessionFile: path.join(f.root, 'private transcript.jsonl') });
+    const reference = f.store.referenceLaunch({ nonce: launch.nonce, launchId: 'private native alias' });
+    assert.ok(!JSON.stringify(reference).includes('private native alias'));
+    assert.equal(f.store.resolveLaunch(reference).parent.runId, parent.runId);
+    assert.equal(f.store.resolveLaunch(reference).nonce, launch.nonce);
+    assert.throws(() => f.store.resolveLaunch({ ...reference, launchId: 'private native alias' }), /Invalid/);
+    assert.throws(() => f.store.resolveLaunch({ ...reference, capability: 'a'.repeat(32) }), /Invalid/);
+    assert.throws(() => f.store.resolveLaunch({ reference: ['launchId:not-a-digest'] }), /Invalid/);
+  });
+
+  test('atomic late drain owns one native session, not every matching candidate or provisional trace sibling', t => {
+    const f = fixture(t), provisionalParent = f.run(), target = f.run();
+    const identity = { launchId: 'competing-late-consumers' };
+    const first = f.run({ parent: provisionalParent }), other = f.run({ parent: provisionalParent });
+    const nextTurn = f.run({ parent: provisionalParent, nativeSessionId: first.nativeSessionId });
+    for (const run of [first, other, nextTurn]) f.store.hold({ identity, run, records: [] });
+    const descendants = [f.run({ parent: first }), f.run({ parent: other })];
+    const launches = [f.store.createLaunch(descendants[0]), f.store.createLaunch(descendants[1])];
+    f.store.createLaunch(target, { launchId: identity.launchId });
+    const drained = f.store.takePending(identity);
+    assert.deepEqual(drained.map(item => item.run.runId), [first.runId, nextTurn.runId]);
+    assert.equal(f.store.getRun(other.runId).traceId, provisionalParent.traceId);
+    assert.equal(f.store.getRun(provisionalParent.runId).parentSpanId, null);
+    assert.equal(f.store.getRun(descendants[0].runId).traceId, target.traceId);
+    assert.equal(f.store.getRun(descendants[1].runId).traceId, provisionalParent.traceId);
+    assert.equal(f.store.resolveLaunch({ nonce: launches[0].nonce }).parent.traceId, target.traceId);
+    assert.equal(f.store.resolveLaunch({ nonce: launches[1].nonce }), null, 'losing descendant is still unresolved');
+    assert.equal(f.store.claimLaunch(identity, { claimId: `pi:${other.nativeSessionId}` }), null);
+    assert.ok(f.store.claimLaunch(identity, { claimId: `pi:${first.nativeSessionId}` }));
+    assert.deepEqual(f.store.takePending(identity), []);
+    const persisted = new ContextStore({ stateDir: f.stateDir });
+    assert.equal(persisted.claimLaunch(identity, { claimId: `pi:${other.nativeSessionId}` }), null);
+    assert.equal(persisted.getSession('pi', first.nativeSessionId).runId, nextTurn.runId);
+  });
+
   test('already linked pending records do not incorrectly block their own parent', t => {
     const f = fixture(t);
     const parent = f.run();

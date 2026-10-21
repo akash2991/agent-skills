@@ -8,7 +8,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { sanitizeObservation, configurePrivacy, CONTEXT_FIELDS, LIMITS } = require('../runtime/langfuse/privacy.cjs');
-const { queueObservation, flushOutbox, loadCredentials, OUTBOX_LIMITS } = require('../runtime/langfuse/export.cjs');
+const { queueObservation, reserveRevisions, flushOutbox, loadCredentials, OUTBOX_LIMITS, REVISION_LIMIT } = require('../runtime/langfuse/export.cjs');
 const { dependencyCacheDir, loadDependencies, LOCK_FINGERPRINT } = require('../runtime/langfuse/dependencies.cjs');
 const dependencyRoot = require('./lib/langfuse-test-dependencies.js').testDependencyRoot();
 const base = overrides => ({
@@ -250,7 +250,7 @@ test('offline, exporter failures, throws and timeouts retain metadata-only repla
       }, async shutdown() {}
     });
     const start = Date.now();
-    const result = await flushOutbox({ stateDir, dependencyRoot, exporterFactory: factory, timeoutMs: 40 });
+    const result = await flushOutbox({ stateDir, dependencyRoot, exporterFactory: factory, timeoutMs: 250 });
     assert.equal(result.accepted, 0); assert.equal(result.queued, 1); assert.equal(result.failed, 1);
     assert.ok(Date.now() - start < 1000);
     assert.equal(outbox(stateDir), before);
@@ -357,9 +357,58 @@ test('local synthetic HTTP transport uses safe OTLP and requires real callback s
   }
 });
 
+test('durable pre-send floors reject older replay after uncertain ACK and retain exact retry', async t => {
+  const stateDir = sandbox(t), seen = [];
+  const older = base({ outcome: 'completed' }), newer = base({ outcome: 'aborted' });
+  const [oldRevision, newRevision] = reserveRevisions([older, newer], { stateDir });
+  assert.ok(newRevision > oldRevision, 'same-timestamp metadata revisions use synchronized capture order');
+  queueObservation(newer, { stateDir, revision: newRevision });
+  const uncertain = await flushOutbox({ stateDir, dependencyRoot, timeoutMs: 500, exporterFactory: () => ({
+    export(spans) { seen.push(...spans); }, async shutdown() {}
+  }) });
+  assert.equal(uncertain.accepted, 0);
+  assert.equal(queueObservation(older, { stateDir, revision: oldRevision }).obsolete, true);
+  const retry = await flushOutbox({ stateDir, dependencyRoot, exporterFactory: captureFactory(seen) });
+  assert.equal(retry.accepted, 1);
+  assert.equal(seen.length, 2, 'uncertain delivery remains at-least-once');
+  assert.ok(seen.every(span => JSON.parse(span.attributes['langfuse.observation.metadata.outcome']) === 'aborted'));
+  assert.equal(queueObservation(older, { stateDir, revision: oldRevision }).obsolete, true);
+  assert.equal(fs.readdirSync(path.join(stateDir, 'outbox')).length, 0);
+});
+
+test('unticketed legacy outbox records stay intact instead of being assigned replay-time chronology', async t => {
+  const stateDir = sandbox(t);
+  queueObservation(base(), { stateDir });
+  const file = path.join(stateDir, 'outbox', fs.readdirSync(path.join(stateDir, 'outbox'))[0]);
+  const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
+  envelope.schema = 1; delete envelope.revision;
+  fs.writeFileSync(file, JSON.stringify(envelope));
+  fs.unlinkSync(path.join(stateDir, 'revisions-v1.json'));
+  const before = outbox(stateDir), seen = [];
+  const result = await flushOutbox({ stateDir, dependencyRoot, exporterFactory: captureFactory(seen) });
+  assert.equal(result.status, 'invalid_outbox'); assert.equal(result.invalid, 1);
+  assert.equal(result.accepted, 0); assert.equal(seen.length, 0);
+  assert.equal(outbox(stateDir), before);
+});
+
+test('revision capacity refuses without evicting floors; an orphan publication slot is recovered', t => {
+  const stateDir = sandbox(t);
+  const entries = Object.fromEntries(Array.from({ length: REVISION_LIMIT }, (_, i) =>
+    [i.toString(16).padStart(64, '0'), { allocated: 1, floor: { revision: 1, endTime: 1700000001250 } }]));
+  const ledger = path.join(stateDir, 'revisions-v1.json');
+  fs.writeFileSync(ledger, JSON.stringify({ schema: 1, entries }), { mode: 0o600 });
+  const before = fs.readFileSync(ledger, 'utf8');
+  assert.deepEqual(queueObservation(base(), { stateDir }), { queued: false, reason: 'revision_capacity' });
+  assert.equal(fs.readFileSync(ledger, 'utf8'), before);
+  fs.unlinkSync(ledger);
+  fs.writeFileSync(path.join(stateDir, '.revisions-v1.tmp'), 'interrupted synthetic publication', { mode: 0o600 });
+  assert.equal(queueObservation(base(), { stateDir }).queued, true);
+  assert.equal(fs.existsSync(path.join(stateDir, '.revisions-v1.tmp')), false);
+});
+
 test('API emits no raw content or arbitrary errors to stdout/stderr', t => {
   const stateDir = sandbox(t);
-  const script = `const e=require(${JSON.stringify(path.join(dependencyRoot, 'export.cjs'))}); const r=${JSON.stringify(base({ input: CANARIES[0] }))}; e.queueObservation(r,{stateDir:${JSON.stringify(stateDir)}}); e.flushOutbox({stateDir:${JSON.stringify(stateDir)},dependencyRoot:${JSON.stringify(dependencyRoot)},exporterFactory:()=>({export(s,cb){cb({code:1,error:new Error(${JSON.stringify(CANARIES[0])})})},async shutdown(){}})}).then(r=>console.log(JSON.stringify(r)));`;
+  const script = `const e=require(${JSON.stringify(require.resolve('../runtime/langfuse/export.cjs'))}); const r=${JSON.stringify(base({ input: CANARIES[0] }))}; e.queueObservation(r,{stateDir:${JSON.stringify(stateDir)}}); e.flushOutbox({stateDir:${JSON.stringify(stateDir)},dependencyRoot:${JSON.stringify(dependencyRoot)},exporterFactory:()=>({export(s,cb){cb({code:1,error:new Error(${JSON.stringify(CANARIES[0])})})},async shutdown(){}})}).then(r=>console.log(JSON.stringify(r)));`;
   const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH, LANGFUSE_DEBUG: 'true' } });
   assert.equal(child.status, 0, child.stderr);
   for (const canary of CANARIES) assert.ok(!(child.stdout + child.stderr + outbox(stateDir)).includes(canary));

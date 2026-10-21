@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const https = require('node:https');
 const http = require('node:http');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, createHash } = require('node:crypto');
 const { setMaxListeners } = require('node:events');
 const { sanitizeObservation, safeIdentity, structuralIdentity, LIMITS } = require('./privacy.cjs');
 const { loadDependencies } = require('./dependencies.cjs');
@@ -13,7 +13,12 @@ const { claimLock } = require('./locks.cjs');
 
 const OUTBOX_LIMITS = Object.freeze({ records: 256, bytes: 4 * 1024 * 1024, flush: 32, scan: 512 });
 const FILE_PATTERN = /^[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{32}\.json$/;
-const MAX_FILE_BYTES = LIMITS.recordBytes + 256;
+const MAX_FILE_BYTES = LIMITS.recordBytes + 512;
+// Lifetime floors deliberately have no TTL: pending/checkpoint references can
+// outlive any wall-clock retention interval. Exhaustion is explicit refusal,
+// never eviction that could authorize an obsolete replay.
+const REVISION_LIMIT = 16384;
+const REVISION_BYTES = 4 * 1024 * 1024;
 const defaultStateDir = () => path.join(os.homedir(), '.local', 'state', 'agent-brain', 'langfuse');
 const privateOwner = stat => typeof process.getuid !== 'function' || stat.uid === process.getuid();
 
@@ -45,14 +50,88 @@ function privateRead(file, maximum) {
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || !privateOwner(stat) || (stat.mode & 0o077) || stat.size > maximum || stat.nlink !== 1) throw new Error('Unsafe tracing file');
-    const bytes = Buffer.alloc(maximum + 1);
+    const bytes = Buffer.alloc(stat.size + 1);
     const size = fs.readSync(fd, bytes, 0, bytes.length, 0);
-    if (size > maximum) throw new Error('Tracing file exceeds budget');
+    if (size > stat.size || size > maximum) throw new Error('Tracing file changed or exceeds budget');
     return bytes.subarray(0, size);
   } finally { fs.closeSync(fd); }
 }
 
-function queueObservation(record, { stateDir = defaultStateDir() } = {}) {
+function revisionKey(record) {
+  // Only projected metadata is hashed, never caller payloads or native files.
+  return createHash('sha256').update(`${record.nativeSessionId}:${record.id}`).digest('hex');
+}
+function readRevisions(stateDir) {
+  try {
+    const state = JSON.parse(privateRead(path.join(stateDir, 'revisions-v1.json'), REVISION_BYTES));
+    if (state.schema !== 1 || !state.entries || typeof state.entries !== 'object' || Array.isArray(state.entries)
+      || Object.keys(state).sort().join(',') !== 'entries,schema'
+      || Object.keys(state.entries).length > REVISION_LIMIT) throw new Error('Invalid revision state');
+    for (const [key, value] of Object.entries(state.entries)) {
+      if (!/^[a-f0-9]{64}$/.test(key) || !value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).some(field => !['allocated', 'floor'].includes(field))
+        || !Number.isSafeInteger(value.allocated) || value.allocated < 1
+        || (value.floor !== undefined && (!value.floor || Object.keys(value.floor).sort().join(',') !== 'endTime,revision'
+          || !Number.isSafeInteger(value.floor.revision) || value.floor.revision < 1
+          || value.floor.revision > value.allocated || !Number.isSafeInteger(value.floor.endTime) || value.floor.endTime <= 0))) throw new Error('Invalid revision state');
+    }
+    return state;
+  } catch (error) { if (error.code === 'ENOENT') return { schema: 1, entries: {} }; throw error; }
+}
+function writeRevisions(stateDir, state) {
+  const data = JSON.stringify(state);
+  if (Buffer.byteLength(data) > REVISION_BYTES) throw new Error('Revision capacity exceeded');
+  // The queue lock excludes every live publisher; a fixed orphan slot keeps
+  // repeated crashes bounded without age-based stealing or temp accumulation.
+  const temp = path.join(stateDir, '.revisions-v1.tmp');
+  try { privateRead(temp, REVISION_BYTES); fs.unlinkSync(temp); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  try {
+    const fd = fs.openSync(temp, 'wx', 0o600);
+    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(temp, path.join(stateDir, 'revisions-v1.json'));
+    syncDirectory(stateDir);
+  } finally { try { fs.unlinkSync(temp); } catch {} }
+}
+function syncDirectory(directory) {
+  const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+function allocateRevisions(state, records) {
+  return records.map(record => {
+    const key = revisionKey(record);
+    let entry = state.entries[key];
+    if (!entry) {
+      if (Object.keys(state.entries).length >= REVISION_LIMIT) throw new Error('Revision capacity exceeded');
+      entry = state.entries[key] = { allocated: 0 };
+    }
+    if (entry.allocated >= Number.MAX_SAFE_INTEGER) throw new Error('Revision capacity exceeded');
+    return ++entry.allocated;
+  });
+}
+// Allocate at capture, BEFORE capacity refusal or unresolved lineage. The
+// durable ticket travels with the crash-recoverable suffix, including rebases.
+function reserveRevisions(records, { stateDir = defaultStateDir() } = {}) {
+  const safe = records.map(record => sanitizeObservation(record));
+  privateDirectory(stateDir);
+  const deadlineAt = Date.now() + 5000;
+  const lock = claimLock(stateDir, 'queue', { deadlineAt });
+  try {
+    while (lock.blocked()) {
+      if (Date.now() >= deadlineAt) throw new Error('Revision state is busy');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+    const state = readRevisions(stateDir);
+    const revisions = allocateRevisions(state, safe);
+    writeRevisions(stateDir, state);
+    return revisions;
+  } finally { lock.release(); }
+}
+function olderThanFloor(record, revision, floor) {
+  return floor && (record.endTime < floor.endTime || (record.endTime === floor.endTime && revision < floor.revision));
+}
+
+function queueObservation(record, { stateDir = defaultStateDir(), revision } = {}) {
   let safe;
   try { safe = sanitizeObservation(record); }
   catch { return { queued: false, reason: 'invalid_record' }; }
@@ -61,6 +140,14 @@ function queueObservation(record, { stateDir = defaultStateDir() } = {}) {
     const directory = outboxDirectory(stateDir);
     lock = claimLock(stateDir, 'queue', { deadlineAt: Date.now() + 500 });
     if (lock.blocked()) return { queued: false, reason: 'busy' };
+    const state = readRevisions(stateDir);
+    if (revision === undefined) {
+      [revision] = allocateRevisions(state, [safe]);
+      writeRevisions(stateDir, state);
+    }
+    const floor = state.entries[revisionKey(safe)];
+    if (!Number.isSafeInteger(revision) || revision < 1 || !floor || revision > floor.allocated) return { queued: false, reason: 'invalid_revision' };
+    if (olderThanFloor(safe, revision, floor.floor)) return { queued: false, obsolete: true, reason: 'superseded', revision };
     const files = filesIn(directory);
     let bytes = 0;
     for (const name of files) {
@@ -69,16 +156,17 @@ function queueObservation(record, { stateDir = defaultStateDir() } = {}) {
       bytes += stat.size;
     }
     const version = randomBytes(16).toString('hex');
-    const payload = JSON.stringify({ schema: 1, version, record: safe });
+    const payload = JSON.stringify({ schema: 2, version, revision, record: safe });
     if (files.length >= OUTBOX_LIMITS.records || bytes + Buffer.byteLength(payload) > OUTBOX_LIMITS.bytes) return { queued: false, reason: 'capacity' };
     file = path.join(directory, `${safe.traceId}-${safe.id}-${version}.json`);
     const fd = fs.openSync(file, 'wx', 0o600);
     created = true;
-    try { fs.writeFileSync(fd, payload); } finally { fs.closeSync(fd); }
-    return { queued: true, id: safe.id, traceId: safe.traceId, version, privacy: 'metadata-only' };
-  } catch {
+    try { fs.writeFileSync(fd, payload); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    syncDirectory(directory);
+    return { queued: true, id: safe.id, traceId: safe.traceId, version, revision, privacy: 'metadata-only' };
+  } catch (error) {
     if (created) { try { fs.unlinkSync(file); } catch {} }
-    return { queued: false, reason: 'state_unavailable' };
+    return { queued: false, reason: error.message === 'Revision capacity exceeded' ? 'revision_capacity' : 'state_unavailable' };
   } finally { lock?.release(); }
 }
 
@@ -116,7 +204,7 @@ function loadCredentials({ env = process.env, home = os.homedir(), agentDir = pa
   return null;
 }
 
-function readEntries(directory) {
+function readEntries(directory, state) {
   const latest = new Map();
   let invalid = 0;
   for (const name of filesIn(directory)) {
@@ -126,14 +214,24 @@ function readEntries(directory) {
       const bytes = privateRead(file, MAX_FILE_BYTES);
       const envelope = JSON.parse(bytes.toString('utf8'));
       const record = sanitizeObservation(envelope.record);
-      if (envelope.schema !== 1 || !/^[a-f0-9]{32}$/.test(envelope.version)
+      const revision = envelope.revision;
+      const canonical = { schema: 2, version: envelope.version, revision, record };
+      // Legacy records have no provable equal-timestamp capture order. Leave
+      // them intact/invalid, just like unticketed pending suffixes, rather than
+      // assigning new chronology to an old snapshot at replay time.
+      if (envelope.schema !== 2 || !/^[a-f0-9]{32}$/.test(envelope.version)
+        || !Number.isSafeInteger(revision) || revision < 1
+        || revision > (state.entries[revisionKey(record)]?.allocated || 0)
         || name !== `${record.traceId}-${record.id}-${envelope.version}.json`
-        || JSON.stringify({ schema: 1, version: envelope.version, record }) !== bytes.toString('utf8')) throw new Error();
-      const entry = { file, bytes, record, modified: fs.lstatSync(file, { bigint: true }).mtimeNs, superseded: [] };
-      const key = `${record.traceId}:${record.id}`;
+        || JSON.stringify(canonical) !== bytes.toString('utf8')) throw new Error();
+      if (olderThanFloor(record, revision, state.entries[revisionKey(record)]?.floor)) {
+        fs.unlinkSync(file); continue;
+      }
+      const entry = { file, bytes, record, revision, superseded: [] };
+      const key = revisionKey(record);
       const previous = latest.get(key);
       if (!previous) latest.set(key, entry);
-      else if (record.endTime > previous.record.endTime || (record.endTime === previous.record.endTime && entry.modified > previous.modified)) {
+      else if (record.endTime > previous.record.endTime || (record.endTime === previous.record.endTime && entry.revision > previous.revision)) {
         entry.superseded = [...previous.superseded, previous]; latest.set(key, entry);
       } else previous.superseded.push(entry);
     } catch { invalid++; }
@@ -252,9 +350,9 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
   try {
     directory = outboxDirectory(stateDir);
     result.queued = filesIn(directory).length;
-    const read = readEntries(directory);
-    entries = read.entries;
-    result.invalid = read.invalid;
+    // Read/project only after acquiring the shared queue lock below. Admission
+    // and send floors must never race, even across separate flush processes.
+    entries = result.queued ? [true] : [];
   } catch { result.status = 'state_unavailable'; return result; }
   if (!entries.length) { result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
   const config = credentials === undefined && !exporterFactory ? loadCredentials({ env }) : validateCredentials(credentials, true);
@@ -272,8 +370,25 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
   } catch { lock?.release(); result.status = 'state_unavailable'; return result; }
   if (!acquired) { lock.release(); result.status = 'busy'; return result; }
   const unlock = () => lock.release();
-  try { const fresh = readEntries(directory); entries = fresh.entries; result.invalid = fresh.invalid; }
-  catch { unlock(); result.status = 'state_unavailable'; return result; }
+  let queueLock;
+  try {
+    queueLock = claimLock(stateDir, 'queue', { deadlineAt });
+    while (queueLock.blocked()) {
+      if (Date.now() >= deadlineAt) throw new Error('Queue busy');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const state = readRevisions(stateDir);
+    const fresh = readEntries(directory, state); entries = fresh.entries; result.invalid = fresh.invalid;
+    for (const entry of entries) {
+      const key = revisionKey(entry.record);
+      const head = state.entries[key];
+      head.floor = { endTime: entry.record.endTime, revision: entry.revision };
+    }
+    // Persist BEFORE handing anything to an exporter. An uncertain ACK can
+    // retry this exact revision, but can never permit an older one afterwards.
+    writeRevisions(stateDir, state);
+  } catch { queueLock?.release(); unlock(); result.status = 'state_unavailable'; return result; }
+  queueLock.release();
   if (!entries.length) { unlock(); result.queued = filesIn(directory).length; result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
   timeoutMs = deadlineAt - Date.now();
   if (timeoutMs < 10) { unlock(); result.status = 'timeout'; return result; }
@@ -372,4 +487,4 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
   return result;
 }
 
-module.exports = { queueObservation, flushOutbox, loadCredentials, OUTBOX_LIMITS };
+module.exports = { queueObservation, reserveRevisions, flushOutbox, loadCredentials, OUTBOX_LIMITS, REVISION_LIMIT };

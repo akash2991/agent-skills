@@ -6,7 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { ContextStore } = require('./context.cjs');
 const { sanitizeObservation } = require('./privacy.cjs');
-const { queueObservation, flushOutbox } = require('./export.cjs');
+const { queueObservation, reserveRevisions, flushOutbox } = require('./export.cjs');
 const { claimLock } = require('./locks.cjs');
 
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -255,6 +255,7 @@ function createFlow(options = {}) {
   function remember(run, extra = {}) {
     actor = run;
     if (typeof extra.pendingIdentity === 'string') extra = { ...extra, pendingIdentity: { launchId: extra.pendingIdentity } };
+    for (const key of ['pendingIdentity', 'launchIdentity']) if (extra[key]) extra = { ...extra, [key]: store.referenceLaunch(extra[key]) };
     const old = readState(`run:${run.rootSpanId}`) || {};
     writeState(`run:${run.rootSpanId}`, { ...old, run, ...extra });
     return run;
@@ -275,7 +276,7 @@ function createFlow(options = {}) {
         resolvedHint = resolve(inspected.parent, seen);
         if (!resolvedHint) return null;
       }
-      const binding = store.resolveLaunch(entry.pendingIdentity);
+      const binding = store.claimLaunch(entry.pendingIdentity, { claimId: `${entry.run.harness}:${entry.run.nativeSessionId}` });
       if (!binding) return null;
       store.takePending(entry.pendingIdentity);
       const canonical = store.getRun(entry.run.runId);
@@ -283,6 +284,8 @@ function createFlow(options = {}) {
       parent = binding.parent;
       child = binding.child || {};
     }
+    if (entry.launchIdentity && !store.claimLaunch(entry.launchIdentity,
+      { claimId: `${entry.run.harness}:${entry.run.nativeSessionId}` })) return null;
     if (!parent) { actor = entry.run; return entry.run; }
     const currentParent = resolvedHint || resolve(parent, seen);
     if (!currentParent) return null;
@@ -300,21 +303,25 @@ function createFlow(options = {}) {
     // ContextStore checks the active selector inside the persistence lock.
     const changed = JSON.stringify(updated) !== JSON.stringify(entry.run);
     const saved = changed ? store.saveRun(updated) : entry.run;
-    if (changed || entry.pendingIdentity) remember(saved, { parent: currentParent, pendingIdentity: null });
+    if (changed || entry.pendingIdentity) remember(saved, { parent: currentParent, pendingIdentity: null,
+      ...(entry.pendingIdentity ? { launchIdentity: entry.pendingIdentity } : {}) });
     actor = saved;
     return saved;
   }
 
   function begin(opts) {
+    // Normalize UUID spelling before deriving the stable cross-process owner.
+    opts = { ...opts, nativeSessionId: opts.nativeSessionId.toLowerCase() };
     const savedLaunch = readState(`native-launch:${harness}:${opts.nativeSessionId}`);
+    const savedIdentity = readState(`native-identity:${harness}:${opts.nativeSessionId}`)?.identity;
     let identity = (typeof opts.pendingIdentity === 'string' ? { launchId: opts.pendingIdentity } : opts.pendingIdentity)
-      || (!opts.parent ? (savedLaunch ? { nonce: savedLaunch.nonce } : inboundIdentity) : null);
+      || (!opts.parent ? (savedLaunch ? { nonce: savedLaunch.nonce } : inboundIdentity || savedIdentity) : savedIdentity);
     if (!identity && !opts.parent) {
       const exact = { launchId: `brain:${harness}:${opts.nativeSessionId}` };
       if (store.resolveLaunch(exact)) identity = exact;
     }
-    const binding = identity ? store.resolveLaunch(identity) : null;
-    const boundNonce = identity?.nonce || binding?.nonce;
+    let binding = identity ? store.resolveLaunch(identity) : null;
+    const boundNonce = identity?.nonce || identity?.capability || binding?.nonce;
     if (boundNonce) {
       const scope = readState(`pane:${boundNonce}`);
       if (scope && (scope.paneId !== env.HERDR_PANE_ID || scope.expiresAt < clock()
@@ -322,13 +329,18 @@ function createFlow(options = {}) {
         throw new Error('Scoped launch binding does not match this child');
       }
     }
-    const parent = opts.parent || binding?.parent || null;
+    // Pane scope checks must precede the irreversible ownership claim: an
+    // unauthorized pane must not poison the legitimate child's capability.
+    if (identity) binding = store.claimLaunch(identity, { claimId: `${harness}:${opts.nativeSessionId}` });
+    const parent = binding?.parent || opts.parent || null;
     const run = store.createRun({ ...opts, harness, parent,
       persona: opts.persona || binding?.child?.persona,
       agentName: binding?.child?.agentName || opts.agentName,
       ticketId: opts.ticketId || binding?.child?.ticketId });
     if (identity && !binding) store.hold({ identity, run, records: [] });
-    remember(run, { ...(parent ? { parent } : {}), ...(identity && !binding ? { pendingIdentity: identity } : {}) });
+    remember(run, { ...(parent ? { parent } : {}), ...(identity ? binding
+      ? { launchIdentity: identity } : { pendingIdentity: identity } : {}) });
+    if (identity) writeState(`native-identity:${harness}:${opts.nativeSessionId}`, { identity: store.referenceLaunch(identity) });
     if (boundNonce && binding) {
       const scope = readState(`pane:${boundNonce}`);
       if (scope) writeState(`pane:${boundNonce}`, { ...scope, nativeSessionHash: hash(opts.nativeSessionId) });
@@ -339,6 +351,7 @@ function createFlow(options = {}) {
   }
 
   function acknowledgeSession(nativeSessionId) {
+    nativeSessionId = nativeSessionId.toLowerCase();
     const savedLaunch = readState(`native-launch:${harness}:${nativeSessionId}`);
     const identity = savedLaunch ? { nonce: savedLaunch.nonce } : inboundIdentity || { launchId: `brain:${harness}:${nativeSessionId}` };
     const binding = store.resolveLaunch(identity);
@@ -348,6 +361,7 @@ function createFlow(options = {}) {
     if (!binding && !(savedLaunch && scope)) return false;
     if (scope && (scope.paneId !== env.HERDR_PANE_ID || scope.expiresAt < clock()
       || (scope.nativeSessionHash && scope.nativeSessionHash !== hash(nativeSessionId)))) return false;
+    if (binding && !store.claimLaunch(identity, { claimId: `${harness}:${nativeSessionId.toLowerCase()}` })) return false;
     if (scope) writeState(`pane:${nonce}`, { ...scope, nativeSessionHash: hash(nativeSessionId) });
     writeState(`launch-ack:${nonce}`,  { nativeSessionHash: hash(nativeSessionId), harness,
       ...(env.HERDR_PANE_ID ? { paneId: env.HERDR_PANE_ID } : {}), acknowledgedAt: clock(), phase: 'adapter-started' });
@@ -394,19 +408,26 @@ function createFlow(options = {}) {
     const safe = finished.map(record => sanitizeObservation(rebaseObservation({ ...record,
       context: { ...run, ...record.context } }, current || run)));
     if (!safe.length) return { queued: 0, pending: 0 };
-    const retain = batch => transaction(() => {
+    let revisions;
+    try { revisions = reserveRevisions(safe, { stateDir }); }
+    catch (error) {
+      writeState('health', { replayBlocked: true, reason: error.message === 'Revision capacity exceeded'
+        ? 'revision_capacity' : 'revision_unavailable' });
+      throw error;
+    }
+    const retain = (batch, tickets) => transaction(() => {
       // A native reconciliation can exceed both queue capacity and the single
       // checkpoint budget. Split before writing, and reserve the entire suffix.
-      const writes = []; let chunk = [], bytes = 256;
+      const writes = []; let chunk = [], chunkRevisions = [], bytes = 256;
       const finish = () => {
         if (chunk.length) writes.push([path.join(pendingDir, `${crypto.randomUUID()}.json`),
-          { runId: run.rootSpanId, records: chunk, createdAt: clock() }]);
-        chunk = []; bytes = 256;
+          { runId: run.rootSpanId, records: chunk, revisions: chunkRevisions, createdAt: clock() }]);
+        chunk = []; chunkRevisions = []; bytes = 256;
       };
-      for (const record of batch) {
-        const size = Buffer.byteLength(JSON.stringify(record)) + 1;
+      for (const [index, record] of batch.entries()) {
+        const size = Buffer.byteLength(JSON.stringify(record)) + 32;
         if (bytes + size > MAX_STATE || chunk.length >= 4096) finish();
-        chunk.push(record); bytes += size;
+        chunk.push(record); chunkRevisions.push(tickets[index]); bytes += size;
       }
       finish();
       try { reserve(writes); }
@@ -417,16 +438,19 @@ function createFlow(options = {}) {
       for (const [file, data] of writes) writeFile(file, data);
     });
     if (!current) {
-      retain(safe);
+      retain(safe, revisions);
       return { queued: 0, pending: safe.length };
     }
+    let superseded = 0;
     for (let i = 0; i < safe.length; i++) {
-      if (enqueue(safe[i], { stateDir })?.queued === false) {
-        retain(safe.slice(i));
-        return { queued: i, pending: safe.length - i };
+      const result = enqueue(safe[i], { stateDir, revision: revisions[i] });
+      if (result?.obsolete) { superseded++; continue; }
+      if (result?.queued === false) {
+        retain(safe.slice(i), revisions.slice(i));
+        return { queued: i - superseded, pending: safe.length - i, ...(superseded ? { superseded } : {}) };
       }
     }
-    return { queued: safe.length, pending: 0 };
+    return { queued: safe.length - superseded, pending: 0, ...(superseded ? { superseded } : {}) };
   }
 
   async function flush(opts = {}) {
@@ -450,6 +474,13 @@ function createFlow(options = {}) {
         if (Date.now() >= transferDeadline) break;
         const file = path.join(pendingDir, name);
         const batch = readFile(file);
+        // Pre-ticket checkpoints have no provable same-timestamp order. Never
+        // invent it at replay or expire these records as if transfer succeeded.
+        // Keep the bounded payload intact and surface the recovery limitation.
+        if (batch && (!Array.isArray(batch.revisions) || batch.revisions.length !== batch.records.length)) {
+          writeState('health', { replayBlocked: true, reason: 'pending_revision_missing' });
+          continue;
+        }
         if (batch && clock() - batch.createdAt > ADAPTER_LIMITS.retentionMs) {
           writeState('health', { lineageLossObserved: true, reason: 'pending_expired' });
           fs.unlinkSync(file);
@@ -463,11 +494,15 @@ function createFlow(options = {}) {
         try {
           while (batch.records.length && Date.now() < transferDeadline) {
             const record = batch.records[0];
-            const result = enqueue(rebaseObservation(record, run), { stateDir });
-            if (result?.queued === false) throw new Error('Observation queue unavailable');
+            // Unticketed legacy suffixes cannot establish same-timestamp
+            // capture order. Keep them visible/pending rather than guess.
+            if (!batch.revisions || batch.revisions.length !== batch.records.length) throw new Error('Missing capture revisions');
+            const result = enqueue(rebaseObservation(record, run), { stateDir, revision: batch.revisions[0] });
+            if (result?.queued === false && !result.obsolete) throw new Error('Observation queue unavailable');
             // A crash between enqueue and this durable suffix may replay one ID,
             // never permanently restart an oversized batch at its first record.
             batch.records = batch.records.slice(1);
+            batch.revisions = batch.revisions.slice(1);
             writeFile(claim, batch);
           }
           if (batch.records.length) fs.renameSync(claim, file);

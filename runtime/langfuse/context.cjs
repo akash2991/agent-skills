@@ -198,6 +198,17 @@ function childMetadata(child = {}) {
 }
 function identity(input) {
   plain(input);
+  if (input.reference !== undefined) {
+    const aliases = input.reference;
+    if (!Array.isArray(aliases) || !aliases.length || aliases.length > 3
+      || aliases.some(alias => typeof alias !== 'string' || !/^(nonce|launchId|sessionFile):[a-f0-9]{64}$/.test(alias))
+      || new Set(aliases.map(alias => alias.split(':')[0])).size !== aliases.length
+      || ['nonce', 'launchId', 'sessionFile'].some(key => input[key] != null)) fail();
+    if (input.capability !== undefined && (typeof input.capability !== 'string'
+      || !/^[a-z0-9_-]{32,128}$/i.test(input.capability)
+      || !aliases.includes(`nonce:${hash(input.capability)}`))) fail();
+    return [...aliases];
+  }
   const aliases = [];
   for (const key of ['nonce', 'launchId', 'sessionFile']) {
     const value = input[key];
@@ -427,7 +438,7 @@ class ContextStore {
           binding.aliases.some(old => old.split(':')[0] === alias.split(':')[0] && old !== alias));
         if (binding.expiresAt <= now || binding.parent.runId !== parent.runId || binding.parent.traceId !== parent.traceId ||
             (metadata && JSON.stringify(binding.child) !== JSON.stringify(metadata)) ||
-            (multiUse !== undefined && binding.multiUse !== multiUse) || binding.claim || conflictingAlias) {
+            (multiUse !== undefined && binding.multiUse !== multiUse) || conflictingAlias) {
           throw new Error('Mismatched or expired tracing launch');
         }
         binding.aliases = [...new Set([...binding.aliases, ...aliases])];
@@ -449,9 +460,17 @@ class ContextStore {
     return this._launch(parent, options, options.nonce);
   }
 
+  // Persistable local handles contain only projected alias digests, never a
+  // native transcript path or a caller-supplied launch label. An optional
+  // opaque nonce preserves first-party pane scope checks after restart.
+  referenceLaunch(input) {
+    const reference = identity(input), capability = input.nonce || input.capability;
+    return { reference, ...(capability ? { capability } : {}) };
+  }
+
   resolveLaunch(input) {
     const aliases = identity(input);
-    return this._transaction((state, now) => this._resolved(state, this._binding(state, aliases, now), input.nonce || null));
+    return this._transaction((state, now) => this._resolved(state, this._binding(state, aliases, now), input.nonce || input.capability || null));
   }
 
   // Exact metadata inspection is not resolved lineage. Used only to walk the
@@ -466,7 +485,7 @@ class ContextStore {
     });
   }
 
-  // Optional exact, idempotent ownership claim. A different claimant cannot use
+  // Exact, idempotent consumer ownership claim. A different claimant cannot use
   // a single-use capability, even in a separate process. Read-only resolve is
   // intentionally available to the parent draining pending observations.
   claimLaunch(input, { claimId } = {}) {
@@ -475,7 +494,7 @@ class ContextStore {
     const claim = hash(claimId);
     return this._transaction((state, now) => {
       const binding = this._binding(state, aliases, now);
-      const result = this._resolved(state, binding, input.nonce || null);
+      const result = this._resolved(state, binding, input.nonce || input.capability || null);
       if (!result || (!binding.multiUse && binding.claim && binding.claim !== claim)) return null;
       if (!binding.multiUse) binding.claim = claim;
       return result;
@@ -525,12 +544,18 @@ class ContextStore {
     const aliases = identity(input);
     return this._transaction((state, now) => {
       const binding = this._binding(state, aliases, now);
-      const resolved = this._resolved(state, binding, input.nonce || null);
+      const resolved = this._resolved(state, binding, input.nonce || input.capability || null);
       if (!resolved) return [];
       const selected = Object.entries(state.pending).filter(([, item]) =>
         this._binding(state, item.aliases, now) === binding);
       const result = [];
       for (const [key, item] of selected) {
+        // Claim and rebase are one transaction, including parent-triggered
+        // drains. Multiple turns of one native session share a stable owner;
+        // conflicting pending candidates and their descendants stay held.
+        const owner = hash(`${item.run.harness}:${item.run.nativeSessionId}`);
+        if (!binding.multiUse && binding.claim && binding.claim !== owner) continue;
+        if (!binding.multiUse) binding.claim = owner;
         const oldTrace = item.run.traceId;
         const oldSession = item.run.sessionId;
         const rebase = run => safeRun({ ...run, traceId: resolved.parent.traceId, sessionId: resolved.parent.sessionId,
@@ -546,9 +571,18 @@ class ContextStore {
               ? { parentSpanId: run.parentSpanId, parentSessionId: run.parentSessionId } : {}) } } : {}) }));
         // Rebase descendants already launched from the provisional trace, while
         // retaining every observation/run/span ID. No name or clock matching.
-        for (const value of Object.values(state.runs)) if (value.run.traceId === oldTrace && value.run.sessionId === oldSession) value.run = rebase(value.run);
-        for (const value of Object.values(state.sessions)) if (value.run.traceId === oldTrace && value.run.sessionId === oldSession) value.run = rebase(value.run);
-        for (const value of Object.values(state.launches)) if (value.parent.traceId === oldTrace && value.parent.sessionId === oldSession) value.parent = rebase(value.parent);
+        const roots = new Set([item.run.rootSpanId]);
+        let changed = true;
+        while (changed) {
+          const before = roots.size;
+          for (const value of Object.values(state.runs)) if (value.run.traceId === oldTrace
+            && value.run.sessionId === oldSession && roots.has(value.run.parentSpanId)) roots.add(value.run.rootSpanId);
+          changed = before !== roots.size;
+        }
+        const descendant = run => run.traceId === oldTrace && run.sessionId === oldSession && roots.has(run.rootSpanId);
+        for (const value of Object.values(state.runs)) if (descendant(value.run)) value.run = rebase(value.run);
+        for (const value of Object.values(state.sessions)) if (descendant(value.run)) value.run = rebase(value.run);
+        for (const value of Object.values(state.launches)) if (descendant(value.parent)) value.parent = rebase(value.parent);
         this._save(state, run, now);
         delete state.runs[run.runId].unresolved;
         const session = state.sessions[this._sessionKey(run.harness, run.nativeSessionId)];

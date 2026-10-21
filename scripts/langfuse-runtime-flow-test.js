@@ -51,19 +51,40 @@ test('unresolved native child remains pending and sanitized rather than silently
   for (const file of walk(f.stateDir)) assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /CANARY_PRIVATE/);
 });
 
+test('ownership checkpoints persist projected handles, not native transcript paths or raw launch labels', async t => {
+  const f = fixture(t), flow = f.flow('pi');
+  const identity = { launchId: 'private synthetic launch label with spaces', sessionFile: '/synthetic/private session/transcript.jsonl' };
+  const run = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), pendingIdentity: identity });
+  flow.submit(run, [observation(flow, run)]);
+  const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+    ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+  for (const file of walk(f.stateDir)) {
+    const bytes = fs.readFileSync(file, 'utf8');
+    assert.ok(!bytes.includes(identity.launchId)); assert.ok(!bytes.includes(identity.sessionFile));
+  }
+  const parent = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  flow.store.createLaunch(parent, identity);
+  await flow.flush();
+  assert.equal(f.records.length, 1); assert.equal(f.records[0].traceId, parent.traceId);
+  assert.equal(flow.resolve(run).parentSpanId, parent.rootSpanId);
+});
+
 test('pane handoff is scoped to exact native session and pane; acknowledgement is startup only', t => {
   const f = fixture(t); const parentFlow = f.flow('pi');
   const parent = parentFlow.begin({ nativeSessionId: crypto.randomUUID(), cwd: f.cwd });
-  const session = crypto.randomUUID(); const binding = parentFlow.store.createLaunch(parent, { launchId: `brain:claude:${session}`, multiUse: true });
+  const session = crypto.randomUUID(); const binding = parentFlow.store.createLaunch(parent, { launchId: `brain:claude:${session}` });
   parentFlow.writeState(`pane:${binding.nonce}`, { paneId: 'w1:p2', expiresAt: Date.now() + 60000 });
+  const wrongPane = f.flow('claude', { BRAIN_TRACE_LAUNCH_ID: binding.nonce, HERDR_PANE_ID: 'w1:p3' });
+  const impostor = crypto.randomUUID();
+  assert.equal(wrongPane.acknowledgeSession(impostor), false);
+  assert.throws(() => wrongPane.begin({ nativeSessionId: impostor, cwd: f.cwd }), /Scoped launch/);
   const childFlow = f.flow('claude', { BRAIN_TRACE_LAUNCH_ID: binding.nonce, HERDR_PANE_ID: 'w1:p2' });
-  assert.equal(childFlow.acknowledgeSession(session), true);
+  assert.equal(childFlow.acknowledgeSession(session.toUpperCase()), true);
   const ack = childFlow.readState(`launch-ack:${binding.nonce}`);
   assert.equal(ack.phase, 'adapter-started'); assert.equal(ack.harness, 'claude');
   const child = childFlow.begin({ nativeSessionId: session, cwd: f.cwd });
   assert.equal(child.traceId, parent.traceId); assert.equal(child.parentSpanId, parent.rootSpanId);
   assert.throws(() => childFlow.begin({ nativeSessionId: crypto.randomUUID(), cwd: f.cwd }), /Scoped launch/);
-  const wrongPane = f.flow('claude', { BRAIN_TRACE_LAUNCH_ID: binding.nonce, HERDR_PANE_ID: 'w1:p3' });
   assert.throws(() => wrongPane.begin({ nativeSessionId: session, cwd: f.cwd }), /Scoped launch/);
 });
 
@@ -196,19 +217,36 @@ test('deferred suffix advances durably after queue capacity and a thrown interru
     if (++queued === 18) throw new Error('synthetic transfer interruption');
     return queueObservation(record, opts);
   } });
-  await flow.flush();
+  await flow.flush({ timeoutMs: 10000 });
   const suffix = JSON.parse(fs.readFileSync(path.join(pendingDir, fs.readdirSync(pendingDir)[0]), 'utf8'));
   assert.equal(suffix.records.length, 600 - OUTBOX_LIMITS.records - 17);
   assert.equal(suffix.records[0].id, records[OUTBOX_LIMITS.records + 17].id);
   // Simulate death after the claim was written, before its final rename.
   const pending = fs.readdirSync(pendingDir)[0];
   fs.renameSync(path.join(pendingDir, pending), path.join(pendingDir, `${pending}.${crypto.randomUUID()}.claim`));
-  for (let pass = 0; pass < 5 && fs.readdirSync(pendingDir).length; pass++) {
-    acknowledgeDisk(); flow = f.flow(); await flow.flush();
+  // Fsync and process-identity lookups are real work; allow bounded additional
+  // passes on loaded CI rather than assuming 600 durable writes fit five slices.
+  for (let pass = 0; pass < 20 && fs.readdirSync(pendingDir).length; pass++) {
+    acknowledgeDisk(); flow = f.flow(); await flow.flush({ timeoutMs: 10000 });
   }
   acknowledgeDisk();
   assert.equal(received.size, 600);
   assert.equal(fs.readdirSync(pendingDir).length, 0);
+});
+
+test('unticketed legacy pending payloads remain intact with explicit blocked-replay health', async t => {
+  const f = diskFixture(t); let flow = f.flow();
+  const run = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), pendingIdentity: 'legacy-exact-child' });
+  flow.submit(run, [observation(flow, run)]);
+  const pendingDir = path.join(f.stateDir, 'adapters', 'pending');
+  const file = path.join(pendingDir, fs.readdirSync(pendingDir)[0]);
+  const batch = JSON.parse(fs.readFileSync(file, 'utf8')); delete batch.revisions;
+  fs.writeFileSync(file, JSON.stringify(batch));
+  const before = fs.readFileSync(file, 'utf8');
+  f.advance(ADAPTER_LIMITS.retentionMs + 1);
+  flow = f.flow(); await flow.flush();
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'unprovable capture order cannot authorize a send or data deletion');
+  assert.deepEqual(flow.readState('health'), { replayBlocked: true, reason: 'pending_revision_missing' });
 });
 
 test('slow deferred enqueue leaves egress time and an exact durable suffix across restart', async t => {
