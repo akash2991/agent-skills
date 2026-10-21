@@ -62,6 +62,22 @@ function safeState(value, depth = 0, seen = new Set()) {
   return result;
 }
 
+// Reconciliation changes identity/lineage and fills missing attribution only.
+// Model/effort and skill evidence belong to the observation's capture time.
+function rebaseObservation(record, run) {
+  const context = { ...record.context };
+  for (const key of ['traceId', 'rootSpanId', 'parentSpanId', 'sessionId', 'nativeSessionId', 'runId', 'parentSessionId']) {
+    if (run[key] !== undefined) context[key] = run[key];
+  }
+  for (const key of ['persona', 'agentName']) if (!context[key] && run[key]) context[key] = run[key];
+  if (!context.ticketId && run.ticketId) {
+    context.ticketId = run.ticketId;
+    context.ticketSource = run.ticketSource;
+  }
+  return { ...record, traceId: run.traceId, sessionId: run.sessionId, nativeSessionId: run.nativeSessionId,
+    parentId: record.id === run.rootSpanId ? run.parentSpanId : record.parentId, context };
+}
+
 function createFlow(options = {}) {
   const env = options.env || process.env;
   const stateDir = privateDir(options.stateDir || env.BRAIN_TRACE_STATE_DIR || path.join(os.homedir(), '.cache', 'agent-brain', 'tracing-state'));
@@ -121,9 +137,13 @@ function createFlow(options = {}) {
   // Opaque native adapter keys cannot be reverse-mapped to a session. Record
   // their owner at the flow boundary, without persisting keys or native paths.
   // Legacy/ownerless checkpoints are reclaimed only when no references survive.
-  function collect() {
-    const files = checkpointFiles();
-    const entries = new Map(files.map(file => [file, readFile(file)]));
+  function collect(deadlineAt = Infinity) {
+    if (Date.now() >= deadlineAt) return;
+    const files = checkpointFiles(), entries = new Map();
+    for (const file of files) {
+      if (Date.now() >= deadlineAt) return;
+      entries.set(file, readFile(file));
+    }
     const roots = new Set(), sessions = new Set();
     const addRun = run => {
       if (!run?.rootSpanId) return;
@@ -139,7 +159,7 @@ function createFlow(options = {}) {
       for (const harness of harnesses) sessions.add(`${harness}:${hash(record.nativeSessionId)}`);
     };
     addRun(actor); // An in-process actor may still be running after store TTL.
-    if (typeof store._transaction !== 'function') return; // Unknown stores fail closed.
+    if (typeof store._transaction !== 'function' || Date.now() >= deadlineAt) return; // Unknown stores fail closed.
     const state = store._transaction(state => state);
     for (const item of [...Object.values(state.runs), ...Object.values(state.sessions), ...Object.values(state.pending)]) addRun(item.run);
     for (const item of Object.values(state.launches)) if (item.expiresAt > clock()) addRun(item.parent);
@@ -147,6 +167,7 @@ function createFlow(options = {}) {
     // store TTL (for example a tool whose completion hook arrives much later).
     for (const [file, envelope] of entries) if (path.dirname(file) === adapterDir
       && ![fileFor('health'), fileFor('delivery')].includes(file) && envelope) {
+      if (Date.now() >= deadlineAt) return;
       const updatedAt = envelope.checkpointVersion === 1 ? envelope.updatedAt : fs.lstatSync(file).mtimeMs;
       if (Number.isFinite(updatedAt) && clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) {
         if (envelope.ownerRoot) roots.add(envelope.ownerRoot);
@@ -157,12 +178,14 @@ function createFlow(options = {}) {
     }
     let unknownReference = false;
     for (const [file, batch] of entries) if (path.dirname(file) === pendingDir) {
+      if (Date.now() >= deadlineAt) return;
       if (!batch) { unknownReference = true; continue; }
       roots.add(batch.runId);
       for (const record of batch.records || []) addRecord(record);
     }
     const outbox = path.join(stateDir, 'outbox');
     if (fs.existsSync(outbox)) for (const name of fs.readdirSync(outbox)) {
+      if (Date.now() >= deadlineAt) return;
       // Outbox records are independently projected/validated by the exporter.
       const record = readFile(path.join(outbox, name))?.record;
       if (!record) { unknownReference = true; continue; }
@@ -174,6 +197,7 @@ function createFlow(options = {}) {
     while (changed) {
       const before = roots.size + sessions.size;
       for (const [file, envelope] of entries) {
+        if (Date.now() >= deadlineAt) return;
         if (path.dirname(file) !== adapterDir || !envelope) continue;
         const data = unwrap(envelope);
         if (roots.has(data?.run?.rootSpanId) || roots.has(envelope.ownerRoot)
@@ -185,6 +209,7 @@ function createFlow(options = {}) {
       changed = before !== roots.size + sessions.size;
     }
     for (const [file, envelope] of entries) {
+      if (Date.now() >= deadlineAt) return;
       if (path.dirname(file) !== adapterDir || !envelope || file === fileFor('health')) continue;
       const data = unwrap(envelope), stat = fs.lstatSync(file);
       const updatedAt = envelope.checkpointVersion === 1 ? envelope.updatedAt : stat.mtimeMs;
@@ -271,10 +296,10 @@ function createFlow(options = {}) {
     };
     // Validate and persist the same winning ticket/provenance pair in both
     // stores. updateRun otherwise starts from ContextStore's pre-binding copy.
-    // Do not save unchanged historical runs: saveSession also selects the
-    // native session's active turn, which may already have advanced.
+    // Changed historical runs must persist without selecting an older turn.
+    // ContextStore checks the active selector inside the persistence lock.
     const changed = JSON.stringify(updated) !== JSON.stringify(entry.run);
-    const saved = changed ? store.saveSession(updated) : entry.run;
+    const saved = changed ? store.saveRun(updated) : entry.run;
     if (changed || entry.pendingIdentity) remember(saved, { parent: currentParent, pendingIdentity: null });
     actor = saved;
     return saved;
@@ -366,11 +391,8 @@ function createFlow(options = {}) {
     // terminal evidence. Competing unfinished snapshots can otherwise replace
     // terminal metadata during asynchronous OTLP ingestion.
     const finished = records.filter(record => !(record.type === 'AGENT' && [undefined, 'unknown', 'pending'].includes(record.outcome)));
-    const safe = finished.map(record => sanitizeObservation({ ...record,
-      traceId: current?.traceId || run.traceId, sessionId: current?.sessionId || run.sessionId,
-      nativeSessionId: run.nativeSessionId,
-      parentId: record.id === run.rootSpanId ? current?.parentSpanId || run.parentSpanId || null : record.parentId,
-      context: { ...(record.context || {}), ...(current || run) } }));
+    const safe = finished.map(record => sanitizeObservation(rebaseObservation({ ...record,
+      context: { ...run, ...record.context } }, current || run)));
     if (!safe.length) return { queued: 0, pending: 0 };
     const retain = batch => transaction(() => {
       // A native reconciliation can exceed both queue capacity and the single
@@ -408,18 +430,24 @@ function createFlow(options = {}) {
   }
 
   async function flush(opts = {}) {
-    const deadline = Date.now() + (Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 3000);
+    const budget = Math.max(0, Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 3000);
+    const deadline = Date.now() + budget;
+    // Transfer/fsync work gets a bounded share; leave time to export its prefix.
+    // A synchronous enqueue/fsync already in flight cannot be preempted.
+    const transferDeadline = deadline - Math.min(1000, budget / 2);
     if (['false', '0'].includes(String(env.BRAIN_TRACING_ENABLED || '').toLowerCase()) || ['false', '0'].includes(String(env.LANGFUSE_TRACING_ENABLED || '').toLowerCase())) return { queued: 0, accepted: 0, disabled: true };
     transaction(() => {
       // The process-identity adapter lock excludes every live transfer. Any
       // remaining claim is interrupted, not a live owner inferred from age.
       for (const name of fs.readdirSync(pendingDir).filter(name => /^[a-f0-9-]+\.json\.[a-f0-9-]+\.claim$/.test(name))) {
+        if (Date.now() >= transferDeadline) break;
         const file = path.join(pendingDir, name);
         try {
           if (readFile(file)) fs.renameSync(file, path.join(pendingDir, `${crypto.randomUUID()}.json`));
         } catch { /* Leave unreadable/unrecoverable claims fail-closed. */ }
       }
       for (const name of fs.readdirSync(pendingDir).filter(name => /^[a-f0-9-]+\.json$/.test(name)).slice(0, 256)) {
+        if (Date.now() >= transferDeadline) break;
         const file = path.join(pendingDir, name);
         const batch = readFile(file);
         if (batch && clock() - batch.createdAt > ADAPTER_LIMITS.retentionMs) {
@@ -433,24 +461,24 @@ function createFlow(options = {}) {
         const claim = `${file}.${crypto.randomUUID()}.claim`;
         fs.renameSync(file, claim);
         try {
-          while (batch.records.length) {
+          while (batch.records.length && Date.now() < transferDeadline) {
             const record = batch.records[0];
-            const result = enqueue({ ...record, traceId: run.traceId, sessionId: run.sessionId,
-              parentId: record.id === run.rootSpanId ? run.parentSpanId : record.parentId,
-              context: { ...record.context, ...run } }, { stateDir });
+            const result = enqueue(rebaseObservation(record, run), { stateDir });
             if (result?.queued === false) throw new Error('Observation queue unavailable');
             // A crash between enqueue and this durable suffix may replay one ID,
             // never permanently restart an oversized batch at its first record.
             batch.records = batch.records.slice(1);
             writeFile(claim, batch);
           }
-          fs.unlinkSync(claim);
+          if (batch.records.length) fs.renameSync(claim, file);
+          else fs.unlinkSync(claim);
         } catch {
           // Preserve only sanitized records after any queue/delivery failure.
           try { fs.renameSync(claim, file); } catch { /* The private claim remains recoverable. */ }
+          break;
         }
       }
-      collect();
+      collect(transferDeadline);
     });
     let result = { queued: 0, accepted: 0, failed: 0, attempted: 0, verified: false, status: 'timeout' };
     if (Date.now() < deadline - 10) {

@@ -157,6 +157,44 @@ test('real disk outbox and pinned SDK drain deferred batches beyond count/byte c
     && JSON.parse(span.attributes['langfuse.observation.metadata.ticketSource']) === 'explicit'));
 });
 
+test('late historical rebase exports captured semantics through the real outbox and SDK without selecting the old turn', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-historical-sdk-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cwd = path.join(root, 'project'), stateDir = path.join(root, 'state'); fs.mkdirSync(cwd);
+  const flow = createFlow({ cwd, stateDir, env: {} });
+  const parent = flow.begin({ cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
+  const nativeSessionId = crypto.randomUUID();
+  const first = flow.begin({ cwd, nativeSessionId, pendingIdentity: 'historical-sdk-child',
+    requestedModel: 'synthetic/early-model', requestedEffort: 'low' });
+  const id = flow.id(), now = Date.now();
+  flow.submit(first, [{ id, type: 'GENERATION', parentId: first.rootSpanId,
+    startTime: now, endTime: now, model: 'synthetic/early-model', outcome: 'completed' }]);
+  flow.update(first, { requestedEffort: 'high', requestedModel: 'synthetic/later-model',
+    observedEffort: 'high', skillsLoaded: ['later-skill'] });
+  const second = flow.begin({ cwd, nativeSessionId });
+  flow.store.createLaunch(parent, { launchId: 'historical-sdk-child', child: { persona: 'backend-engineer' } });
+  const spans = [];
+  const result = await flow.flush({ dependencyRoot: dependencyCacheDir(), timeoutMs: 10000, exporterFactory: () => ({
+    export(batch, callback) { spans.push(...batch); callback({ code: 0 }); },
+    async shutdown() {}, async forceFlush() {}
+  }) });
+  assert.equal(result.accepted, 1);
+  assert.equal(result.deferred, 0);
+  assert.equal(spans.length, 1);
+  assert.equal(spans[0].spanContext().spanId, id);
+  assert.equal(spans[0].spanContext().traceId, parent.traceId);
+  const attributes = spans[0].attributes;
+  const metadata = key => attributes[`langfuse.observation.metadata.${key}`];
+  assert.equal(JSON.parse(metadata('ticketId')), 'TEST-17');
+  assert.equal(JSON.parse(metadata('ticketSource')), 'explicit');
+  assert.equal(JSON.parse(metadata('persona')), 'backend-engineer');
+  assert.equal(JSON.parse(metadata('requestedModel')), 'synthetic/early-model');
+  assert.equal(JSON.parse(metadata('requestedEffort')), 'low');
+  assert.equal(metadata('observedEffort'), undefined, 'later observations cannot become earlier evidence');
+  assert.equal(metadata('skillsLoaded'), undefined);
+  assert.equal(flow.store.getSession('pi', nativeSessionId).runId, second.runId);
+});
+
 test('many completed Claude runs/tools/generations expire on disk while an active session retains replay state', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-checkpoint-lifecycle-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

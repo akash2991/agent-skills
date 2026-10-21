@@ -297,13 +297,17 @@ class ContextStore {
     return hash(`${harness}:${nativeId(id)}`);
   }
 
-  _save(state, run, now) {
+  _save(state, run, now, select = false) {
     const sessionKey = this._sessionKey(run.harness, run.nativeSessionId);
     const session = state.sessions[sessionKey];
     const unresolved = state.runs[run.runId]?.unresolved || (session?.run.runId === run.runId && session.unresolved);
     state.runs[run.runId] = { run, expiresAt: now + TTL.runs,
       ...(unresolved ? { unresolved: true } : {}), ...(state.runs[run.runId]?.drained ? { drained: true } : {}) };
-    state.sessions[sessionKey] = { run, expiresAt: now + TTL.sessions, ...(unresolved ? { unresolved: true } : {}) };
+    // Historical metadata/rebases may refresh the selected run, never select
+    // another turn. Selection and persistence share this one transaction.
+    if (select || session?.run.runId === run.runId) {
+      state.sessions[sessionKey] = { run, expiresAt: now + TTL.sessions, ...(unresolved ? { unresolved: true } : {}) };
+    }
     return run;
   }
 
@@ -324,13 +328,18 @@ class ContextStore {
     return current || run;
   }
 
-  saveSession(run) {
+  saveSession(run) { return this._persist(run, true); }
+
+  // Internal no-select persistence for delayed historical flow reconciliation.
+  saveRun(run) { return this._persist(run, false); }
+
+  _persist(run, select) {
     const safe = safeRun(run);
     return this._transaction((state, now) => {
       const current = this._current(state, safe);
       // A stale process must not undo an exact delayed-binding rebase.
       return this._save(state, safeRun({ ...safe, traceId: current.traceId, sessionId: current.sessionId,
-        parentSpanId: current.parentSpanId, parentSessionId: current.parentSessionId, startedAt: current.startedAt }), now);
+        parentSpanId: current.parentSpanId, parentSessionId: current.parentSessionId, startedAt: current.startedAt }), now, select);
     });
   }
 
@@ -371,7 +380,7 @@ class ContextStore {
         ...(linkedParent ? { parentSessionId: linkedParent.nativeSessionId } : {}),
         runtimeName: options.runtimeName ?? info.runtimeName, agentName: options.agentName,
         persona: options.persona, ticketId, ticketSource, requestedModel: options.requestedModel,
-        requestedEffort: options.requestedEffort, skillsInvoked: [], skillsLoaded: [], startedAt: now }), now);
+        requestedEffort: options.requestedEffort, skillsInvoked: [], skillsLoaded: [], startedAt: now }), now, true);
     });
   }
 
@@ -507,7 +516,7 @@ class ContextStore {
       this._save(state, safe, now);
       state.runs[safe.runId].unresolved = true;
       const session = state.sessions[this._sessionKey(safe.harness, safe.nativeSessionId)];
-      if (session.run.runId === safe.runId) session.unresolved = true;
+      if (session?.run.runId === safe.runId) session.unresolved = true;
       return { pending: true };
     });
   }
@@ -527,7 +536,8 @@ class ContextStore {
         const rebase = run => safeRun({ ...run, traceId: resolved.parent.traceId, sessionId: resolved.parent.sessionId,
           ...(run.runId === item.run.runId ? { parentSpanId: resolved.parent.rootSpanId,
             parentSessionId: resolved.parent.nativeSessionId } : {}) });
-        const run = rebase(item.run);
+        // The hold captures lineage, not a rollback point for later metadata.
+        const run = rebase(this._current(state, item.run));
         const records = item.records.map(record => ({ ...record, traceId: run.traceId, sessionId: run.sessionId,
           parentId: record.id === run.rootSpanId ? run.parentSpanId : record.parentId,
           ...(record.context ? { context: { ...record.context, traceId: run.traceId, sessionId: run.sessionId,
@@ -542,7 +552,7 @@ class ContextStore {
         this._save(state, run, now);
         delete state.runs[run.runId].unresolved;
         const session = state.sessions[this._sessionKey(run.harness, run.nativeSessionId)];
-        if (session.run.runId === run.runId) delete session.unresolved;
+        if (session?.run.runId === run.runId) delete session.unresolved;
         if (item.records.length) state.runs[run.runId].drained = true;
         delete state.pending[key];
         result.push({ run, records });

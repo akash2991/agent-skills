@@ -110,6 +110,62 @@ test('late binding persists one valid ticket/provenance pair for finished and co
   }
 });
 
+test('changed late-bound historical turns preserve the active turn and captured generation semantics', async t => {
+  for (const resolveFirst of [false, true]) for (const ownFacts of [false, true]) {
+    const f = diskFixture(t), flow = f.flow({ harness: ownFacts ? 'claude' : 'pi' });
+    const parent = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
+    const nativeSessionId = crypto.randomUUID();
+    let first = flow.begin({ cwd: f.cwd, nativeSessionId, pendingIdentity: 'changed-exact-child',
+      requestedModel: 'synthetic/early-model', requestedEffort: 'low',
+      ...(ownFacts ? { persona: 'scout', ticketId: 'TEST-19' } : {}) });
+    first = flow.update(first, { observedModel: 'synthetic/early-model', observedEffort: 'low',
+      evidenceSource: 'native-event', skillsLoaded: ownFacts ? ['early-skill'] : [] });
+    const early = { ...observation(flow, first), context: first };
+    assert.equal(flow.submit(first, [early]).pending, 1);
+    flow.update(first, { requestedModel: 'synthetic/later-model', requestedEffort: 'high',
+      observedModel: 'synthetic/later-model', observedEffort: 'high', evidenceSource: 'command',
+      skillsLoaded: ['later-skill'], skillsInvoked: ['later-invocation'] });
+    const second = flow.begin({ cwd: f.cwd, nativeSessionId });
+    const active = () => flow.store.getSession(flow.harness, nativeSessionId).runId;
+    assert.equal(active(), second.runId);
+    flow.store.createLaunch(parent, { launchId: 'changed-exact-child',
+      child: { persona: 'backend-engineer', agentName: 'builder' }, multiUse: true });
+    assert.equal(active(), second.runId);
+    if (resolveFirst) {
+      assert.equal(flow.resolve(first).ticketId, ownFacts ? 'TEST-19' : 'TEST-17');
+      assert.equal(active(), second.runId, 'explicit resolution may not select A over B');
+    }
+    await flow.flush();
+    assert.equal(active(), second.runId, 'flush-time resolution may not select A over B');
+    assert.equal(flow.store.getRun(first.runId).requestedEffort, 'high');
+    assert.equal(flow.store.getRun(first.runId).observedEffort, 'high');
+    // The immediate submit path must also honor a supplied capture snapshot,
+    // rather than overwrite it with the run's latest resolved metadata.
+    const immediate = { ...early, id: flow.id() };
+    assert.equal(flow.submit(first, [immediate]).queued, 1);
+    assert.equal(active(), second.runId);
+    assert.equal(f.outbox().length, 2);
+    for (const record of f.outbox()) {
+      assert.equal(record.traceId, parent.traceId);
+      assert.equal(record.sessionId, parent.sessionId);
+      assert.equal(record.parentId, first.rootSpanId);
+      assert.equal(record.context.runId, first.runId);
+      assert.equal(record.context.parentSessionId, parent.nativeSessionId);
+      assert.equal(record.context.ticketId, ownFacts ? 'TEST-19' : 'TEST-17');
+      assert.equal(record.context.ticketSource, 'explicit');
+      assert.equal(record.context.persona, ownFacts ? 'scout' : 'backend-engineer');
+      assert.equal(record.context.agentName, 'builder');
+      assert.equal(record.context.requestedModel, 'synthetic/early-model');
+      assert.equal(record.context.observedModel, 'synthetic/early-model');
+      assert.equal(record.context.requestedEffort, 'low');
+      assert.equal(record.context.observedEffort, 'low');
+      assert.equal(record.context.evidenceSource, 'native-event');
+      assert.deepEqual(record.context.skillsLoaded, ownFacts ? ['early-skill'] : undefined);
+      assert.equal(record.context.skillsInvoked, undefined, 'later skill use cannot become earlier evidence');
+    }
+  }
+});
+
 test('legacy checkpoints remain readable and resolving historical turns does not select them as active', t => {
   const f = diskFixture(t), flow = f.flow();
   const parent = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
@@ -153,6 +209,52 @@ test('deferred suffix advances durably after queue capacity and a thrown interru
   acknowledgeDisk();
   assert.equal(received.size, 600);
   assert.equal(fs.readdirSync(pendingDir).length, 0);
+});
+
+test('slow deferred enqueue leaves egress time and an exact durable suffix across restart', async t => {
+  const f = diskFixture(t); let flow = f.flow();
+  const parent = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
+  const run = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), pendingIdentity: 'slow-exact-child' });
+  const records = Array.from({ length: 80 }, () => observation(flow, run));
+  flow.submit(run, records);
+  // A second real deferred batch verifies the budget stops the outer walk too.
+  const later = observation(flow, run);
+  flow.submit(run, [later]);
+  flow.store.createLaunch(parent, { launchId: 'slow-exact-child', multiUse: true });
+  const pendingDir = path.join(f.stateDir, 'adapters', 'pending');
+  const expected = new Set([...records, later].map(record => record.id));
+  let expiredEnqueues = 0;
+  const zeroBudget = f.flow({ queueObservation: () => { expiredEnqueues++; return { queued: false }; },
+    flushOutbox: async () => assert.fail('expired flush must not deliver') });
+  assert.equal((await zeroBudget.flush({ timeoutMs: 0 })).status, 'timeout');
+  assert.equal(fs.readdirSync(pendingDir).length, 2);
+  let calls = 0, remaining, elapsedAtDelivery;
+  flow = f.flow({ queueObservation: (record, opts) => {
+    calls++;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
+    return queueObservation(record, opts);
+  }, flushOutbox: async opts => {
+    remaining = opts.timeoutMs; elapsedAtDelivery = Date.now() - started;
+    return { queued: f.outbox().length, accepted: 0, verified: false };
+  } });
+  const started = Date.now();
+  const result = await flow.flush({ timeoutMs: 1000 });
+  assert.ok(calls > 0 && calls < expected.size, 'transfer must make bounded progress');
+  assert.ok(remaining > 100 && elapsedAtDelivery < 900, 'egress receives usable deadline budget');
+  assert.ok(result.deferred > 0);
+  const transferred = new Set(f.outbox().map(record => record.id));
+  const retained = fs.readdirSync(pendingDir).flatMap(name =>
+    JSON.parse(fs.readFileSync(path.join(pendingDir, name), 'utf8')).records.map(record => record.id));
+  assert.equal(retained.length, expected.size - calls);
+  assert.deepEqual(new Set([...transferred, ...retained]), expected);
+  assert.ok(retained.every(id => !transferred.has(id)), 'only the untransferred suffix remains durable');
+  assert.ok(fs.readdirSync(pendingDir).every(name => name.endsWith('.json')), 'deadline leaves no live claim');
+  await f.flow().flush({ timeoutMs: 10000 });
+  assert.equal(fs.readdirSync(pendingDir).length, 0);
+  const queued = f.outbox();
+  assert.deepEqual(new Set(queued.map(record => record.id)), expected);
+  assert.equal(queued.length, expected.size, 'budget retries must not replay the committed prefix');
+  assert.equal(expiredEnqueues, 0, 'expired transfer must not enqueue');
 });
 
 test('process death between enqueue and suffix persistence replays only the crash-boundary ID', async t => {

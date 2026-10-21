@@ -191,6 +191,44 @@ if (process.argv[2] === '--worker') {
     assert.ok(!fs.readFileSync(f.store.file, 'utf8').includes('DO_NOT_STORE'));
   });
 
+  test('historical rebase and metadata persistence never change the selector, even inside the transaction', t => {
+    const f = fixture(t), parent = f.run({ ticketId: 'TEST-17' });
+    const nativeSessionId = uuid(), first = f.run({ nativeSessionId, requestedEffort: 'low' });
+    const identity = { launchId: 'historical-exact-child' };
+    f.store.hold({ identity, run: first, records: records(first) });
+    f.store.updateRun(first, { requestedEffort: 'high' });
+    const second = f.run({ nativeSessionId });
+    const original = f.store._transaction.bind(f.store);
+    // Inspect before lock release: a read/select/restore workaround must fail,
+    // not merely happen to leave the right selector after the method returns.
+    f.store._transaction = fn => original((state, now) => {
+      const result = fn(state, now);
+      assert.equal(state.sessions[f.store._sessionKey('pi', nativeSessionId)].run.runId, second.runId);
+      return result;
+    });
+    f.store.createLaunch(parent, { launchId: identity.launchId });
+    const drained = f.store.takePending(identity)[0];
+    assert.equal(drained.run.traceId, parent.traceId);
+    assert.equal(drained.run.requestedEffort, 'high', 'the early hold must not roll back current metadata');
+    assert.equal(drained.records[0].context.requestedEffort, 'low', 'held observations keep captured semantics');
+    const saved = f.store.saveRun({ ...first, persona: 'builder', ticketId: 'TEST-17', ticketSource: 'explicit' });
+    assert.equal(saved.traceId, parent.traceId, 'no-select saves still preserve canonical lineage');
+    assert.equal(f.store.getRun(first.runId).persona, 'builder');
+    f.store.updateRun(first, { observedEffort: 'medium' });
+    assert.equal(f.store.getRun(first.runId).observedEffort, 'medium');
+    f.store.updateRun(second, { requestedEffort: 'high' });
+    assert.equal(f.store.getSession('pi', nativeSessionId).requestedEffort, 'high', 'selected-run metadata still refreshes');
+    assert.equal(f.store.getSession('pi', nativeSessionId).runId, second.runId);
+    f.store._transaction = original;
+    // Expired/absent selectors are not recreated by historical persistence.
+    original(state => { delete state.sessions[f.store._sessionKey('pi', nativeSessionId)]; });
+    f.store.saveRun(saved);
+    f.store.updateRun(saved, { observedEffort: 'high' });
+    assert.equal(f.store.getSession('pi', nativeSessionId), null);
+    assert.equal(f.store.saveSession(saved).runId, first.runId, 'explicit selection remains available');
+    assert.equal(f.store.getSession('pi', nativeSessionId).runId, first.runId);
+  });
+
   test('exact aliases are hashed, all supplied identities must agree, and names never correlate', t => {
     const f = fixture(t);
     const first = f.run({ agentName: 'same-name' });
