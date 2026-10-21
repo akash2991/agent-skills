@@ -30,8 +30,11 @@ function identity(value) {
 function model(value) {
   // Do not accept arbitrary gateway labels (or synthetic assistant rows) as
   // metadata. Unknown model names are deliberately omitted, not hashed.
-  return typeof value === 'string' && /^claude-(?:opus|sonnet|haiku)(?:-\d{1,8}){1,4}(?:\[1m\])?$/.test(value)
-    ? value : undefined;
+  if (typeof value !== 'string' || value.length > 132 || !/^claude-(?:opus|sonnet|haiku)(?:-\d{1,8}){1,4}(?:\[1m\])?$/.test(value)) return undefined;
+  // [1m] selects a context window, not a different foundation model. Strip
+  // the known native suffix before crossing the shared metadata schema.
+  const canonical = value.replace(/\[1m\]$/, '');
+  return canonical.length <= 128 && safeIdentity(canonical) ? canonical : undefined;
 }
 function hasRuntimeModel(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 200 &&
@@ -252,7 +255,7 @@ async function handleClaudeHook(payload, options = {}) {
     flow.writeState(modelKey, { model: observedModel });
     run = flow.update(run, { requestedModel: observedModel });
   }
-  const actualModel = observedModel || flow.readState(modelKey)?.model;
+  const actualModel = observedModel || model(flow.readState(modelKey)?.model);
   const effort = EFFORTS.has(payload.effort?.level) ? payload.effort.level : undefined;
   if (effort) run = flow.update(run, { requestedEffort: effort });
 
