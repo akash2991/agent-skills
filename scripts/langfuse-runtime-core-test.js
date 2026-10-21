@@ -10,7 +10,7 @@ const { spawnSync } = require('node:child_process');
 const { sanitizeObservation, configurePrivacy, CONTEXT_FIELDS, LIMITS } = require('../runtime/langfuse/privacy.cjs');
 const { queueObservation, flushOutbox, loadCredentials, OUTBOX_LIMITS } = require('../runtime/langfuse/export.cjs');
 const { dependencyCacheDir, loadDependencies, LOCK_FINGERPRINT } = require('../runtime/langfuse/dependencies.cjs');
-const dependencyRoot = path.resolve(__dirname, '../runtime/langfuse');
+const dependencyRoot = require('./lib/langfuse-test-dependencies.js').testDependencyRoot();
 const base = overrides => ({
   id: '0123456789abcdef', traceId: '0123456789abcdef0123456789abcdef', parentId: null,
   sessionId: 'pi-session-abc', nativeSessionId: '550e8400-e29b-41d4-a716-446655440000',
