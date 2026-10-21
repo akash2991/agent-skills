@@ -252,6 +252,69 @@ test('rejects unknown behavioral eval kinds', () => {
   assert.match(result.stdout, /unknown kind "conversation"/);
 });
 
+for (const kind of ['dialogue', 'execution']) {
+  for (const failExecutor of [false, true]) {
+    test(`${kind} executor can read source-identical skill companions; snapshots cleaned after ${failExecutor ? 'failure' : 'success'}`, (t) => {
+      const root = makeSandbox();
+      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+      const name = 'alpha-skill';
+      writeSkill(root, name, 'Handles alpha widgets. Use when changing alpha widgets.');
+      const skillDir = path.join(root, 'skills', name);
+      fs.appendFileSync(path.join(skillDir, 'SKILL.md'), '\nRead [persistent-dev.md](persistent-dev.md).\n');
+      const companion = path.join(skillDir, 'persistent-dev.md');
+      const contents = 'Revision-specific automated home gate and LFS payload rules.\n';
+      fs.writeFileSync(companion, contents);
+      fs.mkdirSync(path.join(skillDir, 'references'));
+      fs.writeFileSync(path.join(skillDir, 'references', 'nested.md'), 'nested reference\n');
+      const evalCase = completeCase(name, 'change alpha widget');
+      evalCase.evals = [{ ...behavioralEval(kind === 'dialogue' ? [] : undefined), kind }];
+      writeJson(path.join(root, 'evals', 'cases', `${name}.json`), evalCase);
+      const bin = path.join(root, 'bin');
+      fs.mkdirSync(bin);
+      const log = path.join(root, 'executor-context.json');
+      // Intercept both CLI invocations: no actual model, credentials or network.
+      // Validate the context at the real runner/executor boundary, not merely a
+      // helper's output, and mutate only the snapshot to check source isolation.
+      const fakeCli = `#!/usr/bin/env node
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+if (args.includes('--append-system-prompt')) {
+  const snapshotDir = args[args.indexOf('--add-dir') + 1];
+  const prompt = args[args.indexOf('--append-system-prompt') + 1];
+  assert.ok(snapshotDir && path.isAbsolute(snapshotDir));
+  assert.notEqual(snapshotDir, ${JSON.stringify(skillDir)});
+  assert.ok(prompt.includes(JSON.stringify(snapshotDir)));
+  assert.ok(prompt.includes(JSON.stringify(path.join(snapshotDir, 'SKILL.md'))));
+  assert.ok(prompt.includes('persistent-dev.md'));
+  assert.equal(fs.readFileSync(path.join(snapshotDir, 'persistent-dev.md'), 'utf8'), ${JSON.stringify(contents)});
+  assert.equal(fs.readFileSync(path.join(snapshotDir, 'references', 'nested.md'), 'utf8'), 'nested reference\\n');
+  assert.ok(!fs.existsSync(path.join(process.cwd(), 'persistent-dev.md')));
+  fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ snapshotDir, workspace: process.cwd() }));
+  fs.writeFileSync(path.join(snapshotDir, 'persistent-dev.md'), 'executor mutation');
+  if (${JSON.stringify(failExecutor)}) process.exit(2);
+  console.log(JSON.stringify({ type: 'system', subtype: 'init', model: 'test-model' }));
+} else {
+  console.log(JSON.stringify({ expectations: [{ id: 1, text: 'test', passed: true, evidence: 'stubbed trace' }], summary: { passed: 1, failed: 0, total: 1, pass_rate: 1 } }));
+}
+`;
+      fs.writeFileSync(path.join(bin, 'claude'), fakeCli, { mode: 0o755 });
+      const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'run-evals.js'), '--behavioral', name], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      });
+      assert.equal(result.status, failExecutor ? 1 : 0, result.stdout + result.stderr);
+      assert.ok(fs.existsSync(log), result.stdout + result.stderr);
+      const context = JSON.parse(fs.readFileSync(log, 'utf8'));
+      assert.equal(fs.readFileSync(companion, 'utf8'), contents);
+      assert.equal(fs.existsSync(context.workspace), false);
+      assert.equal(fs.existsSync(path.dirname(context.snapshotDir)), false);
+    });
+  }
+}
+
 test('dry-runs a fixtureless dialogue eval', () => {
   const root = makeSandbox();
   writeSkill(root, 'alpha-skill', 'Handles alpha widgets. Use when changing alpha widgets.');

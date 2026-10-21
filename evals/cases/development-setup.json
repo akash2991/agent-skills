@@ -3,6 +3,14 @@
   "trigger": {
     "positive": [
       {
+        "prompt": "Set up a persistent personal EC2 dev VM with a durable home volume, Cursor SSH access and idle stopping",
+        "top_k": 3
+      },
+      {
+        "prompt": "Migrate my Mac repositories, worktrees, stashes and Claude sessions to a dev VM without losing staged or uncommitted work",
+        "top_k": 3
+      },
+      {
         "prompt": "Set up my own git worktree, Docker containers and LocalStack before starting the ticket",
         "top_k": 3
       },
@@ -55,6 +63,49 @@
     ]
   },
   "evals": [
+    {
+      "id": 3,
+      "kind": "dialogue",
+      "prompt": "Set up my personal EC2 development machine so I can reconnect from Cursor, keep my home directory when replacing the instance, and stop paying compute when disconnected. Should it use the brain fleet's idle termination and reaper? During an unattended cold start the home volume fails to mount but SSH becomes reachable. Can Cursor and background agents proceed using a fresh home on the root disk? How should this be gated and recovered?",
+      "expected_output": "Uses the persistent personal workflow rather than disposable fleet automation, stops on idle, preserves an encrypted separate home volume with DeleteOnTermination false, verifies mounting and backup recovery, keeps work and personal data separate, and obtains approval before provisioning or destructive operations.",
+      "expectations": [
+        "Never tags the persistent machine brain=dev or targets it with cloud-down, cloud-reap or fleet termination schedules",
+        "Distinguishes stopping from termination and durable home storage from disposable root/system setup",
+        "Verifies the mounted home volume before agents write and tests snapshot restoration",
+        "Plans private SSH access and outbound connectivity, explicit keep-awake for detached jobs, and storage costs while stopped",
+        "Keeps per-agent worktrees, containers and data isolated and work versus personal credentials separate",
+        "Requires an automated fail-closed expected-volume check on each boot and development-session start before login/editor services, background tools or agents write home data; a manual mount check or SSH readiness alone is insufficient",
+        "Refuses a missing or wrong home volume, never creates a replacement root-disk home, reports the failure and recovers/retries only after the correct mount is restored; tests this failure path during provisioning"
+      ]
+    },
+    {
+      "id": 4,
+      "kind": "dialogue",
+      "prompt": "Migrate my Mac repo and Claude sessions to an existing VM. The VM has its own stashes and a newer dirty checkout. A helper proposes git reset --hard, git stash clear, then comparing git status filenames and session sizes before deleting the Mac copy. The Mac also has staged binary changes and a detached worktree whose path contains spaces. Proceed?",
+      "expected_output": "Rejects destructive mirroring, inventories and reconciles both ends with approval, preserves source and destination state including staging and detached commits, uses safe path handling, verifies content, and leaves source deletion to a separately approved cleanup. Does not trust an untested helper or treat status and sizes as proof.",
+      "expectations": [
+        "Does not reset the VM branch, clear its stashes, overwrite dirty files or delete Mac data",
+        "Preserves exact refs, detached commits, stash content and order, staged and unstaged binary changes, untracked and approved ignored files",
+        "Uses NUL-delimited file handling and safe transport rather than interpolating paths into remote commands",
+        "Verifies file content, index state and session data rather than filenames or sizes alone",
+        "Requires approval for secrets, live editor database writes and eventual source deletion; distinguishes local editor UI databases from remote artifacts",
+        "Reports conflicts and skipped transfers as incomplete and tests helpers on disposable repositories before use"
+      ]
+    },
+    {
+      "id": 5,
+      "kind": "dialogue",
+      "prompt": "My Mac repository has an in-progress rebase with unmerged index entries, a local-only annotated tag, and Git LFS files. I also have local hooks, sparse-checkout settings and index flags. Migrate it to the VM and tell me when I can delete the Mac copy. Is importing a bundle and applying ordinary patches enough?",
+      "expected_output": "Inventories both ends read-only, detects the active rebase and conflict index, and stops for a user decision unless a separately approved tested method preserves that state. Does not abort or finish Git operations automatically. Inventories and preserves approved local tag refs and annotated objects, and separately transfers and verifies required LFS payloads; a bundle alone is insufficient. Discloses unsupported metadata and missing payloads as incomplete/excluded, obtains a decision before the affected transfer, and never calls such a migration safe for source cleanup.",
+      "expectations": [
+        "Detects active Git operations and unmerged index entries on source and destination read-only and stops for a decision unless a separately approved tested state-preserving method exists",
+        "Does not auto-abort or complete the rebase, or claim ordinary patches preserve conflict index stages or operation state",
+        "Inventories local tags, preserves approved exact tag refs and annotated tag objects, and does not overwrite differing destination tags",
+        "Recognizes that a Git bundle does not carry LFS payloads; copies and verifies required approved payloads or reports them incomplete/excluded and stops for a decision",
+        "Discloses unsupported local config, hooks, excludes, sparse-checkout settings and index flags rather than silently claiming complete preservation",
+        "A successful bundle import is not sufficient verification and unsupported state or missing payloads cannot authorize deleting the Mac copy"
+      ]
+    },
     {
       "id": 1,
       "kind": "dialogue",
