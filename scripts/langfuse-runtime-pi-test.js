@@ -2,11 +2,14 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const { createController, usageDetails } = require('../runtime/langfuse/pi.js');
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 
-function harness() {
+function harness(options = {}) {
   const handlers = new Map();
   const records = [];
   const states = new Map();
@@ -28,10 +31,13 @@ function harness() {
     store: { createLaunch: (parent, child) => { const binding = { nonce: crypto.randomBytes(16).toString('hex'), parent, ...child }; bindings.push(binding); return binding; } }
   };
   const pi = { on: (name, handler) => { const list = handlers.get(name) || []; list.push(handler); handlers.set(name, list); },
-    registerTool: tool => { pi.contextTool = tool; }, getThinkingLevel: () => 'low' };
-  const ctx = { cwd: '/synthetic/project', model: { id: 'test-model', provider: 'test-provider' }, thinkingLevel: 'low',
+    registerTool: tool => { pi.contextTool = tool; }, getThinkingLevel: () => 'low',
+    registerFlag: (name, config) => { assert.equal(name, 'brain-tracing'); assert.equal(config.default, false); },
+    getFlag: () => options.perRun ?? true };
+  const ctx = { cwd: options.cwd || fs.realpathSync(os.tmpdir()), model: { id: 'test-model', provider: 'test-provider' }, thinkingLevel: 'low',
+    isProjectTrusted: () => options.trusted !== false,
     sessionManager: { getSessionId: () => '11111111-1111-4111-8111-111111111111' }, hasUI: false };
-  const controller = createController(pi, { flow, clock: () => ++now });
+  const controller = createController(pi, { flow, clock: () => ++now, enabled: options.enabled });
   const emit = async (type, fields = {}) => { for (const handler of handlers.get(type) || []) await handler({ type, ...fields }, ctx); };
   return { pi, flow, records, bindings, states, controller, emit, ctx, get runs() { return runs; }, get flushes() { return flushes; } };
 }
@@ -142,4 +148,123 @@ test('shutdown does not extend a completed actor span into idle time', async () 
 test('reasoning counts never create negative output usage', () => {
   assert.equal(usageDetails({ output: 1, reasoning: 2 }).output, 1);
   assert.equal(usageDetails({ output: 1, reasoning: 2 }).output_reasoning_tokens, undefined);
+});
+
+function project(t) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'brain-pi-policy-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.git'));
+  return root;
+}
+function marker(root, declaration = { schema: 1, enabled: true, captureMode: 'metadata-only' }) {
+  const file = path.join(root, '.agent-brain/tracing.json');
+  fs.mkdirSync(path.join(root, '.agent-brain/observability'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.agent-brain/observability/pi.js'), '// never executed by injected flow');
+  fs.writeFileSync(file, typeof declaration === 'string' ? declaration : JSON.stringify(declaration));
+  return file;
+}
+async function exercise(h) {
+  await h.emit('session_start');
+  await h.emit('input', { text: canary });
+  await h.emit('before_agent_start', { messageType: 'user', prompt: canary });
+  await h.emit('before_provider_request');
+  await h.emit('tool_execution_start', { toolName: 'read', toolCallId: 'read-1' });
+  await h.emit('tool_execution_end', { toolName: 'read', toolCallId: 'read-1' });
+  await h.emit('agent_settled', { aborted: false });
+}
+async function refused(h, label) {
+  assert.equal(h.controller.start(h.ctx), false, label);
+  await exercise(h);
+  const result = await h.controller.getContextTool().execute('probe', {}, undefined, undefined, h.ctx);
+  assert.equal(result.details, undefined, label);
+  await h.emit('session_shutdown');
+  assert.equal(h.runs, 0, label);
+  assert.equal(h.records.length, 0, label);
+  assert.equal(h.states.size, 0, label);
+  assert.equal(h.flushes, 0, label);
+}
+
+test('direct controller requires applicable cwd opt-in or a strict explicit per-run boolean', async t => {
+  const root = project(t);
+  for (const perRun of [false, 'true', 1]) await refused(harness({ cwd: root, perRun }), `absent / perRun=${perRun}`);
+  const explicit = harness({ cwd: root, perRun: true });
+  await exercise(explicit);
+  assert.equal(explicit.runs, 1, 'trusted explicit-resource probe is allowed without settings or marker');
+  marker(root);
+  const nested = path.join(root, 'nested/deeper'); fs.mkdirSync(nested, { recursive: true });
+  const automatic = harness({ cwd: nested, perRun: false });
+  await exercise(automatic);
+  assert.equal(automatic.runs, 1, 'cwd may inherit applicable enabled root');
+  await refused(harness({ cwd: nested, perRun: true, enabled: false }), 'controller disable remains stronger');
+});
+
+test('direct controller honors root/intermediate/cwd refusals even with explicit per-run authorization', async t => {
+  const root = project(t);
+  const nested = path.join(root, 'nested'); const leaf = path.join(nested, 'deeper');
+  fs.mkdirSync(leaf, { recursive: true });
+  const enabled = { schema: 1, enabled: true, captureMode: 'metadata-only' };
+  for (const declarationRoot of [root, nested, leaf]) {
+    marker(root, enabled);
+    for (const [name, declaration] of [
+      ['disabled', { ...enabled, enabled: false }], ['malformed', '{'], ['invalid value', 'null'],
+      ['invalid schema', { ...enabled, schema: 2 }], ['invalid mode', { ...enabled, captureMode: 'content' }],
+      ['invalid runtime', { ...enabled, runtime: '../escape' }], ['oversized', ' '.repeat(4097)]
+    ]) {
+      marker(declarationRoot, declaration);
+      for (const cwd of new Set([declarationRoot, leaf])) for (const perRun of [false, true]) {
+        await refused(harness({ cwd, perRun }), `${name} / ${path.relative(root, declarationRoot)} / perRun=${perRun}`);
+      }
+    }
+    const file = marker(declarationRoot);
+    const read = fs.readFileSync;
+    fs.readFileSync = function (target, ...args) {
+      if (target === file) throw Object.assign(new Error('synthetic unreadable marker'), { code: 'EACCES' });
+      return read.call(this, target, ...args);
+    };
+    try {
+      for (const perRun of [false, true]) await refused(harness({ cwd: leaf, perRun }), 'unreadable declaration');
+    } finally { fs.readFileSync = read; }
+    fs.rmSync(file);
+    fs.symlinkSync(path.join(root, 'missing-marker'), file);
+    for (const perRun of [false, true]) await refused(harness({ cwd: leaf, perRun }), 'dangling marker link is refusal, not absence');
+    fs.rmSync(file);
+  }
+});
+
+test('direct controller honors global kill switches and native trust, with markers and explicit opt-in', async t => {
+  const root = project(t);
+  for (const declared of [false, true]) {
+    if (declared) marker(root);
+    for (const name of ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']) {
+      const original = process.env[name];
+      try {
+        for (const value of ['false', '0', 'FALSE']) {
+          process.env[name] = value;
+          await refused(harness({ cwd: root, perRun: true }), `${name}=${value}`);
+        }
+      } finally { if (original === undefined) delete process.env[name]; else process.env[name] = original; }
+    }
+    await refused(harness({ cwd: root, perRun: true, trusted: false }), 'trust refusal');
+    const unknown = harness({ cwd: root, perRun: true }); delete unknown.ctx.isProjectTrusted;
+    await refused(unknown, 'missing trust API fails closed');
+  }
+});
+
+test('policy is checked at the actual event/tool cwd and refusal added after startup stops capture', async t => {
+  const root = project(t); marker(root);
+  const nested = path.join(root, 'nested'); fs.mkdirSync(nested);
+  const h = harness({ cwd: root, perRun: true });
+  assert.equal(h.controller.start(h.ctx), true);
+  marker(nested, { schema: 1, enabled: false, captureMode: 'metadata-only' });
+  h.ctx.cwd = nested;
+  await refused(h, 'event cwd refusal overrides runtime root opt-in');
+  const later = harness({ cwd: root, perRun: true });
+  await exercise(later);
+  const before = [later.runs, later.records.length, later.states.size, later.flushes];
+  marker(root, '{');
+  await exercise(later);
+  await later.controller.getContextTool().execute('probe', {}, undefined, undefined, later.ctx);
+  await later.emit('session_shutdown');
+  assert.deepEqual([later.runs, later.records.length, later.states.size, later.flushes], before, 'no flush/checkpoint/export after refusal');
+  assert.equal(later.controller.getRoots().size, 0, 'refused shutdown still releases in-memory controller');
 });

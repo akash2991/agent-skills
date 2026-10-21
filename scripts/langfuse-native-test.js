@@ -10,9 +10,9 @@ const { spawnSync, spawn } = require('node:child_process');
 const test = require('node:test');
 const { LEGACY_CLAUDE_PLUGIN, CLAUDE_HOOK_COMMAND } = require('./lib/langfuse');
 
-function rpc(cwd, env) {
+function rpc(cwd, env, resources = []) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('pi', ['--mode', 'rpc', '--no-session', '--no-context-files', '--no-skills', '--no-prompt-templates', '--model', 'openai-codex/gpt-6.1-sol'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn('pi', ['--mode', 'rpc', '--offline', '--no-mcp', '--no-session', '--no-context-files', '--no-skills', '--no-prompt-templates', '--model', 'openai-codex/gpt-6.1-sol', ...resources], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let buffer = '', stderr = '', response;
     const timer = setTimeout(() => { proc.kill('SIGTERM'); reject(new Error('Native Pi initialization timed out')); }, 15000);
     proc.stderr.on('data', data => { stderr += data; });
@@ -111,4 +111,96 @@ test('native discovery covers principal and old worktree; migration preserves se
   fs.rmSync(marker);
   await rpc(subdir, env);
   assert.equal(fs.readFileSync(loads, 'utf8'), baselineLoads + 'loaded\n');
+});
+
+test('native direct Pi resource policy: automatic discovery and explicit marker-absent probes', { timeout: 120000 }, async t => {
+  const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'brain-trace-native-direct-')));
+  t.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
+  const target = path.join(sandbox, 'target'), home = path.join(sandbox, 'home');
+  const agent = path.join(home, '.pi/agent'), nested = path.join(target, 'nested/deeper');
+  for (const dir of [nested, agent, path.join(target, '.git')]) fs.mkdirSync(dir, { recursive: true });
+  const adapter = require.resolve('../runtime/langfuse/pi.js');
+  const enabled = { schema: 1, enabled: true, captureMode: 'metadata-only', runtime: 'runtime/langfuse' };
+  const declare = (root, value) => {
+    const dir = path.join(root, '.agent-brain'); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'tracing.json'), typeof value === 'string' ? value : JSON.stringify(value));
+    // Only the entry's existence is policy evidence; native Pi loads the real
+    // source adapter above, never this placeholder and never a fake controller.
+    fs.mkdirSync(path.join(root, 'runtime/langfuse'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'runtime/langfuse/pi.js'), 'throw new Error("placeholder must not execute");');
+  };
+  let sequence = 0;
+  const probe = async ({ cwd = target, flags = [], allowed, kill = {} }) => {
+    const state = path.join(sandbox, `state-${++sequence}`);
+    // No inherited authentication or user resources. Native startup only:
+    // get_state is not a prompt and never issues a model/telemetry request.
+    const env = { PATH: process.env.PATH, HOME: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: '1',
+      BRAIN_TRACE_STATE_DIR: state, BRAIN_TRACING_ENABLED: 'true', LANGFUSE_TRACING_ENABLED: 'true', ...kill };
+    await rpc(cwd, env, flags);
+    assert.equal(fs.existsSync(path.join(state, 'adapters')), allowed, `actual direct adapter startup: ${JSON.stringify({ cwd, flags, kill })}`);
+  };
+  const explicit = ['--no-extensions', '-e', adapter, '--approve'];
+  // Deliberate resource loading still needs the distinguishable consent flag.
+  // Neither these probes nor the pane-launch interface writes any settings.
+  await probe({ flags: explicit, allowed: false });
+  await probe({ flags: [...explicit, '--brain-tracing'], allowed: true });
+  await probe({ flags: ['--no-extensions', '-e', adapter, '--no-approve', '--brain-tracing'], allowed: false });
+  for (const name of ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']) {
+    await probe({ flags: [...explicit, '--brain-tracing'], allowed: false, kill: { [name]: 'false' } });
+  }
+  assert.equal(fs.existsSync(path.join(agent, 'settings.json')), false);
+  assert.equal(fs.existsSync(path.join(target, '.pi/settings.json')), false);
+  assert.equal(fs.existsSync(path.join(target, '.agent-brain/tracing.json')), false);
+
+  // Now test the native automatic registration hole using only a temporary
+  // project settings fixture. The extension is the unmodified source consumer.
+  fs.mkdirSync(path.join(target, '.pi'));
+  const settings = path.join(target, '.pi/settings.json');
+  fs.writeFileSync(settings, JSON.stringify({ extensions: [adapter] }));
+  fs.mkdirSync(path.join(nested, '.pi'));
+  fs.writeFileSync(path.join(nested, '.pi/settings.json'), JSON.stringify({ extensions: [adapter] }));
+  const before = fs.readFileSync(settings, 'utf8');
+  await probe({ flags: ['--approve'], allowed: false });
+  await probe({ flags: ['--approve', '--brain-tracing'], allowed: true });
+  declare(target, enabled);
+  await probe({ flags: ['--approve'], allowed: true });
+  await probe({ flags: ['--no-approve'], allowed: false });
+  await probe({ flags: ['--no-extensions', '-e', adapter, '--no-approve', '--brain-tracing'], allowed: false });
+  await probe({ cwd: nested, flags: explicit, allowed: true });
+  for (const name of ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']) {
+    await probe({ flags: ['--approve', '--brain-tracing'], allowed: false, kill: { [name]: '0' } });
+  }
+  for (const declarationRoot of [target, path.join(target, 'nested')]) {
+    for (const declaration of [{ ...enabled, enabled: false }, '{', 'null', { ...enabled, runtime: '../escape' }]) {
+      declare(declarationRoot, declaration);
+      // Automatic loading at the declaration target plus the real direct
+      // resource from a descendant, including explicit per-run opt-in.
+      for (const perRun of [false, true]) {
+        const consent = perRun ? ['--brain-tracing'] : [];
+        await probe({ flags: ['--approve', ...consent], allowed: declarationRoot !== target });
+        await probe({ cwd: nested, flags: ['--approve', ...consent], allowed: false });
+        await probe({ cwd: nested, flags: [...explicit, ...consent], allowed: false });
+      }
+    }
+    const file = path.join(declarationRoot, '.agent-brain/tracing.json');
+    fs.rmSync(file); fs.mkdirSync(file); // deterministically unreadable as a JSON file, even as root
+    await probe({ cwd: nested, flags: [...explicit, '--brain-tracing'], allowed: false });
+    fs.rmSync(file, { recursive: true });
+    // Exercise actual EACCES too when POSIX permissions are enforceable for
+    // this test user; controller/bootstrap unit tests inject it on every host.
+    if (process.getuid && process.getuid() !== 0) {
+      declare(declarationRoot, enabled); fs.chmodSync(file, 0o000);
+      try {
+        assert.throws(() => fs.readFileSync(file), { code: 'EACCES' });
+        for (const perRun of [false, true]) {
+          const consent = perRun ? ['--brain-tracing'] : [];
+          await probe({ cwd: nested, flags: ['--approve', ...consent], allowed: false });
+          await probe({ cwd: nested, flags: [...explicit, ...consent], allowed: false });
+        }
+      } finally { fs.chmodSync(file, 0o600); fs.rmSync(file); }
+    }
+    if (declarationRoot === target) declare(target, enabled);
+  }
+  assert.equal(fs.readFileSync(settings, 'utf8'), before, 'adapter must not rewrite project registration');
+  assert.equal(fs.existsSync(path.join(agent, 'settings.json')), false, 'adapter must not persist per-run consent globally');
 });

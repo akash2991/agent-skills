@@ -27,6 +27,17 @@ test('pure filesystem bootstrap resolves an old worktree to opted-in principal r
   assert.equal(bootstrap.findRuntimeSync(child), entry);
 });
 
+test('marker-absent submodule/separate Git dirs still permit deliberate per-run authorization', t => {
+  const root = fs.realpathSync(temp(t));
+  fs.mkdirSync(path.join(root, 'separate-git-dir'));
+  fs.writeFileSync(path.join(root, '.git'), 'gitdir: separate-git-dir\n');
+  const ctx = { cwd: root, isProjectTrusted: () => true };
+  assert.equal(bootstrap.findPolicySync(root), undefined);
+  assert.equal(bootstrap.findRuntime(root), null);
+  assert.equal(bootstrap.isTracingAllowed(ctx), false);
+  assert.equal(bootstrap.isTracingAllowed(ctx, { perRun: true }), true);
+});
+
 test('actual Claude and Pi old-worktree bootstraps honor declarations from root and subdirectory', t => {
   const root = fs.realpathSync(temp(t)); const principal = path.join(root, 'principal'); const child = path.join(root, 'old-child');
   fs.mkdirSync(principal);
@@ -146,8 +157,57 @@ test('untrusted project code is never executed and legacy suppression is restore
 test('a marker on an unrelated secondary worktree does not opt in this repository', t => {
   const root = temp(t); const child = path.join(root, 'child'); const principal = path.join(root, 'principal'); const other = path.join(root, 'other');
   fs.mkdirSync(child); fs.mkdirSync(principal); runtime(other);
-  const git = (_cmd, args) => args.includes('list') ? `worktree ${principal}\n\nworktree ${other}\n` : `${child}\n`;
-  assert.equal(bootstrap.findRuntime(child, git), null);
+  const gitdir = path.join(principal, '.git/worktrees/child'); fs.mkdirSync(gitdir, { recursive: true });
+  fs.writeFileSync(path.join(gitdir, 'commondir'), '../..\n');
+  fs.writeFileSync(path.join(child, '.git'), `gitdir: ${gitdir}\n`);
+  assert.equal(bootstrap.findRuntime(child), null);
+  assert.equal(bootstrap.findPolicySync(child), undefined, 'unrelated marker is not an applicable declaration');
+});
+
+test('shared policy keeps absence distinguishable and unreadable declarations fail closed', t => {
+  const root = fs.realpathSync(temp(t)); fs.mkdirSync(path.join(root, '.git'));
+  const ctx = { cwd: root, isProjectTrusted: () => true };
+  assert.equal(bootstrap.findPolicySync(root), undefined);
+  assert.equal(bootstrap.isTracingAllowed(ctx), false);
+  assert.equal(bootstrap.isTracingAllowed(ctx, { perRun: true }), true);
+  const entry = runtime(root);
+  assert.equal(bootstrap.findPolicySync(root), entry);
+  assert.equal(bootstrap.isTracingAllowed(ctx), true);
+  const read = fs.readFileSync; const marker = path.join(root, '.agent-brain/tracing.json');
+  fs.readFileSync = function (file, ...args) {
+    if (file === marker) throw Object.assign(new Error('synthetic permission refusal'), { code: 'EACCES' });
+    return read.call(this, file, ...args);
+  };
+  try {
+    assert.equal(bootstrap.findPolicySync(root), null);
+    assert.equal(bootstrap.findRuntimeSync(root), null);
+    assert.equal(bootstrap.findRuntime(root), null);
+    assert.equal(bootstrap.isTracingAllowed(ctx, { perRun: true }), false);
+  } finally { fs.readFileSync = read; }
+  assert.equal(bootstrap.findPolicySync(path.join(root, 'nonexistent')), null, 'unresolvable cwd is refusal, not absence');
+});
+
+test('Pi bootstrap never evaluates project code under either global kill switch or trust refusal', async t => {
+  const root = fs.realpathSync(temp(t)); runtime(root);
+  const script = `
+    const handlers = {};
+    require(${JSON.stringify(require.resolve('../runtime/langfuse/bootstrap.js'))})({
+      on: (name, fn) => { handlers[name] = fn; }, registerTool: () => {}
+    });
+    handlers.session_start({}, {cwd:process.cwd(), isProjectTrusted:()=>process.env.TEST_TRUSTED==='true',
+      hasUI:true, ui:{setStatus:()=>{throw new Error('PROJECT_CODE_WAS_EVALUATED');}}})
+      .then(()=>console.log('refused'));
+  `;
+  for (const name of ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']) for (const value of ['false', '0']) {
+    const result = spawnSync(process.execPath, ['-e', script], { cwd: root, encoding: 'utf8', timeout: 10000,
+      env: { PATH: process.env.PATH, TEST_TRUSTED: 'true', [name]: value } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'refused');
+  }
+  const result = spawnSync(process.execPath, ['-e', script], { cwd: root, encoding: 'utf8', timeout: 10000,
+    env: { PATH: process.env.PATH, TEST_TRUSTED: 'false' } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), 'refused');
 });
 
 test('Claude bootstrap is gated, bounded and honors common kill switch without invoking adapter', async () => {
@@ -180,6 +240,7 @@ test('explicit Herdr helper binds exact child session and passes native resource
   assert.equal(args[0], 'agent'); assert.equal(args[1], 'start');
   assert.equal(args[args.indexOf('--session-id') + 1], result.nativeSessionId);
   assert.ok(args.includes('-e') && args.some(value => value.endsWith('/runtime/langfuse/pi.js')));
+  assert.ok(args.includes('--brain-tracing'), 'pane workflow explicitly authorizes marker-absent targets');
   assert.equal(launches[0].launchId, `brain:pi:${result.nativeSessionId}`);
   assert.equal(launches[0].parent.rootSpanId, parent.rootSpanId);
   assert.equal(states.get(`pane:${'c'.repeat(32)}`).paneId, 'w1:p7');

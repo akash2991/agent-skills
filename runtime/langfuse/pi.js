@@ -17,21 +17,15 @@ function createController(pi, options = {}) {
   let lastContext;
   let active;
   let rawInput;
-  const suppression = globalThis[Symbol.for('agent-brain.observability.legacy-suppression')];
-  const legacyFlag = suppression?.active ? suppression.original : process.env.LANGFUSE_TRACING_ENABLED;
-  let enabled = options.enabled !== false && !['false', '0'].includes(String(process.env.BRAIN_TRACING_ENABLED || '').toLowerCase())
-    && !['false', '0'].includes(String(legacyFlag || '').toLowerCase());
-  try {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const sourceLayout = path.basename(__dirname) === 'langfuse' && path.basename(path.dirname(__dirname)) === 'runtime';
-    const marker = sourceLayout ? path.join(__dirname, '..', '..', '.agent-brain', 'tracing.json') : path.join(__dirname, '..', 'tracing.json');
-    if (fs.existsSync(marker)) {
-      const config = JSON.parse(fs.readFileSync(marker, 'utf8'));
-      enabled = enabled && config.schema === 1 && config.enabled === true && config.captureMode === 'metadata-only'
-        && (config.runtime === undefined || config.runtime === (sourceLayout ? 'runtime/langfuse' : '.agent-brain/observability'));
-    }
-  } catch { enabled = false; }
+  const { isTracingAllowed } = require('./bootstrap.js');
+  // Pi 1.3 parses registered boolean flags separately from resource discovery.
+  // Only this deliberate per-process switch permits a marker-absent target;
+  // neither registering the extension nor a lineage nonce grants consent.
+  pi.registerFlag?.('brain-tracing', {
+    description: 'Opt this Pi run into metadata-only tracing when no project declaration exists; refusal and trust/kill switches still win.',
+    type: 'boolean', default: false
+  });
+  const allowed = ctx => isTracingAllowed(ctx, { enabled: options.enabled !== false, perRun: pi.getFlag?.('brain-tracing') === true });
   const roots = new Map();
   const tools = new Map();
   const clock = options.clock || Date.now;
@@ -42,11 +36,11 @@ function createController(pi, options = {}) {
   const setStatus = text => { if (lastContext?.hasUI) lastContext.ui.setStatus('brain-tracing', text); };
   const observe = (event, handler) => pi.on(event, async (data, ctx) => {
     if (ctx) lastContext = ctx;
-    if (!enabled) {
+    if (!allowed(ctx || lastContext)) {
       if (event === 'session_start') setStatus('brain tracing: off');
+      if (event === 'session_shutdown') cleanup();
       return undefined;
     }
-    if (ctx && typeof ctx.isProjectTrusted === 'function' && !ctx.isProjectTrusted()) return undefined;
     try { return await handler(data, ctx); }
     catch {
       try { flow?.writeState('health', { ...(flow.readState('health') || {}), captureFailureObserved: true }); } catch {}
@@ -124,7 +118,7 @@ function createController(pi, options = {}) {
 
   const start = ctx => {
     lastContext = ctx;
-    if (!enabled || (typeof ctx.isProjectTrusted === 'function' && !ctx.isProjectTrusted())) return false;
+    if (!allowed(ctx)) return false;
     ensure(ctx);
     flow.acknowledgeSession?.(nativeId(ctx));
     // Consume startup lineage in this adapter. Only a freshly bound tool call
@@ -236,18 +230,23 @@ function createController(pi, options = {}) {
       submitRoot(state, state.pending.size || !['completed', 'error', 'aborted'].includes(state.outcome) ? 'interrupted' : state.outcome);
     }
     if (flow) await flow.flush({ timeoutMs: 2500 });
+    cleanup();
+  });
+
+  function cleanup() {
     roots.clear(); tools.clear(); active = undefined; rawInput = undefined;
     flow = undefined;
     const guard = Symbol.for('agent-brain.observability.controller');
     if (globalThis[guard]?.owner === roots) delete globalThis[guard];
-  });
+  }
 
   const contextTool = {
     name: 'brain_context', label: 'Brain context',
     description: 'Set or query the active brain persona and ticket for this session. Only non-secret identifiers; never include task content or credentials.',
     parameters: { type: 'object', properties: { persona: { type: 'string' }, ticketId: { type: 'string' } }, additionalProperties: false },
     execute: async (_id, args, _signal, _onUpdate, ctx) => {
-      if (!enabled || (typeof ctx.isProjectTrusted === 'function' && !ctx.isProjectTrusted())) return { content: [{ type: 'text', text: 'Brain tracing is disabled or requires project trust.' }], details: undefined };
+      if (!allowed(ctx)) return { content: [{ type: 'text', text: 'Brain tracing is disabled or requires project trust.' }], details: undefined };
+      lastContext = ctx;
       ensure(ctx);
       const state = current() || begin(ctx);
       state.run = flow.resolve(state.run) || state.run;

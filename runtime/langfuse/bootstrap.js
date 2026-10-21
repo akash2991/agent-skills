@@ -4,7 +4,6 @@
 // traces unrelated projects or loads project code before native project trust.
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const GUARD = Symbol.for('agent-brain.observability.controller');
 
 // undefined means no declaration; null means an explicit refusal (including
@@ -26,65 +25,55 @@ function runtimeAt(root) {
 
 // Read-only lookup before project factories run: no subprocess, timer or
 // project-code execution. Git worktree files identify the principal .git dir.
-function findRuntimeSync(cwd) {
+function findPolicySync(cwd) {
   let root;
   try { root = fs.realpathSync(cwd); } catch { return null; }
   while (true) {
     const direct = runtimeAt(root);
     if (direct !== undefined) return direct;
-    try {
-      const git = path.join(root, '.git');
-      const stat = fs.lstatSync(git);
-      if (stat.isFile() && !stat.isSymbolicLink() && stat.size < 4096) {
+    let stat;
+    const git = path.join(root, '.git');
+    try { stat = fs.lstatSync(git); }
+    catch (error) { if (error.code !== 'ENOENT') return null; }
+    if (stat) {
+      if (stat.isDirectory() && !stat.isSymbolicLink()) return undefined;
+      try {
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size >= 4096) return null;
         const match = /^gitdir: ([^\r\n]+)\s*$/.exec(fs.readFileSync(git, 'utf8'));
-        if (match) {
-          const gitdir = path.resolve(root, match[1]);
-          const common = path.resolve(gitdir, fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim());
-          if (path.basename(common) === '.git') return runtimeAt(path.dirname(common)) || null;
+        if (!match) return null;
+        const gitdir = path.resolve(root, match[1]);
+        let commonDir;
+        try { commonDir = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim(); }
+        catch (error) {
+          // Submodules/separate Git dirs need not have a principal checkout.
+          // No declaration there is absence, not a project tracing refusal.
+          return error.code === 'ENOENT' ? undefined : null;
         }
-      }
-      if (stat.isDirectory()) return null;
-    } catch { /* Continue to a parent directory. */ }
+        if (!commonDir) return null;
+        const common = path.resolve(gitdir, commonDir);
+        return path.basename(common) === '.git' ? runtimeAt(path.dirname(common)) : undefined;
+      } catch { return null; } // Never cross an unreadable/invalid Git boundary.
+    }
     const parent = path.dirname(root);
-    if (parent === root) return null;
+    if (parent === root) return undefined;
     root = parent;
   }
 }
 
-function findRuntime(cwd, git = execFileSync) {
-  let start;
-  try { start = fs.realpathSync(cwd); } catch { return null; }
-  const candidates = [start];
-  let current;
+// Discovery and direct loading share exactly the same cwd-sensitive tri-state
+// policy. Resource registration (including -e) is not itself authorization.
+function findRuntimeSync(cwd) { return findPolicySync(cwd) || null; }
+function findRuntime(cwd) { return findRuntimeSync(cwd); }
+
+function isTracingAllowed(ctx, { perRun = false, enabled = true } = {}) {
   try {
-    const top = git('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (top) {
-      const root = fs.realpathSync(top);
-      // Check declarations from most to least specific, stopping at this Git
-      // root. A nested refusal must beat both root opt-in and principal fallback.
-      const relative = path.relative(root, start);
-      if (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
-        current = root;
-        for (let ancestor = start; ancestor !== root;) {
-          ancestor = path.dirname(ancestor);
-          candidates.push(ancestor);
-        }
-      }
-    }
-  } catch { /* Non-Git directories require their own explicit opt-in marker. */ }
-  for (const root of candidates) {
-    const entry = runtimeAt(root);
-    if (entry !== undefined) return entry;
-  }
-  if (!current) return null;
-  // Resolve the principal only after the current project's declaration has
-  // been checked, even when invoked below its root.
-  try {
-    const output = git('git', ['-C', cwd, 'worktree', 'list', '--porcelain'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
-    const principal = output.split('\n').find(line => line.startsWith('worktree '));
-    if (principal) return runtimeAt(principal.slice(9)) || null;
-  } catch { /* No principal fallback available. */ }
-  return null;
+    if (!enabled || typeof ctx?.isProjectTrusted !== 'function' || !ctx.isProjectTrusted()) return false;
+    const suppression = globalThis[Symbol.for('agent-brain.observability.legacy-suppression')];
+    const legacy = suppression?.active ? suppression.original : process.env.LANGFUSE_TRACING_ENABLED;
+    if ([process.env.BRAIN_TRACING_ENABLED, legacy].some(value => ['false', '0'].includes(String(value || '').toLowerCase()))) return false;
+    const declaration = findPolicySync(ctx.cwd);
+    return declaration !== null && (declaration !== undefined || perRun === true);
+  } catch { return false; }
 }
 
 module.exports = function brainWorktreeBootstrap(pi) {
@@ -123,7 +112,7 @@ module.exports = function brainWorktreeBootstrap(pi) {
       delete globalThis[suppressionKey];
     }
     try {
-      if (globalThis[GUARD] || typeof ctx.isProjectTrusted !== 'function' || !ctx.isProjectTrusted()) return;
+      if (globalThis[GUARD] || !isTracingAllowed(ctx)) return;
       const entry = findRuntime(ctx.cwd);
       if (!entry) return;
       // Requiring executable project code is delayed until the trust check.
@@ -137,3 +126,5 @@ module.exports = function brainWorktreeBootstrap(pi) {
 };
 module.exports.findRuntime = findRuntime;
 module.exports.findRuntimeSync = findRuntimeSync;
+module.exports.findPolicySync = findPolicySync;
+module.exports.isTracingAllowed = isTracingAllowed;

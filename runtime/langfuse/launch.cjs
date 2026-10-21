@@ -61,7 +61,9 @@ async function launch(argv, options = {}) {
     native.push(harness === 'pi' ? '--thinking' : '--effort', effort);
   }
   if (harness === 'pi') {
-    native.push('-e', path.join(__dirname, 'pi.js'));
+    // Explicit pane launch authorizes this run, not future automatic discovery.
+    // The adapter still enforces target declarations, trust and kill switches.
+    native.push('-e', path.join(__dirname, 'pi.js'), '--brain-tracing');
     if (flags['--persona']) native.push('--append-system-prompt', path.join(cwd, '.pi/agents', `${flags['--persona']}.md`));
   } else {
     const command = 'node "$HOME/.cache/agent-brain/bootstrap/bootstrap-claude.cjs"';
