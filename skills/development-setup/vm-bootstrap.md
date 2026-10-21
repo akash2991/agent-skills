@@ -41,7 +41,7 @@ Every direct curl has connection/transfer/retry bounds and HTTPS-only redirects.
 
 One managed `~/.config/vm-bootstrap-env.sh` restores canonical precedence on **every** source: managed Node fallback, npm user bin, then local bin. It removes duplicate managed entries while preserving unrelated PATH entries (including their order and empty components), so Ubuntu's `.profile` sourcing `.bashrc` and then prepending local bin cannot restore an older Node ahead of the fallback. Re-sourcing is idempotent. `.profile` and `.bashrc` receive one exact sourcing line, preserving their other content. An unrelated/modified env file or symlink is refused, not overwritten; symlinked shell profiles are also refused rather than appended through. Existing `.bash_profile` files are not changed; if yours bypasses `.profile`, source the env file there yourself. This script does not export PATH into its parent shell. Open a new configured shell or source the env file explicitly.
 
-**Noninteractive SSH usually does not read these shell profiles**; use:
+**Noninteractive SSH usually does not read these shell profiles.** The example below assumes a compatible Node is already on the runtime PATH or the managed fallback was installed. If apply retained nvm/fnm/asdf Node, initialize that manager in the SSH command or use a shell configured to load it before invoking Pi/pnpm; sourcing `vm-bootstrap-env.sh` alone does **not** supply that retained Node. Then use:
 
 ```sh
 ssh vm '. "$HOME/.config/vm-bootstrap-env.sh"; pi --version; herdr --version'
