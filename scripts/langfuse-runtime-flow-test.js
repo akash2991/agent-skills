@@ -6,7 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { createFlow } = require('../runtime/langfuse/flow.cjs');
+const { spawnSync } = require('node:child_process');
+const { createFlow, ADAPTER_LIMITS } = require('../runtime/langfuse/flow.cjs');
+const { OUTBOX_LIMITS, queueObservation } = require('../runtime/langfuse/export.cjs');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-trace-flow-'));
@@ -63,4 +65,193 @@ test('pane handoff is scoped to exact native session and pane; acknowledgement i
   assert.throws(() => childFlow.begin({ nativeSessionId: crypto.randomUUID(), cwd: f.cwd }), /Scoped launch/);
   const wrongPane = f.flow('claude', { BRAIN_TRACE_LAUNCH_ID: binding.nonce, HERDR_PANE_ID: 'w1:p3' });
   assert.throws(() => wrongPane.begin({ nativeSessionId: session, cwd: f.cwd }), /Scoped launch/);
+});
+
+function diskFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-disk-flow-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cwd = path.join(root, 'project'); fs.mkdirSync(cwd);
+  const stateDir = path.join(root, 'state'); let now = Date.now();
+  const flow = extra => createFlow({ cwd, stateDir, env: {}, clock: () => now,
+    // Offline delivery leaves the real on-disk outbox available for assertions.
+    flushOutbox: async () => ({ accepted: 0, queued: 0, verified: false }), ...extra });
+  const outbox = () => fs.readdirSync(path.join(stateDir, 'outbox')).map(name =>
+    JSON.parse(fs.readFileSync(path.join(stateDir, 'outbox', name), 'utf8')).record);
+  return { cwd, stateDir, flow, outbox, advance: ms => { now += ms; } };
+}
+
+test('late binding persists one valid ticket/provenance pair for finished and continuing children', async t => {
+  for (const ownTicket of [undefined, 'TEST-19']) {
+    const f = diskFixture(t), parentFlow = f.flow(), childFlow = f.flow();
+    const parent = parentFlow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
+    const finished = childFlow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(),
+      pendingIdentity: 'exact-finished-child', ...(ownTicket ? { ticketId: ownTicket } : {}) });
+    assert.equal(childFlow.submit(finished, [{ ...observation(childFlow, finished),
+      id: finished.rootSpanId, parentId: null, type: 'AGENT', outcome: 'completed' }]).pending, 1);
+    const child = childFlow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(),
+      pendingIdentity: 'exact-delayed-child', ...(ownTicket ? { ticketId: ownTicket } : {}) });
+    assert.equal(child.branch, null, 'no branch ticket inference may hide unknown provenance');
+    const early = observation(childFlow, child);
+    assert.equal(childFlow.submit(child, [early]).pending, 1);
+    parentFlow.store.createLaunch(parent, { launchId: 'exact-finished-child', multiUse: true });
+    parentFlow.store.createLaunch(parent, { launchId: 'exact-delayed-child', multiUse: true });
+    await parentFlow.flush();
+    const resumed = f.flow(); // Subsequent completion starts with the canonical durable run.
+    const current = resumed.update(child, { observedModel: 'synthetic-model' });
+    assert.equal(current.ticketId, ownTicket || 'TEST-17');
+    assert.equal(current.ticketSource, 'explicit');
+    assert.deepEqual(resumed.store.getRun(current.runId), resumed.readState(`run:${current.rootSpanId}`).run);
+    assert.equal(resumed.submit(current, [observation(resumed, current)]).queued, 1);
+    assert.equal(f.outbox().length, 3);
+    assert.equal(f.outbox().find(record => record.id === finished.rootSpanId).parentId, parent.rootSpanId);
+    assert.ok(f.outbox().every(record => record.context.ticketId === (ownTicket || 'TEST-17')
+      && record.context.ticketSource === 'explicit' && record.traceId === parent.traceId
+      && record.sessionId === parent.sessionId));
+  }
+});
+
+test('legacy checkpoints remain readable and resolving historical turns does not select them as active', t => {
+  const f = diskFixture(t), flow = f.flow();
+  const parent = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
+  const nativeSessionId = crypto.randomUUID();
+  const first = flow.begin({ cwd: f.cwd, nativeSessionId, parent });
+  const legacy = flow.readState(`run:${first.rootSpanId}`);
+  fs.writeFileSync(flow.stateFile(`run:${first.rootSpanId}`), JSON.stringify(legacy), { mode: 0o600 });
+  const second = flow.begin({ cwd: f.cwd, nativeSessionId, parent });
+  assert.equal(flow.resolve(first).rootSpanId, first.rootSpanId);
+  assert.equal(flow.store.getSession('pi', nativeSessionId).rootSpanId, second.rootSpanId);
+  assert.equal(flow.readState(`run:${first.rootSpanId}`).run.ticketSource, 'explicit');
+});
+
+test('deferred suffix advances durably after queue capacity and a thrown interrupted transfer', async t => {
+  const f = diskFixture(t); let flow = f.flow();
+  const run = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  const records = Array.from({ length: 600 }, () => observation(flow, run));
+  assert.deepEqual(flow.submit(run, records), { queued: OUTBOX_LIMITS.records, pending: 600 - OUTBOX_LIMITS.records });
+  const pendingDir = path.join(f.stateDir, 'adapters', 'pending');
+  const received = new Set();
+  const acknowledgeDisk = () => {
+    for (const record of f.outbox()) received.add(record.id);
+    for (const name of fs.readdirSync(path.join(f.stateDir, 'outbox'))) fs.unlinkSync(path.join(f.stateDir, 'outbox', name));
+  };
+  acknowledgeDisk();
+  let queued = 0;
+  flow = f.flow({ queueObservation: (record, opts) => {
+    if (++queued === 18) throw new Error('synthetic transfer interruption');
+    return queueObservation(record, opts);
+  } });
+  await flow.flush();
+  const suffix = JSON.parse(fs.readFileSync(path.join(pendingDir, fs.readdirSync(pendingDir)[0]), 'utf8'));
+  assert.equal(suffix.records.length, 600 - OUTBOX_LIMITS.records - 17);
+  assert.equal(suffix.records[0].id, records[OUTBOX_LIMITS.records + 17].id);
+  // Simulate death after the claim was written, before its final rename.
+  const pending = fs.readdirSync(pendingDir)[0];
+  fs.renameSync(path.join(pendingDir, pending), path.join(pendingDir, `${pending}.${crypto.randomUUID()}.claim`));
+  for (let pass = 0; pass < 5 && fs.readdirSync(pendingDir).length; pass++) {
+    acknowledgeDisk(); flow = f.flow(); await flow.flush();
+  }
+  acknowledgeDisk();
+  assert.equal(received.size, 600);
+  assert.equal(fs.readdirSync(pendingDir).length, 0);
+});
+
+test('process death between enqueue and suffix persistence replays only the crash-boundary ID', async t => {
+  const f = diskFixture(t), flow = f.flow();
+  const parent = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  const run = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), pendingIdentity: 'crash-exact-child' });
+  const records = Array.from({ length: 20 }, () => observation(flow, run));
+  flow.submit(run, records);
+  flow.store.createLaunch(parent, { launchId: 'crash-exact-child', multiUse: true });
+  const script = `
+    const {createFlow}=require(${JSON.stringify(require.resolve('../runtime/langfuse/flow.cjs'))});
+    const {queueObservation}=require(${JSON.stringify(require.resolve('../runtime/langfuse/export.cjs'))});
+    let count=0;
+    createFlow({stateDir:${JSON.stringify(f.stateDir)},env:{},queueObservation:(record,opts)=>{
+      const result=queueObservation(record,opts);
+      if(result.queued && ++count===7) process.exit(23);
+      return result;
+    },flushOutbox:async()=>({accepted:0})}).flush();
+  `;
+  const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10000,
+    env: { PATH: process.env.PATH } });
+  assert.equal(child.status, 23, child.stderr);
+  assert.equal(f.outbox().length, 7);
+  await f.flow().flush();
+  const queued = f.outbox();
+  assert.equal(new Set(queued.map(record => record.id)).size, records.length);
+  assert.equal(queued.length, records.length + 1, 'at-least-once replay is confined to the enqueue/checkpoint crash boundary');
+  assert.equal(fs.readdirSync(path.join(f.stateDir, 'adapters', 'pending')).length, 0);
+});
+
+test('aggregate checkpoint file and byte limits refuse safely, then reclaim expired state', async t => {
+  const f = diskFixture(t); let flow = f.flow();
+  const usage = () => {
+    const dir = path.join(f.stateDir, 'adapters');
+    const files = fs.readdirSync(dir).filter(name => name.endsWith('.json'));
+    return { files: files.length, bytes: files.reduce((sum, name) => sum + fs.statSync(path.join(dir, name)).size, 0) };
+  };
+  // Prefill a restart fixture with valid private checkpoints, then exercise
+  // real flow admission against directory usage, not ContextStore's own caps.
+  flow.writeState('checkpoint:0', { completedAt: 0 });
+  for (let i = 1; i < ADAPTER_LIMITS.files - 3; i++) fs.copyFileSync(flow.stateFile('checkpoint:0'), flow.stateFile(`checkpoint:${i}`));
+  flow = f.flow();
+  flow.writeState(`checkpoint:${ADAPTER_LIMITS.files - 3}`, { completedAt: 1 });
+  assert.throws(() => flow.writeState('over-file-limit', { completedAt: 1 }), /capacity/);
+  flow.writeState('health', { captureFailureObserved: true });
+  flow.writeState('delivery', { verified: false });
+  flow.writeState('checkpoint:0', { completedAt: 2 });
+  assert.ok(usage().files <= ADAPTER_LIMITS.files);
+  f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow(); await flow.flush();
+  assert.equal(flow.readState('checkpoint:0'), null);
+  assert.deepEqual(flow.readState('health'), { captureFailureObserved: true }, 'loss diagnostics must not expire with ordinary checkpoints');
+  assert.ok(usage().files <= 2);
+  const block = Array(110).fill('a'.repeat(8192));
+  for (let i = 0; i < 37; i++) flow.writeState(`large:${i}`, { counters: block });
+  assert.throws(() => flow.writeState('over-byte-limit', { counters: block }), /capacity/);
+  assert.ok(usage().bytes <= ADAPTER_LIMITS.bytes);
+  f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow(); await flow.flush();
+  assert.equal(flow.readState('large:0'), null);
+  assert.ok(usage().bytes < 4096);
+});
+
+test('checkpoint expiry preserves live sessions, unresolved descendants and outbox replay dependencies', async t => {
+  const f = diskFixture(t); let flow = f.flow();
+  const expired = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  flow.writeState('expired-generation', { id: flow.id(), usage: { input: 1 } });
+  const live = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  flow.writeState('live-tool', { id: flow.id(), toolName: 'Read' });
+  const capability = flow.createToolLaunch(live);
+  const unresolved = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), pendingIdentity: 'exact-unresolved' });
+  flow.writeState('unresolved-generation', { id: flow.id() });
+  const lateToolActor = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  const ancestor = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  flow.writeState('ancestor-generation', { id: flow.id() });
+  const deferredDescendant = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID(), parent: ancestor });
+  const replay = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  flow.writeState('replay-generation', { id: flow.id() });
+  flow.submit(replay, [observation(flow, replay)]);
+  f.advance(ADAPTER_LIMITS.retentionMs - 1000);
+  flow.update(live, { observedModel: 'synthetic-model' });
+  flow.resolve(lateToolActor);
+  flow.writeState('recent-tool-reference', { id: flow.id(), caller: { rootSpanId: lateToolActor.rootSpanId } });
+  flow.submit(unresolved, [observation(flow, unresolved)]); // New deferred dependency on an older run.
+  flow.remember(deferredDescendant, { pendingIdentity: 'exact-new-pause' });
+  flow.submit(deferredDescendant, [observation(flow, deferredDescendant)]);
+  f.advance(2000); flow = f.flow(); await flow.flush();
+  assert.equal(flow.store.getRun(expired.runId), null);
+  assert.equal(flow.readState(`run:${expired.rootSpanId}`), null);
+  assert.equal(flow.readState('expired-generation'), null);
+  assert.ok(flow.readState('live-tool'));
+  assert.ok(flow.readState('unresolved-generation'));
+  assert.ok(flow.readState('replay-generation'));
+  assert.ok(flow.readState(`run:${unresolved.rootSpanId}`));
+  assert.ok(flow.readState(`run:${replay.rootSpanId}`));
+  assert.ok(flow.readState(`run:${ancestor.rootSpanId}`), 'deferred descendants pin expired exact ancestors');
+  assert.ok(flow.readState('ancestor-generation'));
+  assert.equal(flow.store.getRun(lateToolActor.runId), null);
+  assert.ok(flow.readState(`run:${lateToolActor.rootSpanId}`), 'recent tool checkpoints pin actors beyond ContextStore TTL');
+  // An expired capability cannot become usable because its checkpoint survives.
+  assert.equal(flow.actorForTool(capability.nonce), null);
+  assert.equal(flow.resolve(unresolved), null);
+  assert.equal(f.outbox().length, 1);
 });

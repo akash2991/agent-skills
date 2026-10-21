@@ -5,7 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { createFlow } = require('../runtime/langfuse/flow.cjs');
+const { createFlow, ADAPTER_LIMITS } = require('../runtime/langfuse/flow.cjs');
+const { OUTBOX_LIMITS } = require('../runtime/langfuse/export.cjs');
+const { dependencyCacheDir } = require('../runtime/langfuse/dependencies.cjs');
 const { handleClaudeHook } = require('../runtime/langfuse/claude.cjs');
 const { runContext } = require('../runtime/langfuse/context-cli.cjs');
 
@@ -101,4 +103,105 @@ test('an unresolved native child can set its own context without bypassing linea
   assert.equal(result.sessionId, 'UNKNOWN');
   assert.equal(flow.resolve(child), null);
   assert.equal(records.length, 0, 'metadata editing must not export a guessed root');
+});
+
+test('real disk outbox and pinned SDK drain deferred batches beyond count/byte capacities across restart', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-backlog-sdk-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cwd = path.join(root, 'project'), stateDir = path.join(root, 'state'); fs.mkdirSync(cwd);
+  const make = () => createFlow({ cwd, stateDir, env: {} });
+  let flow = make();
+  const parent = flow.begin({ cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
+  const child = flow.begin({ cwd, nativeSessionId: crypto.randomUUID(), pendingIdentity: 'large-exact-child' });
+  const skills = Array.from({ length: 32 }, (_, i) => `skill-${String(i).padStart(3, '0')}-${'z'.repeat(118)}`);
+  const run = flow.update(child, { skillsInvoked: skills, skillsLoaded: skills });
+  const records = Array.from({ length: 600 }, () => ({ id: flow.id(), traceId: run.traceId,
+    parentId: run.rootSpanId, sessionId: run.sessionId, nativeSessionId: run.nativeSessionId,
+    type: 'GENERATION', startTime: Date.now(), endTime: Date.now(), model: 'synthetic-model',
+    usage: { input: 2, output: 3 }, outcome: 'completed' }));
+  assert.deepEqual(flow.submit(run, records), { queued: 0, pending: records.length });
+  const pendingDir = path.join(stateDir, 'adapters', 'pending');
+  const pendingCount = () => fs.readdirSync(pendingDir).reduce((sum, name) =>
+    sum + JSON.parse(fs.readFileSync(path.join(pendingDir, name), 'utf8')).records.length, 0);
+  const bytes = fs.readdirSync(pendingDir).reduce((sum, name) => sum + fs.statSync(path.join(pendingDir, name)).size, 0);
+  assert.ok(bytes > OUTBOX_LIMITS.bytes, 'sanitized deferred metadata exceeds real byte capacity');
+  assert.ok(records.length > OUTBOX_LIMITS.records);
+  assert.ok(fs.readdirSync(pendingDir).length > 1, 'oversized suffix must fit bounded individual checkpoints');
+  flow.store.createLaunch(parent, { launchId: 'large-exact-child', multiUse: true });
+  const spans = []; let acknowledge = false;
+  const opts = { dependencyRoot: dependencyCacheDir(), timeoutMs: 30000, exporterFactory: () => ({
+    export(batch, callback) { if (acknowledge) spans.push(...batch); callback({ code: acknowledge ? 0 : 1 }); },
+    async shutdown() {}, async forceFlush() {}
+  }) };
+  const first = await flow.flush(opts);
+  assert.equal(first.accepted, 0);
+  assert.ok(first.queued > 0);
+  const retained = pendingCount();
+  assert.ok(retained > 0 && retained < records.length, 'only the unqueued tail remains durable');
+  flow = make();
+  await flow.flush(opts);
+  assert.equal(pendingCount(), retained, 'restart while full must not restore the transferred prefix');
+  acknowledge = true;
+  for (let pass = 0; pass < 10; pass++) {
+    flow = make();
+    const result = await flow.flush(opts);
+    if (!result.deferred && !result.queued) break;
+  }
+  const ids = spans.map(span => span.spanContext().spanId);
+  assert.equal(new Set(ids).size, records.length);
+  assert.equal(ids.length, records.length, 'normal capacity retries must not continually replay the same prefix');
+  assert.equal(pendingCount(), 0);
+  assert.equal(fs.readdirSync(path.join(stateDir, 'outbox')).length, 0);
+  assert.ok(spans.every(span => span.spanContext().traceId === parent.traceId));
+  assert.ok(spans.every(span => JSON.parse(span.attributes['langfuse.observation.metadata.ticketId']) === 'TEST-17'
+    && JSON.parse(span.attributes['langfuse.observation.metadata.ticketSource']) === 'explicit'));
+});
+
+test('many completed Claude runs/tools/generations expire on disk while an active session retains replay state', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-checkpoint-lifecycle-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cwd = path.join(root, 'project'), stateDir = path.join(root, 'state'); fs.mkdirSync(cwd);
+  let now = Date.now();
+  const make = () => createFlow({ cwd, stateDir, harness: 'claude', env: {}, clock: () => now,
+    // Keep the real flow/store/outbox; transport is explicitly offline.
+    flushOutbox: async () => ({ queued: 0, accepted: 0, verified: false }) });
+  let flow = make(); const expiredFiles = [];
+  for (let i = 0; i < 24; i++) {
+    const session = crypto.randomUUID(), file = path.join(cwd, 'synthetic.jsonl');
+    const hook = (event, extra = {}) => handleClaudeHook({ cwd, session_id: session, hook_event_name: event, ...extra }, { flow, clock: () => now });
+    await hook('SessionStart');
+    for (let n = 0; n < 3; n++) {
+      await hook('PreToolUse', { tool_name: 'Bash', tool_use_id: `tool-${n}`, tool_input: { command: 'true' } });
+      await hook('PostToolUse', { tool_name: 'Bash', tool_use_id: `tool-${n}` });
+    }
+    fs.writeFileSync(file, JSON.stringify({ type: 'assistant', timestamp: now, message: {
+      id: `native-message-${i}`, model: 'claude-opus-4-6', usage: { input_tokens: 2, output_tokens: 3 }
+    } }) + '\n');
+    await hook('Stop', { transcript_path: file });
+    expiredFiles.push(flow.stateFile(`run:${flow.session(session).rootSpanId}`));
+    // Offline acknowledgement of synthetic observations. No network or credentials.
+    for (const name of fs.readdirSync(path.join(stateDir, 'outbox'))) fs.unlinkSync(path.join(stateDir, 'outbox', name));
+  }
+  const adapterDir = path.join(stateDir, 'adapters');
+  const usage = () => {
+    const files = fs.readdirSync(adapterDir).filter(name => name.endsWith('.json'));
+    return { files: files.length, bytes: files.reduce((sum, name) => sum + fs.statSync(path.join(adapterDir, name)).size, 0) };
+  };
+  const before = usage();
+  assert.ok(before.files > 200, 'actual native generation/tool/capability checkpoints were created');
+  const activeSession = crypto.randomUUID();
+  const activeHook = event => handleClaudeHook({ cwd, session_id: activeSession, hook_event_name: event }, { flow, clock: () => now });
+  await activeHook('SessionStart');
+  const activeRun = flow.session(activeSession);
+  flow.writeState('active-replay-cursor', { offset: 42 });
+  now += ADAPTER_LIMITS.retentionMs - 1000;
+  flow.update(activeRun, { observedModel: 'claude-opus-4-6' });
+  now += 2000; flow = make(); await flow.flush();
+  const after = usage();
+  assert.ok(expiredFiles.every(file => !fs.existsSync(file)));
+  assert.ok(after.files < 20 && after.files < before.files);
+  assert.ok(after.bytes < before.bytes && after.bytes <= ADAPTER_LIMITS.bytes);
+  assert.ok(after.files <= ADAPTER_LIMITS.files);
+  assert.ok(flow.readState('active-replay-cursor'));
+  assert.ok(flow.session(activeSession));
 });
