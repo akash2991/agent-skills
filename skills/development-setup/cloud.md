@@ -40,7 +40,7 @@ A project whose `.env` predates Session Manager adds `CLOUD_INSTANCE_PROFILE` fr
 
 The tunables, with their defaults, are in `.env.example`; a project that changes one records why in `docs/DEVELOPMENT.md`.
 
-The profile needs the `brain-dev-operator` policy and nothing more; attach it rather than rebuilding it by hand. It launches machines only in the brain VPC with the `brain-dev` group and the `brain=dev` tag, tags only at creation (afterwards only a machine's `brain:expires-at`), attaches only `brain:home` volumes to `brain=dev` machines, opens Session Manager SSH only to `brain=dev` machines, and passes only the scheduler and machine roles.
+The profile needs the `brain-dev-operator` policy and nothing more; attach it rather than rebuilding it by hand. It assumes EBS encryption with the default `aws/ebs` key; in an account that encrypts with its own KMS key by default, a developer also needs `kms:CreateGrant`, `kms:Decrypt`, and `kms:GenerateDataKeyWithoutPlaintext` on that key through EC2 (`kms:ViaService`), or every launch and attach fails. It launches machines only in the brain VPC with the `brain-dev` group and the `brain=dev` tag, tags only at creation (afterwards only a machine's `brain:expires-at`), attaches only `brain:home` volumes to `brain=dev` machines, opens Session Manager SSH only to `brain=dev` machines, and passes only the scheduler and machine roles.
 
 ## What guards the cost
 

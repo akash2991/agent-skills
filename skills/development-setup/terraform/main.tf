@@ -259,6 +259,7 @@ resource "aws_iam_policy" "operator" {
         Action = "ec2:RunInstances"
         Resource = [
           "${local.arn}:ec2:${var.region}::image/*",
+          "${local.arn}:ec2:${var.region}::snapshot/*",
           "${local.arn}:ec2:${var.region}:${local.account}:volume/*",
           "${local.arn}:ec2:${var.region}:${local.account}:key-pair/*",
           "${local.arn}:ec2:${var.region}:${local.account}:dedicated-host/*",
