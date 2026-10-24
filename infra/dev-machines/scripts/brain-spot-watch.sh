@@ -26,7 +26,7 @@ while sleep 5; do
     sock=""
     for s in /tmp/ssh-*/agent.*; do
       [ -S "$s" ] && [ "$(stat -c %U "$s")" = ec2-user ] \
-        && SSH_AUTH_SOCK="$s" runuser -u ec2-user -- ssh-add -T /home/ec2-user/.ssh/github.pub >/dev/null 2>&1 \
+        && SSH_AUTH_SOCK="$s" runuser -u ec2-user -- timeout 5 ssh-add -T /home/ec2-user/.ssh/github.pub >/dev/null 2>&1 \
         && { sock="$s"; break; }
     done
     runuser -u ec2-user -- env ${sock:+SSH_AUTH_SOCK="$sock"} timeout "$(( left > 15 ? left - 10 : 5 ))" "$HOOK" "$left" \
