@@ -65,7 +65,11 @@ REMOTE="ec2-user@$ID"
 "
 
 # Run cloud-capacity.sh before the build
-if ! CAP="$("$HERE/cloud-capacity.sh" "$ID" 2>/dev/null)"; then
+RC=0; CAP="$("$HERE/cloud-capacity.sh" "$ID" 2>/dev/null)" || RC=$?
+if [ "$RC" = 3 ]; then
+  echo "$ID is being reclaimed by AWS (Spot); run the build again" >&2
+  exit 1
+elif [ "$RC" != 0 ] && [ "$RC" != 1 ]; then
   echo "WARNING: cannot read capacity of $ID; continuing anyway" >&2
 else
   echo "machine capacity: $CAP" >&2

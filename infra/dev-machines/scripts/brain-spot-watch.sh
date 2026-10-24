@@ -21,11 +21,13 @@ while sleep 5; do
   echo "reclaim scheduled at $when (${left}s)"
   wall "AWS reclaims this Spot machine in about ${left}s. Work on the home volume is kept; push anything else now."
   if [ -x "$HOOK" ]; then
-    # A live agent forwarded by a connected developer, if any, so the hook can push.
+    # A connected developer's forwarded agent holding the key GitHub is pinned to (~/.ssh/github.pub), so the hook
+    # can push.
     sock=""
     for s in /tmp/ssh-*/agent.*; do
       [ -S "$s" ] && [ "$(stat -c %U "$s")" = ec2-user ] \
-        && SSH_AUTH_SOCK="$s" runuser -u ec2-user -- ssh-add -l >/dev/null 2>&1 && { sock="$s"; break; }
+        && SSH_AUTH_SOCK="$s" runuser -u ec2-user -- ssh-add -T /home/ec2-user/.ssh/github.pub >/dev/null 2>&1 \
+        && { sock="$s"; break; }
     done
     runuser -u ec2-user -- env ${sock:+SSH_AUTH_SOCK="$sock"} timeout "$(( left > 15 ? left - 10 : 5 ))" "$HOOK" "$left" \
       || echo "on-reclaim hook failed"

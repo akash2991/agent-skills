@@ -7,7 +7,7 @@
 # CLOUD_MAX_CPU_PCT (70) percent of its vCPUs, and the latest memory and disk use are under
 # CLOUD_MAX_MEM_PCT (75) and CLOUD_MAX_DISK_PCT (80). A machine with under 5 minutes of metrics has just
 # started and counts as having room. Prints the numbers and the verdict as JSON on stdout; exits 0 with
-# headroom, 1 without, 2 when the machine cannot be read.
+# headroom, 1 without, 2 when the machine cannot be read, 3 when AWS is reclaiming it (Spot, DM10).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/cloud-lib.sh"

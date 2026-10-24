@@ -92,6 +92,7 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
       # Spot reclaim under way (DM10): never join a machine that has a minute or two left.
       [ -z "$HOME_VOLUME" ] || { echo "refused: AWS is reclaiming $id, which holds your home volume; run cloud-up.sh again in a few minutes (DM10)" >&2; exit 1; }
       echo "$id is being reclaimed; not joining it" >&2
+      [ "$home" = None ] && LIVE=$((LIVE - 1))  # nor counting it against CLOUD_MAX_MACHINES
       continue
     fi
     if [ "$RC" = 0 ] || { [ "$RC" = 1 ] && [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
