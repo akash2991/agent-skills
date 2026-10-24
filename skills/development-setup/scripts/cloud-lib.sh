@@ -16,7 +16,27 @@ DISK_GB="${CLOUD_DISK_GB:-100}"
 MAX_CPU_PCT="${CLOUD_MAX_CPU_PCT:-70}"
 MAX_MEM_PCT="${CLOUD_MAX_MEM_PCT:-75}"
 MAX_DISK_PCT="${CLOUD_MAX_DISK_PCT:-80}"
-SSH=(ssh -n -A -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes)
+HOME_VOLUME="${CLOUD_HOME_VOLUME:-}"
+# A machine is reached by its instance ID, over SSH inside a Session Manager session opened as AWS_PROFILE; nothing is
+# open to the internet (DS15): ssh ec2-user@<instance-id>. The keepalive keeps an idle session from timing out.
+need_ssh() {
+  command -v session-manager-plugin >/dev/null \
+    || { echo "install the Session Manager plugin: brew install --cask session-manager-plugin (cloud.md)" >&2; exit 2; }
+}
+PROXY_CMD="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $REGION${AWS_PROFILE:+ --profile $AWS_PROFILE}"
+PROXY=(-o "ProxyCommand=$PROXY_CMD" -o ServerAliveInterval=30)
+SSH=(ssh -n -A -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o BatchMode=yes "${PROXY[@]}")
+SSH_HINT="ssh -A -o ServerAliveInterval=30 -o ProxyCommand='$PROXY_CMD' ec2-user@"
+
+# wait_ssm <instance-id>: until its SSM agent is online, so SSH can reach it (up to 5 minutes after boot).
+wait_ssm() {
+  for _ in $(seq 60); do
+    [ "$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$1" \
+      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)" = Online ] && return 0
+    sleep 5
+  done
+  return 1
+}
 
 need() {
   for v in "$@"; do
