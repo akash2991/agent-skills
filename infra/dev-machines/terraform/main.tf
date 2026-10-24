@@ -111,6 +111,11 @@ resource "aws_iam_role_policy" "machine_ssm" {
   })
 }
 
+# Spot machines (DM10) need EC2's Spot service-linked role, created once per account.
+resource "aws_iam_service_linked_role" "spot" {
+  aws_service_name = "spot.amazonaws.com"
+}
+
 resource "aws_iam_instance_profile" "machine" {
   name = "brain-dev-machine"
   role = aws_iam_role.machine.name
@@ -263,6 +268,7 @@ resource "aws_iam_policy" "operator" {
           "${local.arn}:ec2:${var.region}:${local.account}:volume/*",
           "${local.arn}:ec2:${var.region}:${local.account}:key-pair/*",
           "${local.arn}:ec2:${var.region}:${local.account}:dedicated-host/*",
+          "${local.arn}:ec2:${var.region}:${local.account}:spot-instances-request/*",
         ]
       },
       {

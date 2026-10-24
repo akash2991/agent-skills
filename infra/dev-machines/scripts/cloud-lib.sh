@@ -19,6 +19,7 @@ MAX_CPU_PCT="${CLOUD_MAX_CPU_PCT:-70}"
 MAX_MEM_PCT="${CLOUD_MAX_MEM_PCT:-75}"
 MAX_DISK_PCT="${CLOUD_MAX_DISK_PCT:-80}"
 HOME_VOLUME="${CLOUD_HOME_VOLUME:-}"
+SPOT_DEFAULT="${CLOUD_SPOT:-0}"
 # A machine is reached by its instance ID, over SSH inside a Session Manager session opened as AWS_PROFILE; nothing is
 # open to the internet (DM6): ssh ec2-user@<instance-id>. The keepalive keeps an idle session from timing out.
 need_ssh() {
