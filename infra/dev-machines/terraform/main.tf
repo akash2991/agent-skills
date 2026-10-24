@@ -53,7 +53,7 @@ resource "aws_default_security_group" "dev" {
   tags   = { Name = "brain-dev-default-unused" }
 }
 
-# --- Access: nothing in, from anywhere (DS15). Developers reach a machine over SSH inside an SSM Session Manager
+# --- Access: nothing in, from anywhere (M6). Developers reach a machine over SSH inside an SSM Session Manager
 # session, which the machine's agent opens outbound and AWS authorizes with the developer's credentials; services are
 # reached through SSH tunnels.
 
@@ -79,7 +79,7 @@ resource "aws_key_pair" "dev" {
 }
 
 # Every machine runs as this role so its SSM agent can register and carry sessions, and for nothing else: not the
-# managed AmazonSSMManagedInstanceCore, which also reads every Parameter Store value in the account (DS4, DS15).
+# managed AmazonSSMManagedInstanceCore, which also reads every Parameter Store value in the account (development-setup DS4, M6).
 resource "aws_iam_role" "machine" {
   name = "brain-dev-machine"
 
@@ -116,7 +116,7 @@ resource "aws_iam_instance_profile" "machine" {
   role = aws_iam_role.machine.name
 }
 
-# --- Home volumes (DS18): one per developer, in the first zone (CLOUD_SUBNET's). cloud-up.sh attaches it to that
+# --- Home volumes (M9): one per developer, in the first zone (CLOUD_SUBNET's). cloud-up.sh attaches it to that
 # developer's machine as /home/ec2-user; it outlives every machine. Daily snapshots, kept for snapshot_days.
 
 resource "aws_ebs_volume" "home" {
@@ -177,7 +177,7 @@ resource "aws_dlm_lifecycle_policy" "home" {
   }
 }
 
-# --- The AWS-side deadline (DS13): EventBridge Scheduler assumes this role to terminate a machine or release a Mac
+# --- The AWS-side deadline (M4): EventBridge Scheduler assumes this role to terminate a machine or release a Mac
 # host, and only one tagged brain=dev.
 
 resource "aws_iam_role" "scheduler" {
@@ -212,7 +212,7 @@ resource "aws_iam_role_policy" "scheduler" {
   })
 }
 
-# --- What a project's AWS_PROFILE needs to run the cloud scripts (cloud.md). Attach it to the IAM user or role a
+# --- What a project's AWS_PROFILE needs to run the cloud scripts (README.md). Attach it to the IAM user or role a
 # developer's profile uses; an administrator already has it.
 
 resource "aws_iam_policy" "operator" {
@@ -267,7 +267,7 @@ resource "aws_iam_policy" "operator" {
       },
       {
         # Tags are what every condition below trusts, so they are set only when a machine or host is created, and
-        # afterwards only a brain machine's deadline moves; nothing else can be tagged into the brain (DS15, DS18).
+        # afterwards only a brain machine's deadline moves; nothing else can be tagged into the brain (M6, M9).
         Sid      = "TagOnCreate"
         Effect   = "Allow"
         Action   = "ec2:CreateTags"
@@ -295,7 +295,7 @@ resource "aws_iam_policy" "operator" {
         }
       },
       {
-        # A home volume attaches only to a brain machine, and only a brain home volume attaches (DS18). Which developer's
+        # A home volume attaches only to a brain machine, and only a brain home volume attaches (M9). Which developer's
         # volume is CLOUD_HOME_VOLUME's to say; cloud-up.sh refuses a volume without the brain:home tag.
         Sid       = "HomeVolumeAttach"
         Effect    = "Allow"

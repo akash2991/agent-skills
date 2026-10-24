@@ -1,11 +1,13 @@
 #!/bin/bash
 # cloud-lib.sh — settings and helpers shared by the cloud-*.sh scripts. Sourced, never run.
-# Reads the project's .env from the current directory (the project root). The variables are
-# listed in skills/development-setup/cloud.md, One-time setup.
+# Reads its settings from CLOUD_ENV_FILE, else .env in the current directory. The variables are in
+# infra/dev-machines/env.example and README.md, One-time setup.
 # shellcheck disable=SC2034  # the settings are used by the scripts that source this file
-[ -f .env ] && { set -a; . ./.env; set +a; }
+ENV_FILE="${CLOUD_ENV_FILE:-.env}"
+# shellcheck disable=SC1090  # the settings file is the user's
+[ -f "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
 REGION="${CLOUD_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}}}"
-[ -n "$REGION" ] || { echo "set CLOUD_REGION in .env" >&2; exit 2; }
+[ -n "$REGION" ] || { echo "set CLOUD_REGION in $ENV_FILE" >&2; exit 2; }
 export AWS_REGION="$REGION" AWS_PAGER=""
 DEFAULT_TYPE="${CLOUD_DEFAULT_TYPE:-m8i.2xlarge}"
 MAC_TYPE="${CLOUD_MAC_TYPE:-mac2-m2.metal}"
@@ -18,10 +20,10 @@ MAX_MEM_PCT="${CLOUD_MAX_MEM_PCT:-75}"
 MAX_DISK_PCT="${CLOUD_MAX_DISK_PCT:-80}"
 HOME_VOLUME="${CLOUD_HOME_VOLUME:-}"
 # A machine is reached by its instance ID, over SSH inside a Session Manager session opened as AWS_PROFILE; nothing is
-# open to the internet (DS15): ssh ec2-user@<instance-id>. The keepalive keeps an idle session from timing out.
+# open to the internet (M6): ssh ec2-user@<instance-id>. The keepalive keeps an idle session from timing out.
 need_ssh() {
   command -v session-manager-plugin >/dev/null \
-    || { echo "install the Session Manager plugin: brew install --cask session-manager-plugin (cloud.md)" >&2; exit 2; }
+    || { echo "install the Session Manager plugin: brew install --cask session-manager-plugin (README.md)" >&2; exit 2; }
 }
 PROXY_CMD="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $REGION${AWS_PROFILE:+ --profile $AWS_PROFILE}"
 PROXY=(-o "ProxyCommand=$PROXY_CMD" -o ServerAliveInterval=30)
@@ -48,7 +50,7 @@ wait_ssm() {
 
 need() {
   for v in "$@"; do
-    [ -n "${!v:-}" ] || { echo "set $v in .env (skills/development-setup/cloud.md, One-time setup)" >&2; exit 2; }
+    [ -n "${!v:-}" ] || { echo "set $v in $ENV_FILE (infra/dev-machines/README.md, One-time setup)" >&2; exit 2; }
   done
 }
 

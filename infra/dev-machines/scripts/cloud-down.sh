@@ -1,16 +1,16 @@
 #!/bin/bash
-# cloud-down.sh — take an agent off a brain machine, and terminate the machine when nobody is left (development-setup DS14).
+# cloud-down.sh — take an agent off a brain machine, and terminate the machine when nobody is left (development-setup M5).
 #
-# Usage: skills/development-setup/scripts/cloud-down.sh <instance-id> [<work-dir>]
-# Run from the project root. Refuses a machine without the brain=dev tag.
+# Usage: infra/dev-machines/scripts/cloud-down.sh <instance-id> [<work-dir>]
+# Settings from CLOUD_ENV_FILE or ./.env (env.example). Refuses a machine without the brain=dev tag.
 #   dev machine  stops and removes the Compose project <work-dir> with its volumes and deletes ~/work/<work-dir>;
 #                terminates the machine only when no other agent's directory is left under ~/work.
 #                A machine that cannot be reached is left to its deadline and cloud-reap.sh
-#   home machine one with a developer's home volume (DS18): stops and removes the Compose project <work-dir> but
+#   home machine one with a developer's home volume (M9): stops and removes the Compose project <work-dir> but
 #                keeps ~/work/<work-dir> on the volume, and removes this agent's registration; terminates the machine
 #                when no other agent is registered on it and no other SSH session is open
 #   Mac machine  terminated; its host stays allocated until its scheduled release, 24 h after allocation,
-#                so further iOS builds reuse it (DS17)
+#                so further iOS builds reuse it (M8)
 # Prints the result as JSON on stdout; status goes to stderr.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"

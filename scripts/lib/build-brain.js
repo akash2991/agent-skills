@@ -29,8 +29,7 @@ function assertName(kind, name) {
 }
 
 function includeSource(file) {
-  // Account-wide provisioning stays in the source repo, not project bundles.
-  if (/(^|[\\/])skills[\\/]development-setup[\\/]terraform(?:[\\/]|$)/.test(file)) return false;
+  // Dev-machine provisioning lives in infra/, which is never copied; local Terraform state and variables never ship.
   return !/(^|[\\/])(\.DS_Store|mcp\.json|\.terraform|[^/\\]*\.tfstate(\.[^/\\]*)?|terraform\.tfvars)$/.test(file);
 }
 

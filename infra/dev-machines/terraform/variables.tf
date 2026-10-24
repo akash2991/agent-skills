@@ -22,7 +22,7 @@ variable "availability_zones" {
 }
 
 variable "home_volumes" {
-  description = "A home volume per developer (DS18): their name and its size in GiB. Its ID goes in that developer's CLOUD_HOME_VOLUME."
+  description = "A home volume per developer (M9): their name and its size in GiB. Its ID goes in that developer's CLOUD_HOME_VOLUME."
   type        = map(number)
   default     = {}
 

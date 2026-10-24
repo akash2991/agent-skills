@@ -15,7 +15,6 @@
     "project/SOUL.md",
     "project/.env.example",
     "skills/**",
-    "!skills/development-setup/terraform/**",
     "!skills/**/.terraform/**",
     "!skills/**/*.tfstate*",
     "!skills/**/terraform.tfvars",

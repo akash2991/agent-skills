@@ -1,7 +1,7 @@
 # Copy to terraform.tfvars (never committed) and fill in.
 aws_profile         = "personal"
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
-home_volumes        = { alice = 50 } # a persistent home per developer, in GiB (DS18)
+home_volumes        = { alice = 50 } # a persistent home per developer, in GiB (M9)
 # snapshot_days      = 7
 # region             = "ap-southeast-2"
 # availability_zones = ["ap-southeast-2a", "ap-southeast-2b"]

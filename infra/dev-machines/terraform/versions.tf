@@ -1,4 +1,4 @@
-# The shared dev environment the cloud scripts run in (development-setup DS10–DS18, cloud.md One-time setup).
+# The shared dev environment the cloud scripts run in (machine policy M1–M9, README.md, README.md, One-time setup).
 # Applied once per AWS account by the user; every project reads its outputs into its .env.
 # State is in S3 (init.sh creates the bucket), so any machine can plan and apply it.
 

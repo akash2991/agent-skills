@@ -1,8 +1,8 @@
 #!/bin/bash
-# cloud-capacity.sh — whether a shared dev machine has room for one more agent (development-setup DS11).
+# cloud-capacity.sh — whether a shared dev machine has room for one more agent (development-setup M2).
 #
-# Usage: skills/development-setup/scripts/cloud-capacity.sh <instance-id>
-# Run from the project root. Reads the last 15 minutes of the machine's /var/lib/brain/metrics over SSH,
+# Usage: infra/dev-machines/scripts/cloud-capacity.sh <instance-id>
+# Settings from CLOUD_ENV_FILE or ./.env (env.example). Reads the last 15 minutes of the machine's /var/lib/brain/metrics over SSH,
 # written every minute by brain-watchdog.sh. Headroom means: the 15-minute average load is under
 # CLOUD_MAX_CPU_PCT (70) percent of its vCPUs, and the latest memory and disk use are under
 # CLOUD_MAX_MEM_PCT (75) and CLOUD_MAX_DISK_PCT (80). A machine with under 5 minutes of metrics has just
@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ID="${1:-}"
 [ -n "$ID" ] || { echo "usage: cloud-capacity.sh <instance-id>" >&2; exit 2; }
 need_ssh
-# On a home machine (DS18) the agents are the ones registered in /run/brain-agents: old clones stay on its volume.
+# On a home machine (M9) the agents are the ones registered in /run/brain-agents: old clones stay on its volume.
 OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null
   if [ -d /run/brain-agents ]; then n=$(ls /run/brain-agents | wc -l); else n=$(ls -d ~/work/*/ 2>/dev/null | wc -l); fi
   echo "agents $n"')" \

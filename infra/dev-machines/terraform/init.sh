@@ -1,7 +1,7 @@
 #!/bin/bash
 # init.sh — create the Terraform state bucket if it is missing, then terraform init against it.
 #
-# Usage: skills/development-setup/terraform/init.sh <aws-profile> [<region>]     (region defaults to ap-southeast-2)
+# Usage: infra/dev-machines/terraform/init.sh <aws-profile> [<region>]     (region defaults to ap-southeast-2)
 # The bucket is brain-tfstate-<account>-<region>: versioned, encrypted, private. Run once per machine; then
 # terraform plan and apply in this directory with terraform.tfvars (terraform.tfvars.example).
 set -e

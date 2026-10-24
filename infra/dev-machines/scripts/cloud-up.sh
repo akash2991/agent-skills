@@ -1,30 +1,30 @@
 #!/bin/bash
-# cloud-up.sh — place an agent on a shared EC2 dev machine, or launch one (development-setup DS10–DS13, DS17, DS18).
+# cloud-up.sh — place an agent on a shared EC2 dev machine, or launch one (machine policy M1–M4, M8, M9).
 #
-# Usage: skills/development-setup/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--format-home] [--approved "<the user's words>"]
-# Run from the project root; settings come from its .env (project .env.example, cloud.md One-time setup).
+# Usage: infra/dev-machines/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--format-home] [--approved "<the user's words>"]
+# Settings from CLOUD_ENV_FILE or ./.env (env.example; README.md, One-time setup).
 #
 #   default   joins the first live dev machine whose metrics show headroom (cloud-capacity.sh) and moves its
 #             deadline to CLOUD_MAX_HOURS from now; when none has room, launches CLOUD_DEFAULT_TYPE (m8i.2xlarge)
 #             on Amazon Linux 2023 with Docker and Compose. Launching past CLOUD_MAX_MACHINES (2) live dev
-#             machines refuses without --approved (DS11, DS12)
-#   --type    launches a new machine of that type; any type but the default refuses without --approved (DS12)
+#             machines refuses without --approved (M2, M3)
+#   --type    launches a new machine of that type; any type but the default refuses without --approved (M3)
 #   --mac     a macOS build machine from CLOUD_MAC_AMI on CLOUD_MAC_TYPE (mac2-m2.metal); reuses a free brain Mac
 #             host, and allocating a new one refuses without --approved. A new host is released 24 h after
-#             allocation (DS17)
+#             allocation (M8)
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
 #   --format-home  format CLOUD_HOME_VOLUME on first use although it already has snapshots (the daily policy snapshots
 #             a new volume before it is ever used); refuses without --approved: only on the user's word that it never
-#             held a home (DS18)
+#             held a home (M9)
 #
-# With CLOUD_HOME_VOLUME set (DS18), a dev machine is that developer's own: it joins only the machine that has the
+# With CLOUD_HOME_VOLUME set (M9), a dev machine is that developer's own: it joins only the machine that has the
 # volume (waiting for it while it starts; without headroom only with --approved), and otherwise launches one in
 # CLOUD_SUBNET, mounts the volume as /home/ec2-user, and reports the machine only once the mount is confirmed; a
 # machine whose volume cannot be mounted is terminated. Without it, machines that hold someone's home volume are never
 # joined. Home machines do not count against CLOUD_MAX_MACHINES.
 #
 # A machine terminates itself after CLOUD_IDLE_MINUTES with no SSH connection and no load, and at its deadline
-# regardless; an EventBridge schedule terminates it at the same deadline from the AWS side (DS13). If that
+# regardless; an EventBridge schedule terminates it at the same deadline from the AWS side (M4). If that
 # schedule cannot be created the new machine is terminated at once. Prints the machine as JSON on stdout;
 # status goes to stderr.
 set -e
@@ -48,7 +48,7 @@ done
 need CLOUD_SUBNET CLOUD_SECURITY_GROUP CLOUD_KEY_NAME CLOUD_SCHEDULER_ROLE_ARN CLOUD_INSTANCE_PROFILE
 need_ssh
 
-refuse() { echo "refused: $1. Ask the user, record the answer on the ticket, and pass --approved \"<their words>\" (DS12)." >&2; exit 3; }
+refuse() { echo "refused: $1. Ask the user, record the answer on the ticket, and pass --approved \"<their words>\" (M3)." >&2; exit 3; }
 machine_json() { echo "{\"instance_id\":\"$1\",\"type\":\"$2\",\"host_id\":\"$3\",\"home_volume\":\"$4\",\"ssh\":\"$SSH_HINT$1\",\"expires_at\":\"$5\",\"joined\":$6}"; }
 [ "$MAC" = 0 ] || HOME_VOLUME=""
 
@@ -65,10 +65,10 @@ setup_reason() {
 }
 
 # register <instance-id>: mark this agent, by its work directory <ticket>-<slug>, as on the machine until cloud-down.sh
-# removes the mark (DS14); two agents on one ticket are two marks.
+# removes the mark (M5); two agents on one ticket are two marks.
 register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /run/brain-agents && sudo touch /run/brain-agents/$TICKET"; }
 
-# Join a live dev machine with headroom (DS11); with a home volume, only the machine that has it (DS18). Only shared
+# Join a live dev machine with headroom (M2); with a home volume, only the machine that has it (M9). Only shared
 # machines count against CLOUD_MAX_MACHINES: a home machine is one per volume.
 if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
   LIVE=0
@@ -85,9 +85,9 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
       [ "$RC" = 0 ] || echo "WARNING: joining $id without headroom, as approved: ${CAP:-metrics unreadable}" >&2
       echo "joining $id ($type): $CAP" >&2
       if [ -n "$HOME_VOLUME" ]; then
-        # A home machine that is still starting may answer before its home is mounted over ~ (DS18).
+        # A home machine that is still starting may answer before its home is mounted over ~ (M9).
         "${SSH[@]}" "ec2-user@$id" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~" \
-          || { echo "refused: $id has no home volume mounted on ~; $(setup_reason "$id") (DS18)" >&2; exit 1; }
+          || { echo "refused: $id has no home volume mounted on ~; $(setup_reason "$id") (M9)" >&2; exit 1; }
         register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
       fi
       if [[ "$expires" < "$EXPIRES" ]]; then
@@ -104,7 +104,7 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
       exit 0
     fi
     echo "$id has no headroom: ${CAP:-metrics unreadable}" >&2
-    [ -z "$HOME_VOLUME" ] || refuse "$id holds your home volume and has no headroom; wait for it, or join it anyway (DS11, DS18)"
+    [ -z "$HOME_VOLUME" ] || refuse "$id holds your home volume and has no headroom; wait for it, or join it anyway (M2, M9)"
   done < <(aws ec2 describe-instances --filters Name=tag:brain,Values=dev Name=tag:brain:kind,Values=dev Name=instance-state-name,Values=pending,running \
     --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value]" --output text)
   [ -n "$HOME_VOLUME" ] || [ "$LIVE" -lt "$MAX_MACHINES" ] || [ -n "$APPROVED" ] || refuse "$LIVE shared dev machines are live and none has headroom; another passes CLOUD_MAX_MACHINES ($MAX_MACHINES)"
@@ -123,7 +123,7 @@ if [ "$MAC" = 1 ]; then
   if [ -n "$HOST" ]; then
     echo "reusing Mac host $HOST" >&2
   else
-    [ -n "$APPROVED" ] || refuse "a new $TYPE host bills for at least 24 hours (DS17)"
+    [ -n "$APPROVED" ] || refuse "a new $TYPE host bills for at least 24 hours (M8)"
     AZ="$(aws ec2 describe-subnets --subnet-ids "$CLOUD_SUBNET" --query 'Subnets[0].AvailabilityZone' --output text)"
     HOST="$(aws ec2 allocate-hosts --instance-type "$TYPE" --availability-zone "$AZ" --quantity 1 \
       --tag-specifications "[{\"ResourceType\":\"dedicated-host\",\"Tags\":[{\"Key\":\"brain\",\"Value\":\"dev\"},{\"Key\":\"brain:ticket\",\"Value\":\"$TICKET\"},{\"Key\":\"brain:approved\",\"Value\":\"$APPROVED\"}]}]" \
@@ -169,7 +169,7 @@ trap 'rm -f "$TMP"' EXIT
   echo 'WATCHDOG'
   echo 'chmod +x /usr/local/bin/brain-watchdog'
   if [ -n "$HOME_VOLUME" ]; then
-    # DS18: the home volume becomes ec2-user's home before anything is written there. cloud-up.sh attaches it once
+    # M9: the home volume becomes ec2-user's home before anything is written there. cloud-up.sh attaches it once
     # the machine runs; a machine it never reaches shuts down, which terminates it.
     printf 'DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_%s\nFORMAT_OK=%s\n' "${HOME_VOLUME//-/}" "$FORMAT_OK"
     cat <<'HOMEVOL'
@@ -207,7 +207,7 @@ echo "$DEV $H ext4 defaults,nofail 0 2" >> /etc/fstab
 echo "HOME_MOUNT=$H" >> /usr/local/etc/brain-watchdog.env
 HOMEVOL
   fi
-  # Git reaches GitHub with the key that logs in (DS15): the forwarded agent may hold several GitHub keys, so pin the
+  # Git reaches GitHub with the key that logs in (M6): the forwarded agent may hold several GitHub keys, so pin the
   # one whose public half is in authorized_keys. GitHub's host keys come from its API over TLS, not from the first scan.
   # A home volume keeps these files, so each is rewritten, never appended to twice.
   cat <<'GITHUB'
@@ -226,7 +226,7 @@ GITHUB
   if [ "$MAC" = 1 ]; then
     echo 'nohup /usr/local/bin/brain-watchdog >/var/log/brain-watchdog.log 2>&1 &'
   else
-    # A unit, not systemd-run, so the watchdog comes back after a reboot and checks the home mount again (DS13, DS18).
+    # A unit, not systemd-run, so the watchdog comes back after a reboot and checks the home mount again (M4, M9).
     printf '%s\n' '[Unit]' 'Description=brain watchdog' '[Service]' 'ExecStart=/usr/local/bin/brain-watchdog' 'Restart=always' \
       '[Install]' 'WantedBy=multi-user.target' | sed 's/^/echo "/; s/$/" >> \/etc\/systemd\/system\/brain-watchdog.service/'
     echo 'systemctl daemon-reload && systemctl enable --now brain-watchdog'
@@ -257,7 +257,7 @@ ID="$(aws ec2 run-instances --image-id "$AMI" --instance-type "$TYPE" --key-name
 
 if ! schedule create "brain-kill-$ID" "$DEADLINE" terminateInstances "{\"InstanceIds\":[\"$ID\"]}"; then
   aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
-  echo "could not schedule the AWS-side termination of $ID, so it was terminated (DS13); check CLOUD_SCHEDULER_ROLE_ARN" >&2
+  echo "could not schedule the AWS-side termination of $ID, so it was terminated (M4); check CLOUD_SCHEDULER_ROLE_ARN" >&2
   exit 1
 fi
 
@@ -265,11 +265,11 @@ aws ec2 wait instance-running --instance-ids "$ID" || echo "$ID is still startin
 if [ -n "$HOME_VOLUME" ] && ! aws ec2 attach-volume --volume-id "$HOME_VOLUME" --instance-id "$ID" --device /dev/sdh >/dev/null; then
   aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
   aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
-  echo "could not attach home volume $HOME_VOLUME to $ID, so it was terminated (DS18)" >&2
+  echo "could not attach home volume $HOME_VOLUME to $ID, so it was terminated (M9)" >&2
   exit 1
 fi
 if [ -n "$HOME_VOLUME" ]; then
-  # Report success only once the home is mounted, and register this agent on the machine (DS14, DS18).
+  # Report success only once the home is mounted, and register this agent on the machine (M5, M9).
   echo "waiting for $ID to mount $HOME_VOLUME" >&2
   WHY=""; RC=0
   wait_ssm "$ID" || RC=$?
@@ -286,7 +286,7 @@ if [ -n "$HOME_VOLUME" ]; then
     WHY="$WHY; $(setup_reason "$ID")"
     aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
     aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
-    echo "$ID was terminated: $WHY (DS18)" >&2
+    echo "$ID was terminated: $WHY (M9)" >&2
     exit 1
   fi
 fi
