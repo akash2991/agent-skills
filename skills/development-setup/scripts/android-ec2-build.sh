@@ -33,8 +33,8 @@ MACHINE="$("$HERE/cloud-up.sh" "$TICKET")"
 ID="$(printf %s "$MACHINE" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).instance_id)")"
 echo "machine $ID" >&2
 need_ssh
-# A new machine is reachable once its SSM agent is online, and ready once cloud-init has finished (Docker, the home).
-wait_ssm "$ID" || { echo "$ID never came online in Session Manager" >&2; exit 1; }
+# A new machine is reachable once SSH answers through Session Manager, and ready once cloud-init has finished.
+wait_ssm "$ID" || exit 1
 
 cleanup() {
   echo "cleaning up..." >&2

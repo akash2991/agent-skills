@@ -277,6 +277,14 @@ resource "aws_iam_policy" "operator" {
         }
       },
       {
+        # Why a brain machine's setup gave up is in its console output; cloud-up.sh reports it.
+        Sid       = "SetupLog"
+        Effect    = "Allow"
+        Action    = "ec2:GetConsoleOutput"
+        Resource  = "${local.arn}:ec2:${var.region}:${local.account}:instance/*"
+        Condition = { StringEquals = { "aws:ResourceTag/brain" = "dev" } }
+      },
+      {
         Sid      = "MoveDeadline"
         Effect   = "Allow"
         Action   = "ec2:CreateTags"
