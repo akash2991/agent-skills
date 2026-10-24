@@ -77,7 +77,7 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
 With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as `/home/ec2-user` (DS18), so `~/work`, agent sessions, user-level tools, and anything else under the home folder survive termination; Docker images, system packages, and everything else on the root disk do not. The first machine formats an empty volume; later ones mount it as it was.
 
 - One machine at a time: the volume attaches to one machine, in its zone, so `cloud-up.sh` joins the machine that has it, and refuses when that machine has no headroom.
-- Snapshots: one every 24 hours at 17:00 UTC; only the latest is kept (`snapshot_days`, 1), so a mistake noticed after the next snapshot cannot be undone from it. Each snapshot stores only the blocks in use and changed since the last. Restore a file by creating a volume from a snapshot in the same zone, attaching it to the machine, and copying back; restore the whole home by setting `CLOUD_HOME_VOLUME` to that new volume.
+- Snapshots: daily at 17:00 UTC, kept for `snapshot_days` (7). Restore a file by creating a volume from a snapshot in the same zone, attaching it to the machine, and copying back; restore the whole home by setting `CLOUD_HOME_VOLUME` to that new volume.
 - Size: grow it in `home_volumes` and apply, then `sudo resize2fs` the device on the machine; a volume never shrinks.
 - It is one copy in one zone: push before every pause all the same (DS15).
 
