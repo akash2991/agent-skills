@@ -28,15 +28,18 @@ PROXY=(-o "ProxyCommand=$PROXY_CMD" -o ServerAliveInterval=30)
 SSH=(ssh -n -A -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o BatchMode=yes "${PROXY[@]}")
 SSH_HINT="ssh -A -o ServerAliveInterval=30 -o ProxyCommand='$PROXY_CMD' ec2-user@"
 
-# wait_ssm <instance-id>: until SSH answers through Session Manager (up to about 5 minutes after boot). The SSM agent
-# reports Online seconds before sshd listens, so Online alone is not ready.
+# wait_ssm <instance-id>: until SSH answers through Session Manager, for at most 5 minutes; on giving up it prints the
+# last error. The SSM agent reports Online seconds before sshd listens, so Online alone is not ready.
 wait_ssm() {
-  for _ in $(seq 60); do
-    [ "$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$1" \
-      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)" = Online ] \
-      && "${SSH[@]}" "ec2-user@$1" true 2>/dev/null && return 0
+  local end=$(( $(date +%s) + 300 )) err="SSM agent not online"
+  while [ "$(date +%s)" -lt "$end" ]; do
+    if [ "$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$1" \
+      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)" = Online ]; then
+      err="$("${SSH[@]}" "ec2-user@$1" true 2>&1)" && return 0
+    fi
     sleep 5
   done
+  echo "$1 is not reachable over SSH through Session Manager: ${err:-no output}" >&2
   return 1
 }
 

@@ -72,7 +72,12 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
     if [ "$RC" = 0 ] || { [ "$RC" = 1 ] && [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
       [ "$RC" = 0 ] || echo "WARNING: joining $id without headroom, as approved: ${CAP:-metrics unreadable}" >&2
       echo "joining $id ($type): $CAP" >&2
-      [ -z "$HOME_VOLUME" ] || register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
+      if [ -n "$HOME_VOLUME" ]; then
+        # A home machine that is still starting may answer before its home is mounted over ~ (DS18).
+        "${SSH[@]}" "ec2-user@$id" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~" \
+          || { echo "refused: $id has no home volume mounted on ~; cloud-reap.sh and its console output say why (DS18)" >&2; exit 1; }
+        register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
+      fi
       if [[ "$expires" < "$EXPIRES" ]]; then
         if schedule update "brain-kill-$id" "$DEADLINE" terminateInstances "{\"InstanceIds\":[\"$id\"]}"; then
           aws ec2 create-tags --resources "$id" --tags "Key=brain:expires-at,Value=$EXPIRES"
@@ -128,6 +133,10 @@ else
       --query "Volumes[0].[State, AvailabilityZone, Tags[?Key=='brain:home']|[0].Value]" --output text)"
     SAZ="$(aws ec2 describe-subnets --subnet-ids "$CLOUD_SUBNET" --query 'Subnets[0].AvailabilityZone' --output text)"
     [ -n "$VOWNER" ] && [ "$VOWNER" != None ] || { echo "$HOME_VOLUME is not a brain home volume (no brain:home tag)" >&2; exit 2; }
+    # A volume that has ever been snapshotted held a home: its machine must never format it, whatever it reads as.
+    HAS_SNAPSHOT=1
+    [ "$(aws ec2 describe-snapshots --owner-ids self --filters "Name=volume-id,Values=$HOME_VOLUME" \
+      --query 'length(Snapshots)' --output text)" = 0 ] && HAS_SNAPSHOT=0
     echo "home volume $HOME_VOLUME belongs to $VOWNER" >&2
     [ "$VSTATE" = available ] || { echo "home volume $HOME_VOLUME is $VSTATE, not available; cloud-reap.sh lists the machine that has it" >&2; exit 1; }
     [ "$VAZ" = "$SAZ" ] || { echo "home volume $HOME_VOLUME is in $VAZ but CLOUD_SUBNET is in $SAZ" >&2; exit 2; }
@@ -148,7 +157,7 @@ trap 'rm -f "$TMP"' EXIT
   if [ -n "$HOME_VOLUME" ]; then
     # DS18: the home volume becomes ec2-user's home before anything is written there. cloud-up.sh attaches it once
     # the machine runs; a machine it never reaches shuts down, which terminates it.
-    printf 'DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_%s\n' "${HOME_VOLUME//-/}"
+    printf 'DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_%s\nHAS_SNAPSHOT=%s\n' "${HOME_VOLUME//-/}" "$HAS_SNAPSHOT"
     cat <<'HOMEVOL'
 fail() { echo "$1, shutting down"; shutdown -h now; exit 1; }
 H="$(eval echo ~ec2-user)"
@@ -158,12 +167,17 @@ udevadm settle
 for i in $(seq 15); do head -c 4096 "$DEV" >/dev/null 2>&1 && break; sleep 2; done
 head -c 4096 "$DEV" >/dev/null 2>&1 || fail "home volume unreadable"
 NEW=0
-if ! blkid -p "$DEV" >/dev/null 2>&1; then
-  # A new volume need not read back as zeros, so "no filesystem" decides. A volume whose primary superblock is gone
-  # but whose first ext4 backup survives is a damaged home, never a new one: it is refused, not formatted.
-  dumpe2fs -h -o superblock=32768 -o blocksize=4096 "$DEV" >/dev/null 2>&1 \
-    && fail "home volume has an ext4 backup superblock but no readable filesystem; repair it, never format it"
-  mkfs.ext4 -q -L brain-home "$DEV" || fail "could not format the home volume"
+blkid -p "$DEV" >/dev/null 2>&1 && RC=0 || RC=$?
+[ "$RC" = 0 ] || [ "$RC" = 2 ] || fail "blkid cannot tell what is on the home volume (exit $RC)"
+if [ "$RC" = 2 ]; then
+  # A new volume need not read back as zeros, so "no filesystem" decides, with two guards: a volume that has ever been
+  # snapshotted held a home, and one whose primary superblock is gone but an ext4 backup survives is a damaged home.
+  [ "$HAS_SNAPSHOT" = 0 ] || fail "home volume has snapshots but no readable filesystem; repair it, never format it"
+  for sb in 8193:1024 16384:2048 32768:4096 98304:4096; do
+    dumpe2fs -h -o superblock="${sb%:*}" -o blocksize="${sb#*:}" "$DEV" >/dev/null 2>&1 \
+      && fail "home volume has an ext4 backup superblock but no readable filesystem; repair it, never format it"
+  done
+  mkfs.ext4 -q -b 4096 -L brain-home "$DEV" || fail "could not format the home volume"
   NEW=1
 fi
 mkdir -p /mnt/brain-home && mount "$DEV" /mnt/brain-home || fail "could not mount the home volume"
