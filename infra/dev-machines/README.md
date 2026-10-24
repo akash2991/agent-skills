@@ -17,7 +17,7 @@ The scripts read their settings from the file named by `CLOUD_ENV_FILE`, else `.
 | DM7 | **Android can build on a dev machine.** `scripts/android-ec2-build.sh` joins or launches one and runs the build there, when the developer's own computer cannot (`development-setup` DS16 still decides Android versus EAS). |
 | DM8 | **An iOS build on AWS is a 24-hour commitment.** An EC2 Mac runs on a dedicated host billed for at least 24 hours: only with that stated and approved (DM3); reuse an allocated host for every iOS build in those 24 hours, and let the scheduled release free it. |
 | DM9 | **A developer's files persist on their own home volume, never on a machine.** With `CLOUD_HOME_VOLUME` set, `cloud-up.sh` joins the machine that has that volume, or launches one in its zone and reports it only once the volume is mounted as `/home/ec2-user`. The machine stays short-lived (DM4) and is that developer's alone: no one else's agents join it, and it does not count against `CLOUD_MAX_MACHINES`. One volume per developer, listed in the Terraform. |
-| DM10 | **A machine may run on Spot.** `cloud-up.sh --spot` (or `CLOUD_SPOT=1`) launches the same machine at Spot's price, typically 55–75% less, which AWS may reclaim with a two-minute warning; with no Spot capacity it launches on-demand and says so. The machine watches for the warning every 5 seconds (`brain-spot-watch`), tells every terminal, and runs the developer's `~/.brain/on-reclaim` hook, if present, to stop agents cleanly; the hook can push work in progress while a developer is connected (their forwarded agent, DM6), and otherwise commits it to the home volume. A machine being reclaimed is never joined. Work on a home volume survives a reclaim like any termination (DM9); running processes do not. Mac machines are never Spot. |
+| DM10 | **A machine may run on Spot.** `cloud-up.sh --spot` (or `CLOUD_SPOT=1`) launches the same machine at Spot's price, typically 55–75% less, which AWS may reclaim with a two-minute warning; with no Spot capacity it launches on-demand and says so. The machine watches for the warning every 5 seconds (`brain-spot-watch`), tells every terminal, and runs the developer's `~/.brain/on-reclaim` hook, if present, to stop agents cleanly; the hook can push work in progress while a developer is connected (their forwarded agent, DM6), and otherwise commits it to the home volume. A machine being reclaimed is never joined. Work on a home volume survives a reclaim like any termination (DM9); running processes do not. Mac machines are never Spot. After a reclaim, `scripts/spot-relaunch-watch.sh` on the developer's computer launches the replacement and Herdr resumes the agents ("Surviving a Spot reclaim"). |
 
 ## One-time setup
 
@@ -103,6 +103,42 @@ With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as 
 - Snapshots: daily at 17:00 UTC, kept for `snapshot_days` (7); each stores only the blocks changed since the last. Restoring is the user's, with administrator access, since the operator policy cannot create volumes: create a volume from the snapshot in the same zone, tag it `brain:home=<name>` and `brain:backup=daily`, then either attach it beside the home and copy back, or replace the home with it (`terraform state rm` the old one, `terraform import` the new one under the same name, and update `CLOUD_HOME_VOLUME`).
 - Size: grow it in `home_volumes` and apply, then `sudo resize2fs` the device on the machine; a volume never shrinks.
 - It is one copy in one zone: push before every pause all the same (`development-setup` DS1).
+
+## Surviving a Spot reclaim
+
+With Spot (DM10), AWS may take the machine back with two minutes' warning. Work on the home volume (DM9) is never lost; what follows makes the running agents come back by themselves on the next machine, in the same Herdr workspaces.
+
+| When | What happens | Where |
+|---|---|---|
+| Always | Herdr keeps the layout and each agent's session in `~/.config/herdr/session.json` on the home volume, and resumes agents after a restart (`claude --resume`, `codex resume`, `pi --session`) | Herdr, with its agent integrations installed |
+| Two-minute warning | `brain-spot-watch` runs `~/.brain/on-reclaim`: Herdr's state copied aside, Herdr stopped so agents flush their sessions, the state put back; every repository's uncommitted work committed to `wip/<branch>` (branch, index, and files untouched), pushed while the developer is connected | the machine |
+| Machine gone | `spot-relaunch-watch.sh` sees the home machine ended with `Server.SpotInstanceTermination` and runs `cloud-up.sh --spot` once; idle and deadline terminations are left alone | the developer's computer |
+| New machine boots | the home volume is mounted and `herdr server` starts (`herdr-server.service`); when the developer's Herdr attaches, each agent resumes in its pane | the machine |
+
+One-time setup, per developer:
+
+1. On the machine (stored on the home volume): `herdr integration install claude`, then `codex` and `pi`, so Herdr learns each agent's session; Codex may ask once to trust the hook. Then install the hook: `mkdir -p ~/.brain && cp <agent-skills>/infra/dev-machines/scripts/on-reclaim.sh ~/.brain/on-reclaim`.
+2. On the developer's computer, a launchd job that runs the watcher every minute, `~/Library/LaunchAgents/dev.brain.spot-relaunch.plist`:
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0"><dict>
+     <key>Label</key><string>dev.brain.spot-relaunch</string>
+     <key>ProgramArguments</key><array>
+       <string><agent-skills>/infra/dev-machines/scripts/spot-relaunch-watch.sh</string>
+     </array>
+     <key>EnvironmentVariables</key><dict>
+       <key>CLOUD_ENV_FILE</key><string><settings file></string>
+       <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+     </dict>
+     <key>StartInterval</key><integer>60</integer>
+     <key>StandardOutPath</key><string>/tmp/brain-spot-relaunch.log</string>
+     <key>StandardErrorPath</key><string>/tmp/brain-spot-relaunch.log</string>
+   </dict></plist>
+   ```
+   then `launchctl load ~/Library/LaunchAgents/dev.brain.spot-relaunch.plist`. Remove it with `launchctl unload` and deleting the file.
+
+Limits: agents resume once the developer's Herdr reconnects, not before; Herdr resumes with the bare commands, so options such as `--model` come from each agent's own config; a turn in flight at the warning is cut off (the conversation up to it is kept); the watcher acts only while the developer's computer is awake and the AWS login is valid.
 
 ## Mobile builds on a machine
 

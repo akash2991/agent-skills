@@ -230,6 +230,25 @@ chmod 700 "$H/.ssh" && chmod 600 "$H/.ssh/authorized_keys"
 echo "$DEV $H ext4 defaults,nofail 0 2" >> /etc/fstab
 # The watchdog shuts the machine down if the home is ever not mounted, after a reboot for one.
 echo "HOME_MOUNT=$H" >> /usr/local/etc/brain-watchdog.env
+# Herdr, when the developer keeps it on the home volume: start its server at boot, so it restores the saved workspaces
+# and resumes the agents in them once the developer's Herdr attaches (DM10). Started detached, whether the server
+# stays in the foreground or not; the unit stays active so systemd leaves it running.
+if [ -x "$H/.local/bin/herdr" ]; then
+  cat > /etc/systemd/system/herdr-server.service <<'UNIT'
+[Unit]
+Description=Herdr server for ec2-user
+After=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ec2-user
+Environment=HOME=/home/ec2-user
+ExecStart=/bin/sh -c 'mkdir -p /home/ec2-user/.config/herdr; PATH=/home/ec2-user/.local/bin:$PATH setsid -f herdr server >>/home/ec2-user/.config/herdr/boot.log 2>&1 </dev/null'
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now herdr-server
+fi
 HOMEVOL
   fi
   # Git reaches GitHub with the key that logs in (DM6): the forwarded agent may hold several GitHub keys, so pin the
