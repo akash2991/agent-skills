@@ -1,7 +1,7 @@
 #!/bin/bash
 # cloud-up.sh — place an agent on a shared EC2 dev machine, or launch one (development-setup DS10–DS13, DS17, DS18).
 #
-# Usage: skills/development-setup/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--approved "<the user's words>"]
+# Usage: skills/development-setup/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--format-home] [--approved "<the user's words>"]
 # Run from the project root; settings come from its .env (project .env.example, cloud.md One-time setup).
 #
 #   default   joins the first live dev machine whose metrics show headroom (cloud-capacity.sh) and moves its
@@ -14,7 +14,8 @@
 #             allocation (DS17)
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
 #   --format-home  format CLOUD_HOME_VOLUME on first use although it already has snapshots (the daily policy snapshots
-#             a new volume before it is ever used); only on the user's word that it never held a home (DS18)
+#             a new volume before it is ever used); refuses without --approved: only on the user's word that it never
+#             held a home (DS18)
 #
 # With CLOUD_HOME_VOLUME set (DS18), a dev machine is that developer's own: it joins only the machine that has the
 # volume (waiting for it while it starts; without headroom only with --approved), and otherwise launches one in
@@ -55,6 +56,14 @@ NOW="$(date +%s)"
 DEADLINE=$(( NOW + MAX_HOURS * 3600 ))
 EXPIRES="$(iso_utc "$DEADLINE")Z"
 
+# setup_reason <instance-id>: why the machine's user data gave up, from its console output, or where to look.
+setup_reason() {
+  local r
+  r="$(aws ec2 get-console-output --instance-id "$1" --latest --query Output --output text 2>/dev/null \
+    | grep -o '[a-z][^]]*, shutting down' | tail -1)"
+  echo "${r:-its console output has no shutdown reason yet (aws ec2 get-console-output --instance-id $1 --latest)}"
+}
+
 # register <instance-id>: mark this agent, by its work directory <ticket>-<slug>, as on the machine until cloud-down.sh
 # removes the mark (DS14); two agents on one ticket are two marks.
 register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /run/brain-agents && sudo touch /run/brain-agents/$TICKET"; }
@@ -78,7 +87,7 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
       if [ -n "$HOME_VOLUME" ]; then
         # A home machine that is still starting may answer before its home is mounted over ~ (DS18).
         "${SSH[@]}" "ec2-user@$id" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~" \
-          || { echo "refused: $id has no home volume mounted on ~; cloud-reap.sh and its console output say why (DS18)" >&2; exit 1; }
+          || { echo "refused: $id has no home volume mounted on ~; $(setup_reason "$id") (DS18)" >&2; exit 1; }
         register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
       fi
       if [[ "$expires" < "$EXPIRES" ]]; then
@@ -136,12 +145,12 @@ else
       --query "Volumes[0].[State, AvailabilityZone, Tags[?Key=='brain:home']|[0].Value]" --output text)"
     SAZ="$(aws ec2 describe-subnets --subnet-ids "$CLOUD_SUBNET" --query 'Subnets[0].AvailabilityZone' --output text)"
     [ -n "$VOWNER" ] && [ "$VOWNER" != None ] || { echo "$HOME_VOLUME is not a brain home volume (no brain:home tag)" >&2; exit 2; }
-    # A volume that has ever been snapshotted held a home: its machine must never format it, whatever it reads as.
     # A volume that has ever been snapshotted may hold a home: its machine formats it only with --format-home.
     SNAPS="$(aws ec2 describe-snapshots --owner-ids self --filters "Name=volume-id,Values=$HOME_VOLUME" \
       --query 'length(Snapshots)' --output text)" || { echo "cannot list the snapshots of $HOME_VOLUME" >&2; exit 1; }
     FORMAT_OK=0
     { [ "$SNAPS" = 0 ] || [ "$FORMAT_HOME" = 1 ]; } && FORMAT_OK=1
+    [ "$FORMAT_HOME" = 0 ] || [ -n "$APPROVED" ] || refuse "--format-home formats $HOME_VOLUME if it has no filesystem; only on the user's word that it never held a home"
     echo "home volume $HOME_VOLUME belongs to $VOWNER" >&2
     [ "$VSTATE" = available ] || { echo "home volume $HOME_VOLUME is $VSTATE, not available; cloud-reap.sh lists the machine that has it" >&2; exit 1; }
     [ "$VAZ" = "$SAZ" ] || { echo "home volume $HOME_VOLUME is in $VAZ but CLOUD_SUBNET is in $SAZ" >&2; exit 2; }
@@ -266,11 +275,15 @@ if [ -n "$HOME_VOLUME" ]; then
   if ! wait_ssm "$ID"; then
     WHY="it never answered over SSH"
   elif ! "${SSH[@]}" "ec2-user@$ID" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~"; then
-    WHY="home volume $HOME_VOLUME was not mounted; its console output says why"
+    WHY="home volume $HOME_VOLUME was not mounted"
   elif ! register "$ID"; then
     WHY="this agent could not register on it"
   fi
   if [ -n "$WHY" ]; then
+    WHY="$WHY; $(setup_reason "$ID")"
+    if [ "${SNAPS:-0}" != 0 ] && [ "$FORMAT_HOME" = 0 ]; then
+      WHY="$WHY. $HOME_VOLUME has snapshots: if it has no filesystem yet, it is formatted only with --format-home --approved \"<the user's words>\""
+    fi
     aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
     aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
     echo "$ID was terminated: $WHY (DS18)" >&2

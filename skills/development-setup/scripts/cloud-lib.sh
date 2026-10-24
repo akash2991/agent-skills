@@ -33,6 +33,9 @@ SSH_HINT="ssh -A -o ServerAliveInterval=30 -o ProxyCommand='$PROXY_CMD' ec2-user
 wait_ssm() {
   local end=$(( $(date +%s) + 300 )) err="SSM agent not online"
   while [ "$(date +%s)" -lt "$end" ]; do
+    case "$(aws ec2 describe-instances --instance-ids "$1" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null)" in
+      shutting-down|terminated|stopping|stopped) echo "$1 shut itself down during setup" >&2; return 1 ;;
+    esac
     if [ "$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$1" \
       --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)" = Online ]; then
       err="$("${SSH[@]}" "ec2-user@$1" true 2>&1)" && return 0
