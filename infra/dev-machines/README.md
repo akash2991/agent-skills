@@ -17,7 +17,7 @@ The scripts read their settings from the file named by `CLOUD_ENV_FILE`, else `.
 | DM7 | **Android can build on a dev machine.** `scripts/android-ec2-build.sh` joins or launches one and runs the build there, when the developer's own computer cannot (`development-setup` DS16 still decides Android versus EAS). |
 | DM8 | **An iOS build on AWS is a 24-hour commitment.** An EC2 Mac runs on a dedicated host billed for at least 24 hours: only with that stated and approved (DM3); reuse an allocated host for every iOS build in those 24 hours, and let the scheduled release free it. |
 | DM9 | **A developer's files persist on their own home volume, never on a machine.** With `CLOUD_HOME_VOLUME` set, `cloud-up.sh` joins the machine that has that volume, or launches one in its zone and reports it only once the volume is mounted as `/home/ec2-user`. The machine stays short-lived (DM4) and is that developer's alone: no one else's agents join it, and it does not count against `CLOUD_MAX_MACHINES`. One volume per developer, listed in the Terraform. |
-| DM10 | **A machine may run on Spot.** `cloud-up.sh --spot` (or `CLOUD_SPOT=1`) launches the same machine at Spot's price, typically 55–75% less, which AWS may reclaim with a two-minute warning; with no Spot capacity it launches on-demand and says so. The machine watches for the warning every 5 seconds (`brain-spot-watch`), tells every terminal, and runs the developer's `~/.brain/on-reclaim` hook, if present, to stop agents cleanly and push work in progress. Work on a home volume survives a reclaim like any termination (DM9); running processes do not. Mac machines are never Spot. |
+| DM10 | **A machine may run on Spot.** `cloud-up.sh --spot` (or `CLOUD_SPOT=1`) launches the same machine at Spot's price, typically 55–75% less, which AWS may reclaim with a two-minute warning; with no Spot capacity it launches on-demand and says so. The machine watches for the warning every 5 seconds (`brain-spot-watch`), tells every terminal, and runs the developer's `~/.brain/on-reclaim` hook, if present, to stop agents cleanly; the hook can push work in progress while a developer is connected (their forwarded agent, DM6), and otherwise commits it to the home volume. A machine being reclaimed is never joined. Work on a home volume survives a reclaim like any termination (DM9); running processes do not. Mac machines are never Spot. |
 
 ## One-time setup
 
@@ -79,7 +79,7 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
 ## Working on a machine
 
 1. `scripts/cloud-reap.sh`.
-2. `scripts/cloud-up.sh <ticket>-<slug>` joins a machine with headroom or launches one, and prints `instance_id`, `home_volume`, `ssh`, `expires_at`, and `joined`. When it refuses, decide with its message and the metrics, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
+2. `scripts/cloud-up.sh <ticket>-<slug>` joins a machine with headroom or launches one, and prints `instance_id`, `home_volume`, `ssh`, `expires_at`, `joined`, and `spot`. When it refuses, decide with its message and the metrics, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
 3. SSH by instance ID inside a Session Manager session, with the command `cloud-up.sh` printed or this entry in `~/.ssh/config`, then `ssh <instance-id>`:
    ```
    Host i-*

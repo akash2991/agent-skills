@@ -1,7 +1,7 @@
 #!/bin/bash
 # cloud-up.sh — place an agent on a shared EC2 dev machine, or launch one (machine policy DM1–DM4, DM8, DM9).
 #
-# Usage: infra/dev-machines/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--format-home] [--approved "<the user's words>"]
+# Usage: infra/dev-machines/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--spot | --on-demand] [--format-home] [--approved "<the user's words>"]
 # Settings from CLOUD_ENV_FILE or ./.env (env.example; README.md, One-time setup).
 #
 #   default   joins the first live dev machine whose metrics show headroom (cloud-capacity.sh) and moves its
@@ -15,7 +15,7 @@
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
 #   --spot / --on-demand  launch a dev machine on Spot (CLOUD_SPOT=1 makes it the default): the same machine at a
 #             fraction of the price, which AWS may reclaim with a two-minute warning (DM10); with no Spot capacity,
-#             it launches on-demand and says so
+#             it launches on-demand and says so. They decide only how a new machine launches, not which one is joined
 #   --format-home  format CLOUD_HOME_VOLUME on first use although it already has snapshots (the daily policy snapshots
 #             a new volume before it is ever used); refuses without --approved: only on the user's word that it never
 #             held a home (DM9)
@@ -79,7 +79,7 @@ register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /var/lib/brain/agents && s
 # machines count against CLOUD_MAX_MACHINES: a home machine is one per volume.
 if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
   LIVE=0
-  while read -r id type expires home; do
+  while read -r id type expires home market; do
     [ -n "$id" ] || continue
     [ "$home" = None ] && LIVE=$((LIVE + 1))
     [ "$home" = "${HOME_VOLUME:-None}" ] || continue
@@ -87,6 +87,12 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
     if [ "$RC" = 2 ] && [ -n "$HOME_VOLUME" ]; then
       echo "$id is still starting; waiting for it" >&2
       if wait_ssm "$id"; then RC=0; CAP="$("$HERE/cloud-capacity.sh" "$id" 2>/dev/null)" || RC=$?; fi
+    fi
+    if [ "$RC" = 3 ]; then
+      # Spot reclaim under way (DM10): never join a machine that has a minute or two left.
+      [ -z "$HOME_VOLUME" ] || { echo "refused: AWS is reclaiming $id, which holds your home volume; run cloud-up.sh again in a few minutes (DM10)" >&2; exit 1; }
+      echo "$id is being reclaimed; not joining it" >&2
+      continue
     fi
     if [ "$RC" = 0 ] || { [ "$RC" = 1 ] && [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
       [ "$RC" = 0 ] || echo "WARNING: joining $id without headroom, as approved: ${CAP:-metrics unreadable}" >&2
@@ -108,13 +114,13 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
           echo "WARNING: could not move the deadline of $id; it stays at $expires" >&2
         fi
       fi
-      machine_json "$id" "$type" "" "$HOME_VOLUME" "$expires" true
+      machine_json "$id" "$type" "" "$HOME_VOLUME" "$expires" true "$([ "$market" = spot ] && echo true || echo false)"
       exit 0
     fi
     echo "$id has no headroom: ${CAP:-metrics unreadable}" >&2
     [ -z "$HOME_VOLUME" ] || refuse "$id holds your home volume and has no headroom; wait for it, or join it anyway (DM2, DM9)"
   done < <(aws ec2 describe-instances --filters Name=tag:brain,Values=dev Name=tag:brain:kind,Values=dev Name=instance-state-name,Values=pending,running \
-    --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value]" --output text)
+    --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value, Tags[?Key=='brain:market']|[0].Value]" --output text)
   [ -n "$HOME_VOLUME" ] || [ "$LIVE" -lt "$MAX_MACHINES" ] || [ -n "$APPROVED" ] || refuse "$LIVE shared dev machines are live and none has headroom; another passes CLOUD_MAX_MACHINES ($MAX_MACHINES)"
 fi
 
@@ -283,8 +289,8 @@ MARKET=on-demand
 echo "launching $TYPE ($KIND, $MARKET) for $TICKET until $EXPIRES" >&2
 if ! ID="$(launch "$MARKET" 2>"$TMP.err")"; then
   # No Spot capacity for this type and zone right now: the same machine on-demand, said out loud (DM10).
-  if [ "$MARKET" = spot ] && grep -q -E 'InsufficientInstanceCapacity|InsufficientCapacity|SpotMaxPriceTooLow|MaxSpotInstanceCountExceeded|capacity-not-available' "$TMP.err"; then
-    echo "no Spot capacity for $TYPE now ($(grep -o -E '[A-Za-z]+Capacity[A-Za-z]*|SpotMaxPriceTooLow|MaxSpotInstanceCountExceeded' "$TMP.err" | head -1)); launching on-demand" >&2
+  if [ "$MARKET" = spot ] && grep -q -E 'InsufficientInstanceCapacity|MaxSpotInstanceCountExceeded' "$TMP.err"; then
+    echo "no Spot capacity for $TYPE now ($(grep -o -E 'InsufficientInstanceCapacity|MaxSpotInstanceCountExceeded' "$TMP.err" | head -1)); launching on-demand" >&2
     MARKET=on-demand
     ID="$(launch on-demand)"
   else

@@ -111,9 +111,16 @@ resource "aws_iam_role_policy" "machine_ssm" {
   })
 }
 
-# Spot machines (DM10) need EC2's Spot service-linked role, created once per account.
+# Spot machines (DM10) need EC2's Spot service-linked role, once per account. Many accounts have it already (the
+# console, Spot Fleet, EMR, and Batch create it): set create_spot_service_role = false there. Other Spot workloads
+# may rely on it, so Terraform never deletes it.
 resource "aws_iam_service_linked_role" "spot" {
+  count            = var.create_spot_service_role ? 1 : 0
   aws_service_name = "spot.amazonaws.com"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_instance_profile" "machine" {
@@ -268,7 +275,6 @@ resource "aws_iam_policy" "operator" {
           "${local.arn}:ec2:${var.region}:${local.account}:volume/*",
           "${local.arn}:ec2:${var.region}:${local.account}:key-pair/*",
           "${local.arn}:ec2:${var.region}:${local.account}:dedicated-host/*",
-          "${local.arn}:ec2:${var.region}:${local.account}:spot-instances-request/*",
         ]
       },
       {

@@ -54,3 +54,9 @@ variable "key_name" {
   type        = string
   default     = "brain-dev"
 }
+
+variable "create_spot_service_role" {
+  description = "Create EC2's Spot service-linked role (AWSServiceRoleForEC2Spot). false when the account has it already."
+  type        = bool
+  default     = true
+}
