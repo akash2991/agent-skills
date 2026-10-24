@@ -16,7 +16,12 @@ DISK_GB="${CLOUD_DISK_GB:-100}"
 MAX_CPU_PCT="${CLOUD_MAX_CPU_PCT:-70}"
 MAX_MEM_PCT="${CLOUD_MAX_MEM_PCT:-75}"
 MAX_DISK_PCT="${CLOUD_MAX_DISK_PCT:-80}"
-SSH=(ssh -n -A -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes)
+HOME_VOLUME="${CLOUD_HOME_VOLUME:-}"
+# A machine is reached by its instance ID, through the VPC's Instance Connect Endpoint as AWS_PROFILE; nothing is open
+# to the internet (DS15): ssh ec2-user@<instance-id>.
+PROXY=(-o "ProxyCommand=aws ec2-instance-connect open-tunnel --instance-id %h")
+SSH=(ssh -n -A -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o BatchMode=yes "${PROXY[@]}")
+SSH_HINT="ssh -A -o ProxyCommand='aws ec2-instance-connect open-tunnel --instance-id %h' ec2-user@"
 
 need() {
   for v in "$@"; do

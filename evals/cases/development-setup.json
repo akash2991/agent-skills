@@ -37,6 +37,10 @@
       {
         "prompt": "Check whether the shared dev machine has headroom for another agent or whether we need to launch a new one",
         "top_k": 3
+      },
+      {
+        "prompt": "Keep my repos and agent sessions on a persistent volume so they survive when the short-lived EC2 dev machine is terminated",
+        "top_k": 3
       }
     ],
     "negative": [

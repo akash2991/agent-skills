@@ -16,19 +16,26 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "One public subnet per zone. The first is CLOUD_SUBNET, so it must offer both the dev type and the Mac type (aws ec2 describe-instance-type-offerings)."
+  description = "One public subnet per zone. The first is CLOUD_SUBNET and holds the Instance Connect Endpoint and the home volumes, so it must offer both the dev type and the Mac type (aws ec2 describe-instance-type-offerings)."
   type        = list(string)
   default     = ["ap-southeast-2a", "ap-southeast-2b"]
 }
 
-variable "ssh_cidrs" {
-  description = "Addresses allowed to SSH in, each a /32 of a developer's public IP; nothing else is ever opened (DS15)."
-  type        = list(string)
+variable "home_volumes" {
+  description = "A home volume per developer (DS18): their name and its size in GiB. Its ID goes in that developer's CLOUD_HOME_VOLUME."
+  type        = map(number)
+  default     = {}
 
   validation {
-    condition     = length(var.ssh_cidrs) > 0 && alltrue([for c in var.ssh_cidrs : c != "0.0.0.0/0"])
-    error_message = "List at least one developer address, and never 0.0.0.0/0."
+    condition     = alltrue([for n, s in var.home_volumes : can(regex("^[a-z0-9-]+$", n)) && s >= 8])
+    error_message = "Name each developer in lowercase letters, digits, and hyphens, with a volume of at least 8 GiB."
   }
+}
+
+variable "snapshot_days" {
+  description = "How many daily snapshots of each home volume are kept."
+  type        = number
+  default     = 7
 }
 
 variable "ssh_public_key_path" {

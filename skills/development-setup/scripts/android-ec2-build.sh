@@ -31,8 +31,7 @@ BRANCH="$(git branch --show-current 2>/dev/null || echo main)"
 echo "provisioning EC2 dev machine for Android build..." >&2
 MACHINE="$("$HERE/cloud-up.sh" "$TICKET")"
 ID="$(printf %s "$MACHINE" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).instance_id)")"
-IP="$(printf %s "$MACHINE" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).public_ip)")"
-echo "machine $ID at $IP" >&2
+echo "machine $ID" >&2
 
 cleanup() {
   echo "cleaning up..." >&2
@@ -40,7 +39,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-REMOTE="ec2-user@$IP"
+REMOTE="ec2-user@$ID"
 
 # Clone or update the repo on the remote
 "${SSH[@]}" "$REMOTE" "
@@ -57,7 +56,7 @@ REMOTE="ec2-user@$IP"
 "
 
 # Run cloud-capacity.sh before the build
-if ! CAP="$("$HERE/cloud-capacity.sh" "$IP" 2>/dev/null)"; then
+if ! CAP="$("$HERE/cloud-capacity.sh" "$ID" 2>/dev/null)"; then
   echo "WARNING: cannot read capacity of $ID; continuing anyway" >&2
 else
   echo "machine capacity: $CAP" >&2
@@ -76,11 +75,11 @@ echo "building Android $PROFILE on $ID..." >&2
 "
 
 # Find and copy artifact back
-ARTIFACT="$(${SSH[@]} "$REMOTE" "find ~/work/$TICKET -maxdepth 4 \( -name '*.apk' -o -name '*.aab' \) -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-")"
+ARTIFACT="$("${SSH[@]}" "$REMOTE" "find ~/work/$TICKET -maxdepth 4 \( -name '*.apk' -o -name '*.aab' \) -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-")"
 [ -n "$ARTIFACT" ] || { echo "no APK or AAB found on remote" >&2; exit 1; }
 
 EXT="${ARTIFACT##*.}"
 LOCAL_ARTIFACT="android-${PROFILE}-$(date +%Y%m%d-%H%M%S).$EXT"
-scp -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 "$REMOTE:$ARTIFACT" "./$LOCAL_ARTIFACT"
+scp -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 "${PROXY[@]}" "$REMOTE:$ARTIFACT" "./$LOCAL_ARTIFACT"
 echo "artifact: $LOCAL_ARTIFACT" >&2
 echo "{\"artifact_path\":\"$LOCAL_ARTIFACT\"}"

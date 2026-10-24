@@ -1,39 +1,41 @@
 # Cloud machines and mobile builds
 
-How agents develop on shared EC2 machines and build the mobile app under `development-setup` DS10–DS17. The scripts are in `scripts/`, run from the project root (`android-ec2-build.sh` and `ios-eas-build.sh` from the app directory), and read the project's `.env`; the project's `.env.example` lists every variable.
+How agents develop on shared EC2 machines and build the mobile app under `development-setup` DS10–DS18. The scripts are in `scripts/`, run from the project root (`android-ec2-build.sh` and `ios-eas-build.sh` from the app directory), and read the project's `.env`; the project's `.env.example` lists every variable.
 
 ## One-time setup (the user)
 
 An agent never creates these; when one is missing, the script names it and the agent asks the user.
 
-The network, access, and deadline role are defined in the [brain source repository's Terraform directory](https://github.com/akash2991/agent-skills/tree/main/skills/development-setup/terraform), applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (SSH from the listed addresses only), the `brain-dev` key pair, the `brain-dev-scheduler` role, and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
+The network, access, and deadline role are defined in the [brain source repository's Terraform directory](https://github.com/akash2991/agent-skills/tree/main/skills/development-setup/terraform), applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, an EC2 Instance Connect Endpoint, the `brain-dev` security group (SSH from that endpoint only, nothing from the internet), the `brain-dev` key pair, the `brain-dev-scheduler` role, a home volume per developer with daily snapshots (DS18), and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
 
 Provisioning sources are not installed into consuming projects. For an already provisioned account, reuse its output IDs in the new project's `.env`; do not provision again per repository. For initial setup or account-wide changes, the user runs these commands from a checkout of the brain source repository, not from the consuming project:
 
 ```bash
 cd /path/to/agent-skills/skills/development-setup/terraform
-cp terraform.tfvars.example terraform.tfvars      # the profile, each developer's /32, the public key
+cp terraform.tfvars.example terraform.tfvars      # the profile, the public key, each developer's home volume
 ./init.sh <aws-profile>
 terraform plan -out=dev.tfplan && terraform apply dev.tfplan
 terraform output -raw env                         # paste into the project's .env
+terraform output home_volume_ids                  # each developer's CLOUD_HOME_VOLUME
 ```
 
-A new developer's address is a line in `ssh_cidrs` and another apply; an address that changed is replaced the same way.
+Nobody's address is listed: the endpoint lets in whoever's AWS profile may open a tunnel to it (`brain-dev-operator`). A new developer's home volume is a line in `home_volumes` and another apply; Terraform never deletes one (`prevent_destroy`), so a volume that is no longer wanted is deleted by hand after its last snapshot.
 
 | `.env` variable | What it is |
 |---|---|
 | `AWS_PROFILE` | the profile the scripts run as; its credentials stay on this machine (DS15) |
 | `CLOUD_REGION` | the region for every brain machine |
-| `CLOUD_SUBNET` | a subnet that assigns public addresses |
-| `CLOUD_SECURITY_GROUP` | inbound TCP 22 from the user's address only, nothing else (DS15) |
+| `CLOUD_SUBNET` | a subnet that assigns public addresses, used for outbound traffic only, in the home volumes' zone |
+| `CLOUD_SECURITY_GROUP` | inbound TCP 22 from the Instance Connect Endpoint only, nothing else (DS15) |
 | `CLOUD_KEY_NAME` | an EC2 key pair whose private key is in this machine's SSH agent |
+| `CLOUD_HOME_VOLUME` | optional: this developer's home volume, from `terraform output home_volume_ids` (DS18) |
 | `CLOUD_SCHEDULER_ROLE_ARN` | a role EventBridge Scheduler assumes (trust `scheduler.amazonaws.com`) with `ec2:TerminateInstances` and `ec2:ReleaseHosts`, conditioned on the tag `brain=dev` |
 | `CLOUD_MAC_AMI` | for iOS on AWS only: a macOS AMI prepared with the Xcode, Node, CocoaPods, and EAS CLI versions the project pins |
 | `EXPO_TOKEN` | an Expo access token for EAS Build |
 
 The tunables, with their defaults, are in `.env.example`; a project that changes one records why in `docs/DEVELOPMENT.md`.
 
-The profile needs `ec2:RunInstances`, `TerminateInstances`, `Describe*`, `CreateTags`, `AllocateHosts`, `ReleaseHosts`; `ssm:GetParameter`; `scheduler:CreateSchedule`, `UpdateSchedule`, `DeleteSchedule`, `ListSchedules`; and `iam:PassRole` on the scheduler role.
+The profile needs `ec2:RunInstances`, `TerminateInstances`, `Describe*`, `CreateTags`, `AttachVolume`, `AllocateHosts`, `ReleaseHosts`; `ec2-instance-connect:OpenTunnel` on the endpoint; `ssm:GetParameter`; `scheduler:CreateSchedule`, `UpdateSchedule`, `DeleteSchedule`, `ListSchedules`; and `iam:PassRole` on the scheduler role.
 
 ## What guards the cost
 
@@ -51,17 +53,33 @@ A job left running detached with no SSH connection and a low load is idle; keep 
 
 ## Metrics
 
-The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib/brain/metrics` every minute. `cloud-capacity.sh <ip>` reads the last 15 minutes and says whether the machine has headroom: average load under `CLOUD_MAX_CPU_PCT` of its vCPUs, and memory and disk under `CLOUD_MAX_MEM_PCT` and `CLOUD_MAX_DISK_PCT`. A machine with under 5 minutes of metrics counts as having room. These are the machine's metrics, not the app's: a project's own Prometheus and Grafana stay per agent (DS6). Run it yourself before starting a heavy job (a full build, a load test) on a shared machine; if it shows no headroom, wait or ask for another machine with its output as the evidence (DS12).
+The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib/brain/metrics` every minute. `cloud-capacity.sh <instance-id>` reads the last 15 minutes and says whether the machine has headroom: average load under `CLOUD_MAX_CPU_PCT` of its vCPUs, and memory and disk under `CLOUD_MAX_MEM_PCT` and `CLOUD_MAX_DISK_PCT`. A machine with under 5 minutes of metrics counts as having room. These are the machine's metrics, not the app's: a project's own Prometheus and Grafana stay per agent (DS6). Run it yourself before starting a heavy job (a full build, a load test) on a shared machine; if it shows no headroom, wait or ask for another machine with its output as the evidence (DS12).
 
 ## Development
 
 1. `scripts/cloud-reap.sh`.
-2. `scripts/cloud-up.sh <ticket>` joins a machine with headroom or launches one, and prints `instance_id`, `public_ip`, `ssh`, `expires_at`, and `joined`. When it refuses, ask the user with its message and the metrics, record the answer on the ticket, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
-3. `ssh -A ec2-user@<ip>`; on a new machine wait for `cloud-init status --wait`. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes, and the machine pins GitHub to the key that logged in (`CLOUD_KEY_NAME`'s key), so an agent holding a work and a personal GitHub key uses the right one; clone with `git@github.com:<owner>/<repo>.git`. Nothing else is copied over (DS15).
+2. `scripts/cloud-up.sh <ticket>` joins a machine with headroom or launches one, and prints `instance_id`, `home_volume`, `ssh`, `expires_at`, and `joined`. When it refuses, ask the user with its message and the metrics, record the answer on the ticket, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
+3. SSH by instance ID through the endpoint, with the command `cloud-up.sh` printed or this entry in `~/.ssh/config`, then `ssh <instance-id>`:
+   ```
+   Host i-*
+     User ec2-user
+     ForwardAgent yes
+     ProxyCommand aws ec2-instance-connect open-tunnel --instance-id %h --profile <AWS_PROFILE> --region <CLOUD_REGION>
+   ```
+   On a new machine wait for `cloud-init status --wait`. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes, and the machine pins GitHub to the key that logged in (`CLOUD_KEY_NAME`'s key), so an agent holding a work and a personal GitHub key uses the right one; clone with `git@github.com:<owner>/<repo>.git`. Nothing else is copied over (DS15).
 4. In that directory, as locally: `docker compose -p <ticket>-<slug> up` for the services you touch, LocalStack, the seed or snapshot, and Prometheus, Grafana, and Loki when debugging (DS3–DS6, DS10). Pick host ports no other project on the machine uses (`docker ps --format '{{.Ports}}'`) and set them in the directory's `.env`.
-5. Reach a service with a tunnel, `ssh -A -L 3000:localhost:<port> ec2-user@<ip>`; never open a port on the security group.
+5. Reach a service with a tunnel, `ssh -L 3000:localhost:<port> <instance-id>`; never open a port on the security group.
 6. Commit and push before every pause (DS15).
 7. Done: push, `scripts/cloud-down.sh <instance-id> <ticket>-<slug>`, `scripts/cloud-reap.sh`.
+
+## Home volume
+
+With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as `/home/ec2-user` (DS18), so `~/work`, agent sessions, user-level tools, and anything else under the home folder survive termination; Docker images, system packages, and everything else on the root disk do not. The first machine formats an empty volume; later ones mount it as it was.
+
+- One machine at a time: the volume attaches to one machine, in its zone, so `cloud-up.sh` joins the machine that has it, and refuses when that machine has no headroom.
+- Snapshots: daily at 17:00 UTC, kept for `snapshot_days` (7). Restore a file by creating a volume from a snapshot in the same zone, attaching it to the machine, and copying back; restore the whole home by setting `CLOUD_HOME_VOLUME` to that new volume.
+- Size: grow it in `home_volumes` and apply, then `sudo resize2fs` the device on the machine; a volume never shrinks.
+- It is one copy in one zone: push before every pause all the same (DS15).
 
 ## Mobile builds
 
