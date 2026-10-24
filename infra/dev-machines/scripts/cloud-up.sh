@@ -66,7 +66,9 @@ setup_reason() {
 
 # register <instance-id>: mark this agent, by its work directory <ticket>-<slug>, as on the machine until cloud-down.sh
 # removes the mark (DM5); two agents on one ticket are two marks.
-register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /run/brain-agents && sudo touch /run/brain-agents/$TICKET"; }
+# The registry is on the machine's disk, so it survives a reboot; /run/brain-agents is read too, for machines that
+# registered there before.
+register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /var/lib/brain/agents && sudo touch /var/lib/brain/agents/$TICKET"; }
 
 # Join a live dev machine with headroom (DM2); with a home volume, only the machine that has it (DM9). Only shared
 # machines count against CLOUD_MAX_MACHINES: a home machine is one per volume.
@@ -89,7 +91,8 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
         "${SSH[@]}" "ec2-user@$id" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~" \
           || { echo "refused: $id has no home volume mounted on ~; $(setup_reason "$id") (DM9)" >&2; exit 1; }
       fi
-      register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
+      # An unregistered agent is invisible to cloud-down.sh, which would terminate the machine under it.
+      register "$id" || { echo "refused: could not register on $id (DM5)" >&2; exit 1; }
       if [[ "$expires" < "$EXPIRES" ]]; then
         if schedule update "brain-kill-$id" "$DEADLINE" terminateInstances "{\"InstanceIds\":[\"$id\"]}"; then
           aws ec2 create-tags --resources "$id" --tags "Key=brain:expires-at,Value=$EXPIRES"

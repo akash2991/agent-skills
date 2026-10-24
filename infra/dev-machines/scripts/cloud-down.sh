@@ -37,9 +37,10 @@ need_ssh
 
 # cloud-up.sh registered this agent under its work directory; what is left is the other registered agents, and on a
 # home machine also the SSH sessions besides this one (the developer working there).
-[ -z "$DIR" ] || UNREGISTER="sudo rm -f /run/brain-agents/'$DIR'"
-LEFT_CMD='echo $(ls /run/brain-agents 2>/dev/null | wc -l)'
-[ -z "$HOMEVOL" ] || LEFT_CMD='echo $(( $(ls /run/brain-agents 2>/dev/null | wc -l) + $(ss -Htn state established "( sport = :22 )" | wc -l) - 1 ))'
+[ -z "$DIR" ] || UNREGISTER="sudo rm -f /var/lib/brain/agents/'$DIR' /run/brain-agents/'$DIR'"
+AGENTS='$(find /var/lib/brain/agents /run/brain-agents -type f 2>/dev/null | wc -l)'
+LEFT_CMD="echo $AGENTS"
+[ -z "$HOMEVOL" ] || LEFT_CMD="echo \$(( $AGENTS + \$(ss -Htn state established '( sport = :22 )' | wc -l) - 1 ))"
 LEFT="$("${SSH[@]}" "ec2-user@$ID" "
   ${UNREGISTER:-}
   [ -z '$DIR' ] || docker compose -p '$DIR' down -v --remove-orphans >/dev/null 2>&1 || true

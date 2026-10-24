@@ -24,12 +24,15 @@ TICKET="${2:-$(git branch --show-current 2>/dev/null || basename "$(pwd)")}"
 TICKET="$(printf %s "$TICKET" | tr -cd 'A-Za-z0-9._-')"
 [ -n "$TICKET" ] || { echo "cannot determine ticket; pass one as the second argument" >&2; exit 2; }
 
+# The build's own name, never an agent's: an agent on this branch has the worktree, Compose project, and machine
+# registration <ticket>-<slug>, which this build must not touch (development-setup DS2, DS3; machine policy DM5).
+NAME="android-$TICKET-$$"
 REMOTE_ORIGIN="$(git remote get-url origin 2>/dev/null || true)"
 BRANCH="$(git branch --show-current 2>/dev/null || echo main)"
 
 # Get a dev machine
 echo "provisioning EC2 dev machine for Android build..." >&2
-MACHINE="$("$HERE/cloud-up.sh" "$TICKET")"
+MACHINE="$("$HERE/cloud-up.sh" "$NAME")"
 ID="$(printf %s "$MACHINE" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).instance_id)")"
 echo "machine $ID" >&2
 need_ssh
@@ -38,7 +41,8 @@ wait_ssm "$ID" || exit 1
 
 cleanup() {
   echo "cleaning up..." >&2
-  "$HERE/cloud-down.sh" "$ID" "$TICKET" >/dev/null 2>&1 || true
+  "${SSH[@]}" "ec2-user@$ID" "rm -rf ~/work/$NAME" >/dev/null 2>&1 || true
+  "$HERE/cloud-down.sh" "$ID" "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -48,15 +52,15 @@ REMOTE="ec2-user@$ID"
 "${SSH[@]}" "$REMOTE" "
   timeout 900 cloud-init status --wait >/dev/null
   mkdir -p ~/work
-  if [ ! -d ~/work/$TICKET ]; then
+  if [ ! -d ~/work/$NAME ]; then
     if [ -n '$REMOTE_ORIGIN' ]; then
-      git clone '$REMOTE_ORIGIN' ~/work/$TICKET
+      git clone '$REMOTE_ORIGIN' ~/work/$NAME
     else
       echo 'no remote origin; cannot clone on remote' >&2
       exit 2
     fi
   fi
-  cd ~/work/$TICKET && git fetch && git checkout '$BRANCH' && git pull
+  cd ~/work/$NAME && git fetch && git checkout '$BRANCH' && git pull
 "
 
 # Run cloud-capacity.sh before the build
@@ -69,7 +73,7 @@ fi
 # Build
 echo "building Android $PROFILE on $ID..." >&2
 "${SSH[@]}" "$REMOTE" "
-  cd ~/work/$TICKET
+  cd ~/work/$NAME
   if [ -f scripts/build-android.sh ]; then
     ./scripts/build-android.sh '$PROFILE'
   else
@@ -79,7 +83,7 @@ echo "building Android $PROFILE on $ID..." >&2
 "
 
 # Find and copy artifact back
-ARTIFACT="$("${SSH[@]}" "$REMOTE" "find ~/work/$TICKET -maxdepth 4 \( -name '*.apk' -o -name '*.aab' \) -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-")"
+ARTIFACT="$("${SSH[@]}" "$REMOTE" "find ~/work/$NAME -maxdepth 4 \( -name '*.apk' -o -name '*.aab' \) -printf '%T@ %p\\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-")"
 [ -n "$ARTIFACT" ] || { echo "no APK or AAB found on remote" >&2; exit 1; }
 
 EXT="${ARTIFACT##*.}"

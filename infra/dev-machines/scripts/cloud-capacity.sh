@@ -15,8 +15,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ID="${1:-}"
 [ -n "$ID" ] || { echo "usage: cloud-capacity.sh <instance-id>" >&2; exit 2; }
 need_ssh
-# The agents are the ones registered in /run/brain-agents by cloud-up.sh (DM5).
-OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null; echo "agents $(ls /run/brain-agents 2>/dev/null | wc -l)"')" \
+# The agents are the ones cloud-up.sh registered (DM5).
+OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null; echo "agents $(find /var/lib/brain/agents /run/brain-agents -type f 2>/dev/null | wc -l)"')" \
   || { echo "cannot read metrics from $ID" >&2; exit 2; }
 
 printf '%s\n' "$OUT" | awk -v cpu_max="$MAX_CPU_PCT" -v mem_max="$MAX_MEM_PCT" -v disk_max="$MAX_DISK_PCT" '

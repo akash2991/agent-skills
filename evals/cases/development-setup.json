@@ -67,14 +67,14 @@
       "id": 2,
       "kind": "dialogue",
       "prompt": "You are the mobile engineer on PROJ-77 and need an iOS and an Android release build. EAS reports 15 Android builds already used this month, and the iOS build has sat in the EAS queue for 40 minutes. Another agent is working on a different ticket in the same repository. Say what you do.",
-      "expected_output": "Builds Android in its own environment (the project's scripts/build-android.sh, else eas build --platform android --local in Docker with the pinned JDK and Android SDK), regardless of EAS quota, never on EAS. Uses ios-eas-build.sh only with explicit user permission; after the overlong iOS queue is canceled (exit 5), asks the user whether to retry and records the decision. If the EAS build fails, reads the logs and reports the reason; builds iOS elsewhere only when the user decides, and locally only on macOS with the pinned Xcode. Works in its own worktree, Compose project, and ports, without touching the other agent's, and copies no credentials into the environment.",
+      "expected_output": "Builds Android in its own environment (the project's scripts/build-android.sh, else eas build --platform android --local in Docker with the pinned JDK and Android SDK), regardless of EAS quota, never on EAS. Uses ios-eas-build.sh only with explicit user permission; after the overlong iOS queue is canceled (exit 5), asks the user whether to retry and records the decision. If the EAS build fails, reads the logs and reports the reason; builds iOS elsewhere only when the user decides, and locally only on macOS with the pinned Xcode. Works in its own worktree, Compose project, and ports, without touching the other agent's, and copies no AWS credentials into the environment; the local Android build signs in with the project's EXPO_TOKEN from .env.",
       "expectations": [
         "Builds Android in its own environment by default; EAS quota does not determine Android routing, and Android never goes to EAS",
         "Requires explicit permission for iOS on EAS; a quota or queue limit triggers a user decision recorded on the ticket, not an automatic fallback",
         "If an EAS build fails, reads the logs and reports the reason; does not move it elsewhere without the user deciding",
         "An approved local iOS build still requires macOS and the Xcode version the project pins",
         "Works in its own worktree, Compose project, and host ports without touching the other agent's directory, containers, or ports",
-        "Copies no AWS credentials or tokens into the environment",
+        "Copies no AWS credentials into the environment; a local Android build signs in with the project's EXPO_TOKEN from .env",
         "Does not mention or depend on which machine it runs on (EC2, sandbox, or laptop)"
       ]
     }
