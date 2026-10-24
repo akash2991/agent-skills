@@ -32,6 +32,9 @@ echo "provisioning EC2 dev machine for Android build..." >&2
 MACHINE="$("$HERE/cloud-up.sh" "$TICKET")"
 ID="$(printf %s "$MACHINE" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).instance_id)")"
 echo "machine $ID" >&2
+need_ssh
+# A new machine is reachable once its SSM agent is online, and ready once cloud-init has finished (Docker, the home).
+wait_ssm "$ID" || { echo "$ID never came online in Session Manager" >&2; exit 1; }
 
 cleanup() {
   echo "cleaning up..." >&2
@@ -43,6 +46,7 @@ REMOTE="ec2-user@$ID"
 
 # Clone or update the repo on the remote
 "${SSH[@]}" "$REMOTE" "
+  cloud-init status --wait >/dev/null
   mkdir -p ~/work
   if [ ! -d ~/work/$TICKET ]; then
     if [ -n '$REMOTE_ORIGIN' ]; then

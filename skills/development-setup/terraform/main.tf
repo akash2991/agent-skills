@@ -6,9 +6,9 @@ locals {
   arn     = "arn:${data.aws_partition.current.partition}"
 }
 
-# --- Network: public subnets only. Machines reach the internet through the gateway and are reached only by SSH
-# through the Instance Connect Endpoint; nothing is open to the internet, and with no NAT gateway an idle environment
-# costs nothing but its home volumes.
+# --- Network: public subnets only. Machines reach the internet through the gateway, outbound only, and are reached
+# through Session Manager; nothing is open to the internet, and with no NAT gateway an idle environment costs nothing
+# but its home volumes.
 
 resource "aws_vpc" "dev" {
   cidr_block           = var.vpc_cidr
@@ -53,48 +53,17 @@ resource "aws_default_security_group" "dev" {
   tags   = { Name = "brain-dev-default-unused" }
 }
 
-# --- Access: SSH through the EC2 Instance Connect Endpoint only, nothing in from the internet (DS15). The endpoint
-# authorizes each tunnel with the developer's AWS credentials; services are reached through SSH tunnels.
+# --- Access: nothing in, from anywhere (DS15). Developers reach a machine over SSH inside an SSM Session Manager
+# session, which the machine's agent opens outbound and AWS authorizes with the developer's credentials; services are
+# reached through SSH tunnels.
 
-# The description predates the endpoint and is kept: changing it replaces the group, and its ID is in every project's
-# .env as CLOUD_SECURITY_GROUP. The rules below are what it allows.
+# The description predates Session Manager and is kept: changing it replaces the group, and its ID is in every
+# project's .env as CLOUD_SECURITY_GROUP. It has no ingress rule.
 resource "aws_security_group" "dev" {
   name        = "brain-dev"
   description = "brain dev machines: SSH from developer addresses only"
   vpc_id      = aws_vpc.dev.id
   tags        = { Name = "brain-dev" }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "ssh" {
-  security_group_id            = aws_security_group.dev.id
-  description                  = "SSH from the Instance Connect Endpoint"
-  ip_protocol                  = "tcp"
-  from_port                    = 22
-  to_port                      = 22
-  referenced_security_group_id = aws_security_group.eice.id
-}
-
-resource "aws_security_group" "eice" {
-  name        = "brain-dev-eice"
-  description = "brain dev Instance Connect Endpoint: SSH to brain dev machines only"
-  vpc_id      = aws_vpc.dev.id
-  tags        = { Name = "brain-dev-eice" }
-}
-
-resource "aws_vpc_security_group_egress_rule" "eice_ssh" {
-  security_group_id            = aws_security_group.eice.id
-  description                  = "SSH to brain dev machines"
-  ip_protocol                  = "tcp"
-  from_port                    = 22
-  to_port                      = 22
-  referenced_security_group_id = aws_security_group.dev.id
-}
-
-resource "aws_ec2_instance_connect_endpoint" "dev" {
-  subnet_id          = aws_subnet.public[0].id
-  security_group_ids = [aws_security_group.eice.id]
-  preserve_client_ip = false
-  tags               = { Name = "brain-dev" }
 }
 
 resource "aws_vpc_security_group_egress_rule" "all" {
@@ -107,6 +76,30 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 resource "aws_key_pair" "dev" {
   key_name   = var.key_name
   public_key = trimspace(file(pathexpand(var.ssh_public_key_path)))
+}
+
+# Every machine runs as this role so its SSM agent can register; it can do nothing else.
+resource "aws_iam_role" "machine" {
+  name = "brain-dev-machine"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "machine_ssm" {
+  role       = aws_iam_role.machine.name
+  policy_arn = "${local.arn}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "machine" {
+  name = "brain-dev-machine"
+  role = aws_iam_role.machine.name
 }
 
 # --- Home volumes (DS18): one per developer, in the first zone (CLOUD_SUBNET's). cloud-up.sh attaches it to that
@@ -135,7 +128,6 @@ resource "aws_iam_role" "snapshots" {
       Effect    = "Allow"
       Principal = { Service = "dlm.amazonaws.com" }
       Action    = "sts:AssumeRole"
-      Condition = { StringEquals = { "aws:SourceAccount" = local.account } }
     }]
   })
 }
@@ -220,17 +212,52 @@ resource "aws_iam_policy" "operator" {
         Sid    = "Machines"
         Effect = "Allow"
         Action = [
-          "ec2:RunInstances", "ec2:TerminateInstances", "ec2:CreateTags", "ec2:AttachVolume",
+          "ec2:RunInstances", "ec2:TerminateInstances", "ec2:CreateTags",
           "ec2:AllocateHosts", "ec2:ReleaseHosts", "ec2:Describe*",
         ]
         Resource  = "*"
         Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
       },
       {
-        Sid      = "Ssh"
+        # A home volume attaches only to a brain machine, and only a brain home volume attaches (DS18). Which developer's
+        # volume is CLOUD_HOME_VOLUME's to say; cloud-up.sh refuses a volume without the brain:home tag.
+        Sid       = "HomeVolumeAttach"
+        Effect    = "Allow"
+        Action    = "ec2:AttachVolume"
+        Resource  = "${local.arn}:ec2:${var.region}:${local.account}:volume/*"
+        Condition = { Null = { "aws:ResourceTag/brain:home" = "false" } }
+      },
+      {
+        Sid       = "HomeVolumeAttachTo"
+        Effect    = "Allow"
+        Action    = "ec2:AttachVolume"
+        Resource  = "${local.arn}:ec2:${var.region}:${local.account}:instance/*"
+        Condition = { StringEquals = { "aws:ResourceTag/brain" = "dev" } }
+      },
+      {
+        Sid       = "Ssh"
+        Effect    = "Allow"
+        Action    = "ssm:StartSession"
+        Resource  = "${local.arn}:ec2:${var.region}:${local.account}:instance/*"
+        Condition = { StringEquals = { "ssm:resourceTag/brain" = "dev" } }
+      },
+      {
+        Sid      = "SshDocument"
         Effect   = "Allow"
-        Action   = "ec2-instance-connect:OpenTunnel"
-        Resource = aws_ec2_instance_connect_endpoint.dev.arn
+        Action   = "ssm:StartSession"
+        Resource = "${local.arn}:ssm:${var.region}::document/AWS-StartSSHSession"
+      },
+      {
+        Sid      = "OwnSessions"
+        Effect   = "Allow"
+        Action   = ["ssm:ResumeSession", "ssm:TerminateSession"]
+        Resource = "${local.arn}:ssm:${var.region}:${local.account}:session/$${aws:userid}-*"
+      },
+      {
+        Sid      = "MachineReady"
+        Effect   = "Allow"
+        Action   = "ssm:DescribeInstanceInformation"
+        Resource = "*"
       },
       {
         Sid      = "Ami"
@@ -248,10 +275,10 @@ resource "aws_iam_policy" "operator" {
         Resource = "*"
       },
       {
-        Sid      = "PassSchedulerRole"
+        Sid      = "PassRoles"
         Effect   = "Allow"
         Action   = "iam:PassRole"
-        Resource = aws_iam_role.scheduler.arn
+        Resource = [aws_iam_role.scheduler.arn, aws_iam_role.machine.arn]
       },
     ]
   })

@@ -16,7 +16,7 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "One public subnet per zone. The first is CLOUD_SUBNET and holds the Instance Connect Endpoint and the home volumes, so it must offer both the dev type and the Mac type (aws ec2 describe-instance-type-offerings)."
+  description = "One public subnet per zone. The first is CLOUD_SUBNET and holds the home volumes, so it must offer both the dev type and the Mac type (aws ec2 describe-instance-type-offerings)."
   type        = list(string)
   default     = ["ap-southeast-2a", "ap-southeast-2b"]
 }
@@ -36,6 +36,11 @@ variable "snapshot_days" {
   description = "How many daily snapshots of each home volume are kept."
   type        = number
   default     = 7
+
+  validation {
+    condition     = var.snapshot_days >= 1
+    error_message = "Keep at least one snapshot."
+  }
 }
 
 variable "ssh_public_key_path" {

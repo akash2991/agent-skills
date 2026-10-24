@@ -14,7 +14,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 ID="${1:-}"
 [ -n "$ID" ] || { echo "usage: cloud-capacity.sh <instance-id>" >&2; exit 2; }
-OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null; echo "agents $(ls -d ~/work/*/ 2>/dev/null | wc -l)"')" \
+need_ssh
+# On a home machine (DS18) the agents are the ones registered in /run/brain-agents: old clones stay on its volume.
+OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null
+  if [ -d /run/brain-agents ]; then n=$(ls /run/brain-agents | wc -l); else n=$(ls -d ~/work/*/ 2>/dev/null | wc -l); fi
+  echo "agents $n"')" \
   || { echo "cannot read metrics from $ID" >&2; exit 2; }
 
 printf '%s\n' "$OUT" | awk -v cpu_max="$MAX_CPU_PCT" -v mem_max="$MAX_MEM_PCT" -v disk_max="$MAX_DISK_PCT" '

@@ -25,6 +25,7 @@ output "env" {
     CLOUD_SECURITY_GROUP=${aws_security_group.dev.id}
     CLOUD_KEY_NAME=${aws_key_pair.dev.key_name}
     CLOUD_SCHEDULER_ROLE_ARN=${aws_iam_role.scheduler.arn}
+    CLOUD_INSTANCE_PROFILE=${aws_iam_instance_profile.machine.name}
     # CLOUD_HOME_VOLUME=   your volume from terraform output home_volume_ids (DS18)
   EOT
 }

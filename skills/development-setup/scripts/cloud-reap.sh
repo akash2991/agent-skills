@@ -25,7 +25,7 @@ while read -r id state type expires ticket home; do
     LIVE="$LIVE${LIVE:+,}{\"instance_id\":\"$id\",\"state\":\"$state\",\"type\":\"$type\",\"ticket\":\"$ticket\",\"home_volume\":\"${home#None}\",\"expires_at\":\"$expires\"}"
   fi
 done < <(aws ec2 describe-instances --filters Name=tag:brain,Values=dev Name=instance-state-name,Values=pending,running,stopping,stopped \
-  --query "Reservations[].Instances[].[InstanceId, State.Name, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:ticket']|[0].Value, Tags[?Key=='brain:home']|[0].Value]" \
+  --query "Reservations[].Instances[].[InstanceId, State.Name, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:ticket']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value]" \
   --output text)
 
 for name in $(aws scheduler list-schedules --name-prefix brain-kill- --query 'Schedules[].Name' --output text); do

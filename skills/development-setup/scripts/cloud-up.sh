@@ -15,9 +15,10 @@
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
 #
 # With CLOUD_HOME_VOLUME set (DS18), a dev machine is that developer's own: it joins only the machine that has the
-# volume, and otherwise launches one in CLOUD_SUBNET and mounts the volume as /home/ec2-user before anything else
-# starts; a machine the volume never reaches shuts down, which terminates it. Without it, machines that hold
-# someone's home volume are never joined.
+# volume (waiting for it while it starts; without headroom only with --approved), and otherwise launches one in
+# CLOUD_SUBNET, mounts the volume as /home/ec2-user, and reports the machine only once the mount is confirmed; a
+# machine whose volume cannot be mounted is terminated. Without it, machines that hold someone's home volume are never
+# joined. Home machines do not count against CLOUD_MAX_MACHINES.
 #
 # A machine terminates itself after CLOUD_IDLE_MINUTES with no SSH connection and no load, and at its deadline
 # regardless; an EventBridge schedule terminates it at the same deadline from the AWS side (DS13). If that
@@ -40,7 +41,8 @@ while [ $# -gt 0 ]; do
     *) usage ;;
   esac
 done
-need CLOUD_SUBNET CLOUD_SECURITY_GROUP CLOUD_KEY_NAME CLOUD_SCHEDULER_ROLE_ARN
+need CLOUD_SUBNET CLOUD_SECURITY_GROUP CLOUD_KEY_NAME CLOUD_SCHEDULER_ROLE_ARN CLOUD_INSTANCE_PROFILE
+need_ssh
 
 refuse() { echo "refused: $1. Ask the user, record the answer on the ticket, and pass --approved \"<their words>\" (DS12)." >&2; exit 3; }
 machine_json() { echo "{\"instance_id\":\"$1\",\"type\":\"$2\",\"host_id\":\"$3\",\"home_volume\":\"$4\",\"ssh\":\"$SSH_HINT$1\",\"expires_at\":\"$5\",\"joined\":$6}"; }
@@ -50,15 +52,26 @@ NOW="$(date +%s)"
 DEADLINE=$(( NOW + MAX_HOURS * 3600 ))
 EXPIRES="$(iso_utc "$DEADLINE")Z"
 
-# Join a live dev machine with headroom (DS11); with a home volume, only the machine that has it (DS18).
+# register <instance-id>: mark this agent as on the machine until cloud-down.sh removes the mark (DS14).
+register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /run/brain-agents && sudo touch /run/brain-agents/$TICKET"; }
+
+# Join a live dev machine with headroom (DS11); with a home volume, only the machine that has it (DS18). Only shared
+# machines count against CLOUD_MAX_MACHINES: a home machine is one per volume.
 if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
   LIVE=0
   while read -r id type expires home; do
     [ -n "$id" ] || continue
-    LIVE=$((LIVE + 1))
+    [ "$home" = None ] && LIVE=$((LIVE + 1))
     [ "$home" = "${HOME_VOLUME:-None}" ] || continue
-    if CAP="$("$HERE/cloud-capacity.sh" "$id" 2>/dev/null)"; then
+    RC=0; CAP="$("$HERE/cloud-capacity.sh" "$id" 2>/dev/null)" || RC=$?
+    if [ "$RC" = 2 ] && [ -n "$HOME_VOLUME" ]; then
+      echo "$id is still starting; waiting for it" >&2
+      if wait_ssm "$id"; then RC=0; CAP="$("$HERE/cloud-capacity.sh" "$id" 2>/dev/null)" || RC=$?; fi
+    fi
+    if [ "$RC" = 0 ] || { [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
+      [ "$RC" = 0 ] || echo "WARNING: joining $id without headroom, as approved: ${CAP:-metrics unreadable}" >&2
       echo "joining $id ($type): $CAP" >&2
+      [ -z "$HOME_VOLUME" ] || register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
       if [[ "$expires" < "$EXPIRES" ]]; then
         if schedule update "brain-kill-$id" "$DEADLINE" terminateInstances "{\"InstanceIds\":[\"$id\"]}"; then
           aws ec2 create-tags --resources "$id" --tags "Key=brain:expires-at,Value=$EXPIRES"
@@ -73,10 +86,10 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
       exit 0
     fi
     echo "$id has no headroom: ${CAP:-metrics unreadable}" >&2
-    [ -z "$HOME_VOLUME" ] || { echo "refused: $id holds your home volume and has no headroom; wait for it, or ask the user (DS11, DS18)" >&2; exit 3; }
+    [ -z "$HOME_VOLUME" ] || refuse "$id holds your home volume and has no headroom; wait for it, or join it anyway (DS11, DS18)"
   done < <(aws ec2 describe-instances --filters Name=tag:brain,Values=dev Name=tag:brain:kind,Values=dev Name=instance-state-name,Values=pending,running \
-    --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home']|[0].Value]" --output text)
-  [ "$LIVE" -lt "$MAX_MACHINES" ] || [ -n "$APPROVED" ] || refuse "$LIVE dev machines are live and none has headroom; another passes CLOUD_MAX_MACHINES ($MAX_MACHINES)"
+    --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value]" --output text)
+  [ -n "$HOME_VOLUME" ] || [ "$LIVE" -lt "$MAX_MACHINES" ] || [ -n "$APPROVED" ] || refuse "$LIVE shared dev machines are live and none has headroom; another passes CLOUD_MAX_MACHINES ($MAX_MACHINES)"
 fi
 
 EXTRA=()
@@ -110,8 +123,11 @@ else
   AMI="${CLOUD_AMI:-$(aws ssm get-parameter --name "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-$ARCH" --query Parameter.Value --output text)}"
   EXTRA+=(--block-device-mappings "[{\"DeviceName\":\"/dev/xvda\",\"Ebs\":{\"VolumeSize\":$DISK_GB,\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]")
   if [ -n "$HOME_VOLUME" ]; then
-    read -r VSTATE VAZ <<<"$(aws ec2 describe-volumes --volume-ids "$HOME_VOLUME" --query 'Volumes[0].[State, AvailabilityZone]' --output text)"
+    read -r VSTATE VAZ VOWNER <<<"$(aws ec2 describe-volumes --volume-ids "$HOME_VOLUME" \
+      --query "Volumes[0].[State, AvailabilityZone, Tags[?Key=='brain:home']|[0].Value]" --output text)"
     SAZ="$(aws ec2 describe-subnets --subnet-ids "$CLOUD_SUBNET" --query 'Subnets[0].AvailabilityZone' --output text)"
+    [ -n "$VOWNER" ] && [ "$VOWNER" != None ] || { echo "$HOME_VOLUME is not a brain home volume (no brain:home tag)" >&2; exit 2; }
+    echo "home volume $HOME_VOLUME belongs to $VOWNER" >&2
     [ "$VSTATE" = available ] || { echo "home volume $HOME_VOLUME is $VSTATE, not available; cloud-reap.sh lists the machine that has it" >&2; exit 1; }
     [ "$VAZ" = "$SAZ" ] || { echo "home volume $HOME_VOLUME is in $VAZ but CLOUD_SUBNET is in $SAZ" >&2; exit 2; }
   fi
@@ -133,18 +149,29 @@ trap 'rm -f "$TMP"' EXIT
     # the machine runs; a machine it never reaches shuts down, which terminates it.
     printf 'DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_%s\n' "${HOME_VOLUME//-/}"
     cat <<'HOMEVOL'
+fail() { echo "$1, shutting down"; shutdown -h now; exit 1; }
 H="$(eval echo ~ec2-user)"
 for i in $(seq 150); do [ -e "$DEV" ] && break; sleep 2; done
-[ -e "$DEV" ] || { echo "home volume never attached, shutting down"; shutdown -h now; exit 1; }
+[ -e "$DEV" ] || fail "home volume never attached"
 NEW=0
-blkid "$DEV" >/dev/null || { mkfs.ext4 -q -L brain-home "$DEV"; NEW=1; }
-mkdir -p /mnt/brain-home && mount "$DEV" /mnt/brain-home
+if ! blkid -p "$DEV" >/dev/null 2>&1; then
+  # Format only a volume that reads back as never written; anything else is a fault, not an empty home.
+  head -c 1048576 "$DEV" > /run/brain-home-head || fail "home volume unreadable"
+  [ "$(wc -c < /run/brain-home-head)" = 1048576 ] && [ -z "$(tr -d '\0' < /run/brain-home-head | head -c 1)" ] \
+    || fail "home volume holds data blkid does not recognise"
+  mkfs.ext4 -q -L brain-home "$DEV" || fail "could not format the home volume"
+  NEW=1
+fi
+mkdir -p /mnt/brain-home && mount "$DEV" /mnt/brain-home || fail "could not mount the home volume"
 [ "$NEW" = 0 ] || cp -a "$H/." /mnt/brain-home/
 # The key that launched this machine logs in, whatever an earlier machine left there.
 mkdir -p /mnt/brain-home/.ssh && cp "$H/.ssh/authorized_keys" /mnt/brain-home/.ssh/authorized_keys
-umount /mnt/brain-home && mount "$DEV" "$H"
+umount /mnt/brain-home && mount "$DEV" "$H" && mountpoint -q "$H" || fail "could not mount the home volume on $H"
 chown ec2-user:ec2-user "$H" "$H/.ssh" "$H/.ssh/authorized_keys"
 chmod 700 "$H/.ssh" && chmod 600 "$H/.ssh/authorized_keys"
+echo "$DEV $H ext4 defaults,nofail 0 2" >> /etc/fstab
+# The watchdog shuts the machine down if the home is ever not mounted, after a reboot for one.
+echo "HOME_MOUNT=$H" >> /usr/local/etc/brain-watchdog.env
 HOMEVOL
   fi
   # Git reaches GitHub with the key that logs in (DS15): the forwarded agent may hold several GitHub keys, so pin the
@@ -179,11 +206,12 @@ GITHUB
 
 TAGS="{\"Key\":\"Name\",\"Value\":\"brain-$KIND-$TICKET\"},{\"Key\":\"brain\",\"Value\":\"dev\"},{\"Key\":\"brain:kind\",\"Value\":\"$KIND\"},{\"Key\":\"brain:ticket\",\"Value\":\"$TICKET\"},{\"Key\":\"brain:owner\",\"Value\":\"$OWNER\"},{\"Key\":\"brain:expires-at\",\"Value\":\"$EXPIRES\"}"
 [ -n "$APPROVED" ] && TAGS="$TAGS,{\"Key\":\"brain:approved\",\"Value\":\"$APPROVED\"}"
-[ -n "$HOME_VOLUME" ] && TAGS="$TAGS,{\"Key\":\"brain:home\",\"Value\":\"$HOME_VOLUME\"}"
+[ -n "$HOME_VOLUME" ] && TAGS="$TAGS,{\"Key\":\"brain:home-volume\",\"Value\":\"$HOME_VOLUME\"}"
 
 echo "launching $TYPE ($KIND) for $TICKET until $EXPIRES" >&2
 ID="$(aws ec2 run-instances --image-id "$AMI" --instance-type "$TYPE" --key-name "$CLOUD_KEY_NAME" \
   --network-interfaces "[{\"DeviceIndex\":0,\"SubnetId\":\"$CLOUD_SUBNET\",\"Groups\":[\"$CLOUD_SECURITY_GROUP\"],\"AssociatePublicIpAddress\":true}]" \
+  --iam-instance-profile "Name=$CLOUD_INSTANCE_PROFILE" \
   --instance-initiated-shutdown-behavior terminate \
   --metadata-options HttpTokens=required \
   --user-data "file://$TMP" \
@@ -203,5 +231,15 @@ if [ -n "$HOME_VOLUME" ] && ! aws ec2 attach-volume --volume-id "$HOME_VOLUME" -
   aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
   echo "could not attach home volume $HOME_VOLUME to $ID, so it was terminated (DS18)" >&2
   exit 1
+fi
+if [ -n "$HOME_VOLUME" ]; then
+  # Report success only once the home is mounted, and register this agent on the machine (DS14, DS18).
+  echo "waiting for $ID to mount $HOME_VOLUME" >&2
+  if ! wait_ssm "$ID" || ! "${SSH[@]}" "ec2-user@$ID" "cloud-init status --wait >/dev/null; mountpoint -q ~" || ! register "$ID"; then
+    aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+    aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
+    echo "home volume $HOME_VOLUME was not mounted on $ID, so it was terminated; its console output says why (DS18)" >&2
+    exit 1
+  fi
 fi
 machine_json "$ID" "$TYPE" "$HOST" "$HOME_VOLUME" "$EXPIRES" false

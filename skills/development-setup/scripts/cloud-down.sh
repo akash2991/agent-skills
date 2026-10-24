@@ -7,8 +7,8 @@
 #                terminates the machine only when no other agent's directory is left under ~/work.
 #                A machine that cannot be reached is left to its deadline and cloud-reap.sh
 #   home machine one with a developer's home volume (DS18): stops and removes the Compose project <work-dir> but
-#                keeps ~/work/<work-dir> on the volume; terminates the machine when no Compose project and no other
-#                SSH session is left on it
+#                keeps ~/work/<work-dir> on the volume, and removes this agent's registration; terminates the machine
+#                when no other agent is registered on it and no other SSH session is open
 #   Mac machine  terminated; its host stays allocated until its scheduled release, 24 h after allocation,
 #                so further iOS builds reuse it (DS17)
 # Prints the result as JSON on stdout; status goes to stderr.
@@ -20,7 +20,7 @@ ID="${1:-}"
 DIR="$(printf %s "${2:-}" | tr -cd 'A-Za-z0-9._-')"
 [ -n "$ID" ] || { echo "usage: cloud-down.sh <instance-id> [<work-dir>]" >&2; exit 2; }
 read -r TAG KIND HOST HOMEVOL <<<"$(aws ec2 describe-instances --instance-ids "$ID" \
-  --query "Reservations[0].Instances[0].[Tags[?Key=='brain']|[0].Value, Tags[?Key=='brain:kind']|[0].Value, Placement.HostId, Tags[?Key=='brain:home']|[0].Value]" --output text)"
+  --query "Reservations[0].Instances[0].[Tags[?Key=='brain']|[0].Value, Tags[?Key=='brain:kind']|[0].Value, Placement.HostId, Tags[?Key=='brain:home-volume']|[0].Value]" --output text)"
 [ "$TAG" = dev ] || { echo "refused: $ID is not a brain machine (no brain=dev tag)" >&2; exit 3; }
 [ "$HOST" = None ] && HOST=""
 [ "$HOMEVOL" = None ] && HOMEVOL=""
@@ -35,16 +35,19 @@ terminate() {
 }
 
 [ "$KIND" = mac ] && terminate
+need_ssh
 
 if [ -n "$HOMEVOL" ]; then
-  # The clone stays on the home volume; what is left is the other Compose projects and SSH sessions besides this one.
-  LEFT_CMD='echo $(( $(docker compose ls -q 2>/dev/null | wc -l) + $(ss -Htn state established "( sport = :22 )" | wc -l) - 1 ))'
+  # The clone stays on the home volume; what is left is the other registered agents and SSH sessions besides this one.
+  LEFT_CMD='echo $(( $(ls /run/brain-agents 2>/dev/null | wc -l) + $(ss -Htn state established "( sport = :22 )" | wc -l) - 1 ))'
   REMOVE=""
+  [ -z "$DIR" ] || UNREGISTER="sudo rm -f /run/brain-agents/'$DIR'"
 else
   LEFT_CMD='ls -d ~/work/*/ 2>/dev/null | wc -l'
   REMOVE="rm -rf ~/work/'$DIR'"
 fi
 LEFT="$("${SSH[@]}" "ec2-user@$ID" "
+  ${UNREGISTER:-}
   if [ -n '$DIR' ] && [ -d ~/work/'$DIR' ]; then
     (cd ~/work/'$DIR' && docker compose -p '$DIR' down -v --remove-orphans >/dev/null 2>&1 || true)
     $REMOVE
