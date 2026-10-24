@@ -1,7 +1,7 @@
 #!/bin/bash
 # cloud-up.sh — place an agent on a shared EC2 dev machine, or launch one (machine policy DM1–DM4, DM8, DM9).
 #
-# Usage: infra/dev-machines/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--format-home] [--approved "<the user's words>"]
+# Usage: infra/dev-machines/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--spot | --on-demand] [--format-home] [--approved "<the user's words>"]
 # Settings from CLOUD_ENV_FILE or ./.env (env.example; README.md, One-time setup).
 #
 #   default   joins the first live dev machine whose metrics show headroom (cloud-capacity.sh) and moves its
@@ -13,6 +13,9 @@
 #             host, and allocating a new one refuses without --approved. A new host is released 24 h after
 #             allocation (DM8)
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
+#   --spot / --on-demand  launch a dev machine on Spot (CLOUD_SPOT=1 makes it the default): the same machine at a
+#             fraction of the price, which AWS may reclaim with a two-minute warning (DM10); with no Spot capacity,
+#             it launches on-demand and says so. They decide only how a new machine launches, not which one is joined
 #   --format-home  format CLOUD_HOME_VOLUME on first use although it already has snapshots (the daily policy snapshots
 #             a new volume before it is ever used); refuses without --approved: only on the user's word that it never
 #             held a home (DM9)
@@ -35,13 +38,15 @@ usage() { sed -n '4p' "$0" | sed 's/^# //' >&2; exit 2; }
 TICKET="$(tag_safe "${1:-}" | tr -cd 'A-Za-z0-9._-')"
 [ -n "$TICKET" ] && [ "${1#-}" = "$1" ] || usage
 shift
-TYPE=""; MAC=0; APPROVED=""; FORMAT_HOME=0
+TYPE=""; MAC=0; APPROVED=""; FORMAT_HOME=0; SPOT="$SPOT_DEFAULT"
 while [ $# -gt 0 ]; do
   case "$1" in
     --type) TYPE="$2"; shift 2 ;;
     --mac) MAC=1; shift ;;
     --approved) APPROVED="$(tag_safe "$2")"; shift 2 ;;
     --format-home) FORMAT_HOME=1; shift ;;
+    --spot) SPOT=1; shift ;;
+    --on-demand) SPOT=0; shift ;;
     *) usage ;;
   esac
 done
@@ -49,8 +54,8 @@ need CLOUD_SUBNET CLOUD_SECURITY_GROUP CLOUD_KEY_NAME CLOUD_SCHEDULER_ROLE_ARN C
 need_ssh
 
 refuse() { echo "refused: $1. Ask the user, record the answer on the ticket, and pass --approved \"<their words>\" (DM3)." >&2; exit 3; }
-machine_json() { echo "{\"instance_id\":\"$1\",\"type\":\"$2\",\"host_id\":\"$3\",\"home_volume\":\"$4\",\"ssh\":\"$SSH_HINT$1\",\"expires_at\":\"$5\",\"joined\":$6}"; }
-[ "$MAC" = 0 ] || HOME_VOLUME=""
+machine_json() { echo "{\"instance_id\":\"$1\",\"type\":\"$2\",\"host_id\":\"$3\",\"home_volume\":\"$4\",\"ssh\":\"$SSH_HINT$1\",\"expires_at\":\"$5\",\"joined\":$6,\"spot\":${7:-false}}"; }
+[ "$MAC" = 0 ] || { HOME_VOLUME=""; SPOT=0; }
 
 NOW="$(date +%s)"
 DEADLINE=$(( NOW + MAX_HOURS * 3600 ))
@@ -74,7 +79,7 @@ register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /var/lib/brain/agents && s
 # machines count against CLOUD_MAX_MACHINES: a home machine is one per volume.
 if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
   LIVE=0
-  while read -r id type expires home; do
+  while read -r id type expires home market; do
     [ -n "$id" ] || continue
     [ "$home" = None ] && LIVE=$((LIVE + 1))
     [ "$home" = "${HOME_VOLUME:-None}" ] || continue
@@ -82,6 +87,13 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
     if [ "$RC" = 2 ] && [ -n "$HOME_VOLUME" ]; then
       echo "$id is still starting; waiting for it" >&2
       if wait_ssm "$id"; then RC=0; CAP="$("$HERE/cloud-capacity.sh" "$id" 2>/dev/null)" || RC=$?; fi
+    fi
+    if [ "$RC" = 3 ]; then
+      # Spot reclaim under way (DM10): never join a machine that has a minute or two left.
+      [ -z "$HOME_VOLUME" ] || { echo "refused: AWS is reclaiming $id, which holds your home volume; run cloud-up.sh again in a few minutes (DM10)" >&2; exit 1; }
+      echo "$id is being reclaimed; not joining it" >&2
+      [ "$home" = None ] && LIVE=$((LIVE - 1))  # nor counting it against CLOUD_MAX_MACHINES
+      continue
     fi
     if [ "$RC" = 0 ] || { [ "$RC" = 1 ] && [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
       [ "$RC" = 0 ] || echo "WARNING: joining $id without headroom, as approved: ${CAP:-metrics unreadable}" >&2
@@ -103,13 +115,13 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
           echo "WARNING: could not move the deadline of $id; it stays at $expires" >&2
         fi
       fi
-      machine_json "$id" "$type" "" "$HOME_VOLUME" "$expires" true
+      machine_json "$id" "$type" "" "$HOME_VOLUME" "$expires" true "$([ "$market" = spot ] && echo true || echo false)"
       exit 0
     fi
     echo "$id has no headroom: ${CAP:-metrics unreadable}" >&2
     [ -z "$HOME_VOLUME" ] || refuse "$id holds your home volume and has no headroom; wait for it, or join it anyway (DM2, DM9)"
   done < <(aws ec2 describe-instances --filters Name=tag:brain,Values=dev Name=tag:brain:kind,Values=dev Name=instance-state-name,Values=pending,running \
-    --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value]" --output text)
+    --query "Reservations[].Instances[].[InstanceId, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value, Tags[?Key=='brain:market']|[0].Value]" --output text)
   [ -n "$HOME_VOLUME" ] || [ "$LIVE" -lt "$MAX_MACHINES" ] || [ -n "$APPROVED" ] || refuse "$LIVE shared dev machines are live and none has headroom; another passes CLOUD_MAX_MACHINES ($MAX_MACHINES)"
 fi
 
@@ -162,7 +174,7 @@ fi
 
 OWNER="$(tag_safe "$(git config user.email 2>/dev/null || echo "${USER:-unknown}")")"
 TMP="$(mktemp -t brain-user-data.XXXXXX)"
-trap 'rm -f "$TMP"' EXIT
+trap 'rm -f "$TMP" "$TMP.err"' EXIT
 {
   echo '#!/bin/bash'
   echo 'mkdir -p /usr/local/bin /usr/local/etc'
@@ -171,6 +183,16 @@ trap 'rm -f "$TMP"' EXIT
   cat "$HERE/brain-watchdog.sh"
   echo 'WATCHDOG'
   echo 'chmod +x /usr/local/bin/brain-watchdog'
+  if [ "$SPOT" = 1 ]; then
+    # DM10: the two-minute reclaim warning, watched every 5 seconds; harmless if the launch falls back to on-demand.
+    echo "cat > /usr/local/bin/brain-spot-watch <<'SPOTWATCH'"
+    cat "$HERE/brain-spot-watch.sh"
+    echo 'SPOTWATCH'
+    echo 'chmod +x /usr/local/bin/brain-spot-watch'
+    printf '%s\n' '[Unit]' 'Description=brain Spot reclaim watch' '[Service]' 'ExecStart=/usr/local/bin/brain-spot-watch' \
+      '[Install]' 'WantedBy=multi-user.target' | sed 's/^/echo "/; s/$/" >> \/etc\/systemd\/system\/brain-spot-watch.service/'
+    echo 'systemctl daemon-reload && systemctl enable --now brain-spot-watch'
+  fi
   if [ -n "$HOME_VOLUME" ]; then
     # DM9: the home volume becomes ec2-user's home before anything is written there. cloud-up.sh attaches it once
     # the machine runs; a machine it never reaches shuts down, which terminates it.
@@ -247,16 +269,36 @@ TAGS="{\"Key\":\"Name\",\"Value\":\"brain-$KIND-$TICKET\"},{\"Key\":\"brain\",\"
 [ -n "$APPROVED" ] && TAGS="$TAGS,{\"Key\":\"brain:approved\",\"Value\":\"$APPROVED\"}"
 [ -n "$HOME_VOLUME" ] && TAGS="$TAGS,{\"Key\":\"brain:home-volume\",\"Value\":\"$HOME_VOLUME\"}"
 
-echo "launching $TYPE ($KIND) for $TICKET until $EXPIRES" >&2
-ID="$(aws ec2 run-instances --image-id "$AMI" --instance-type "$TYPE" --key-name "$CLOUD_KEY_NAME" \
-  --network-interfaces "[{\"DeviceIndex\":0,\"SubnetId\":\"$CLOUD_SUBNET\",\"Groups\":[\"$CLOUD_SECURITY_GROUP\"],\"AssociatePublicIpAddress\":true}]" \
-  --iam-instance-profile "Name=$CLOUD_INSTANCE_PROFILE" \
-  --instance-initiated-shutdown-behavior terminate \
-  --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1 \
-  --user-data "file://$TMP" \
-  --tag-specifications "[{\"ResourceType\":\"instance\",\"Tags\":[$TAGS]},{\"ResourceType\":\"volume\",\"Tags\":[$TAGS]}]" \
-  "${EXTRA[@]}" \
-  --query 'Instances[0].InstanceId' --output text)"
+# launch <market>: run the instance, on Spot (one-time, terminated on reclaim) or on-demand.
+launch() {
+  local market=() tags="$TAGS,{\"Key\":\"brain:market\",\"Value\":\"$1\"}"
+  [ "$1" = spot ] && market=(--instance-market-options \
+    '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time","InstanceInterruptionBehavior":"terminate"}}')
+  aws ec2 run-instances --image-id "$AMI" --instance-type "$TYPE" --key-name "$CLOUD_KEY_NAME" \
+    --network-interfaces "[{\"DeviceIndex\":0,\"SubnetId\":\"$CLOUD_SUBNET\",\"Groups\":[\"$CLOUD_SECURITY_GROUP\"],\"AssociatePublicIpAddress\":true}]" \
+    --iam-instance-profile "Name=$CLOUD_INSTANCE_PROFILE" \
+    --instance-initiated-shutdown-behavior terminate \
+    --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1 \
+    --user-data "file://$TMP" \
+    --tag-specifications "[{\"ResourceType\":\"instance\",\"Tags\":[$tags]},{\"ResourceType\":\"volume\",\"Tags\":[$tags]}]" \
+    "${market[@]}" "${EXTRA[@]}" \
+    --query 'Instances[0].InstanceId' --output text
+}
+
+MARKET=on-demand
+[ "$SPOT" = 1 ] && MARKET=spot
+echo "launching $TYPE ($KIND, $MARKET) for $TICKET until $EXPIRES" >&2
+if ! ID="$(launch "$MARKET" 2>"$TMP.err")"; then
+  # No Spot capacity for this type and zone right now: the same machine on-demand, said out loud (DM10).
+  if [ "$MARKET" = spot ] && grep -q -E 'InsufficientInstanceCapacity|MaxSpotInstanceCountExceeded' "$TMP.err"; then
+    echo "no Spot capacity for $TYPE now ($(grep -o -E 'InsufficientInstanceCapacity|MaxSpotInstanceCountExceeded' "$TMP.err" | head -1)); launching on-demand" >&2
+    MARKET=on-demand
+    ID="$(launch on-demand)"
+  else
+    cat "$TMP.err" >&2
+    exit 1
+  fi
+fi
 
 if ! schedule create "brain-kill-$ID" "$DEADLINE" terminateInstances "{\"InstanceIds\":[\"$ID\"]}"; then
   aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
@@ -294,4 +336,4 @@ if [ "$MAC" = 0 ]; then
     exit 1
   fi
 fi
-machine_json "$ID" "$TYPE" "$HOST" "$HOME_VOLUME" "$EXPIRES" false
+machine_json "$ID" "$TYPE" "$HOST" "$HOME_VOLUME" "$EXPIRES" false "$([ "$MARKET" = spot ] && echo true || echo false)"

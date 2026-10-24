@@ -12,7 +12,7 @@
 #      (runs on the EC2 machine, does not count against EAS build limits)
 #
 #   exit 0  built successfully; prints {"artifact_path":"<local file>"} on stdout
-#   exit 1  build failed on the remote
+#   exit 1  build failed on the remote, or the machine is being reclaimed (Spot): run it again
 #   exit 2  bad invocation or missing settings
 #   exit 3  cloud-up.sh refused (ask user and retry with --approved)
 set -e
@@ -65,7 +65,11 @@ REMOTE="ec2-user@$ID"
 "
 
 # Run cloud-capacity.sh before the build
-if ! CAP="$("$HERE/cloud-capacity.sh" "$ID" 2>/dev/null)"; then
+RC=0; CAP="$("$HERE/cloud-capacity.sh" "$ID" 2>/dev/null)" || RC=$?
+if [ "$RC" = 3 ]; then
+  echo "$ID is being reclaimed by AWS (Spot); run the build again" >&2
+  exit 1
+elif [ "$RC" != 0 ] && [ "$RC" != 1 ]; then
   echo "WARNING: cannot read capacity of $ID; continuing anyway" >&2
 else
   echo "machine capacity: $CAP" >&2

@@ -54,3 +54,9 @@ variable "key_name" {
   type        = string
   default     = "brain-dev"
 }
+
+variable "create_spot_service_role" {
+  description = "Create EC2's Spot service-linked role (AWSServiceRoleForEC2Spot). false when the account has it already; to turn it off after this Terraform created it, first run terraform state rm 'aws_iam_service_linked_role.spot[0]' (prevent_destroy refuses otherwise)."
+  type        = bool
+  default     = true
+}

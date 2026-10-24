@@ -7,7 +7,7 @@
 # CLOUD_MAX_CPU_PCT (70) percent of its vCPUs, and the latest memory and disk use are under
 # CLOUD_MAX_MEM_PCT (75) and CLOUD_MAX_DISK_PCT (80). A machine with under 5 minutes of metrics has just
 # started and counts as having room. Prints the numbers and the verdict as JSON on stdout; exits 0 with
-# headroom, 1 without, 2 when the machine cannot be read.
+# headroom, 1 without, 2 when the machine cannot be read, 3 when AWS is reclaiming it (Spot, DM10).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/cloud-lib.sh"
@@ -16,15 +16,16 @@ ID="${1:-}"
 [ -n "$ID" ] || { echo "usage: cloud-capacity.sh <instance-id>" >&2; exit 2; }
 need_ssh
 # The agents are the ones cloud-up.sh registered (DM5).
-OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null; echo "agents $(find /var/lib/brain/agents /run/brain-agents -type f 2>/dev/null | wc -l)"')" \
+OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null; echo "agents $(find /var/lib/brain/agents /run/brain-agents -type f 2>/dev/null | wc -l)"; [ ! -e /var/lib/brain/reclaim ] || echo reclaim')" \
   || { echo "cannot read metrics from $ID" >&2; exit 2; }
 
 printf '%s\n' "$OUT" | awk -v cpu_max="$MAX_CPU_PCT" -v mem_max="$MAX_MEM_PCT" -v disk_max="$MAX_DISK_PCT" '
   $1 == "agents" { agents = $2; next }
+  $1 == "reclaim" { reclaim = 1; next }
   { n++; load += $2; vcpus = $3; mem = $4; disk = $5 }
   END {
     cpu = (n && vcpus) ? int(load / n * 100 / vcpus) : 0
-    room = (n < 5) || (cpu < cpu_max && mem < mem_max && disk < disk_max)
-    printf "{\"agents\":%d,\"minutes\":%d,\"cpu_pct\":%d,\"mem_pct\":%d,\"disk_pct\":%d,\"headroom\":%s}\n", agents, n, cpu, mem, disk, room ? "true" : "false"
-    exit !room
+    room = !reclaim && ((n < 5) || (cpu < cpu_max && mem < mem_max && disk < disk_max))
+    printf "{\"agents\":%d,\"minutes\":%d,\"cpu_pct\":%d,\"mem_pct\":%d,\"disk_pct\":%d,\"headroom\":%s,\"reclaim\":%s}\n", agents, n, cpu, mem, disk, room ? "true" : "false", reclaim ? "true" : "false"
+    exit reclaim ? 3 : !room
   }'
