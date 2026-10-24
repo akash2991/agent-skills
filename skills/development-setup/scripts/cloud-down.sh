@@ -41,8 +41,8 @@ if [ -n "$HOMEVOL" ]; then
   # The clone stays on the home volume; what is left is the other registered agents and SSH sessions besides this one.
   LEFT_CMD='echo $(( $(ls /run/brain-agents 2>/dev/null | wc -l) + $(ss -Htn state established "( sport = :22 )" | wc -l) - 1 ))'
   REMOVE=""
-  # cloud-up.sh registers the ticket, and the work directory is <ticket>-<slug>: remove the entry this directory is named after.
-  [ -z "$DIR" ] || UNREGISTER="for f in /run/brain-agents/*; do t=\${f##*/}; case '$DIR' in \"\$t\"|\"\$t\"-*) sudo rm -f \"\$f\" ;; esac; done"
+  # cloud-up.sh registered this agent under its work directory.
+  [ -z "$DIR" ] || UNREGISTER="sudo rm -f /run/brain-agents/'$DIR'"
 else
   LEFT_CMD='ls -d ~/work/*/ 2>/dev/null | wc -l'
   REMOVE="rm -rf ~/work/'$DIR'"

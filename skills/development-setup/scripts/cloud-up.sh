@@ -1,7 +1,7 @@
 #!/bin/bash
 # cloud-up.sh — place an agent on a shared EC2 dev machine, or launch one (development-setup DS10–DS13, DS17, DS18).
 #
-# Usage: skills/development-setup/scripts/cloud-up.sh <ticket> [--type <instance-type>] [--mac] [--approved "<the user's words>"]
+# Usage: skills/development-setup/scripts/cloud-up.sh <ticket>-<slug> [--type <instance-type>] [--mac] [--approved "<the user's words>"]
 # Run from the project root; settings come from its .env (project .env.example, cloud.md One-time setup).
 #
 #   default   joins the first live dev machine whose metrics show headroom (cloud-capacity.sh) and moves its
@@ -52,7 +52,8 @@ NOW="$(date +%s)"
 DEADLINE=$(( NOW + MAX_HOURS * 3600 ))
 EXPIRES="$(iso_utc "$DEADLINE")Z"
 
-# register <instance-id>: mark this agent as on the machine until cloud-down.sh removes the mark (DS14).
+# register <instance-id>: mark this agent, by its work directory <ticket>-<slug>, as on the machine until cloud-down.sh
+# removes the mark (DS14); two agents on one ticket are two marks.
 register() { "${SSH[@]}" "ec2-user@$1" "sudo mkdir -p /run/brain-agents && sudo touch /run/brain-agents/$TICKET"; }
 
 # Join a live dev machine with headroom (DS11); with a home volume, only the machine that has it (DS18). Only shared

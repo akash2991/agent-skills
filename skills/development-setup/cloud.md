@@ -29,7 +29,7 @@ A new developer's home volume is a line in `home_volumes` and another apply. Ter
 | `CLOUD_REGION` | the region for every brain machine |
 | `CLOUD_SUBNET` | a subnet that assigns public addresses, used for outbound traffic only, in the home volumes' zone |
 | `CLOUD_SECURITY_GROUP` | no inbound rule at all; outbound for packages, images, git, and Session Manager (DS15) |
-| `CLOUD_INSTANCE_PROFILE` | the instance profile whose role lets a machine's SSM agent register and carry sessions, nothing else; containers on the machine cannot reach it (metadata hop limit 1) |
+| `CLOUD_INSTANCE_PROFILE` | the instance profile whose role lets a machine's SSM agent register and carry sessions, nothing else; bridge-networked containers on the machine cannot reach it (metadata hop limit 1) |
 | `CLOUD_KEY_NAME` | an EC2 key pair whose private key is in this machine's SSH agent |
 | `CLOUD_HOME_VOLUME` | optional: this developer's home volume, from `terraform output home_volume_ids` (DS18) |
 | `CLOUD_SCHEDULER_ROLE_ARN` | a role EventBridge Scheduler assumes (trust `scheduler.amazonaws.com`) with `ec2:TerminateInstances` and `ec2:ReleaseHosts`, conditioned on the tag `brain=dev` |
@@ -40,7 +40,7 @@ A project whose `.env` predates Session Manager adds `CLOUD_INSTANCE_PROFILE` fr
 
 The tunables, with their defaults, are in `.env.example`; a project that changes one records why in `docs/DEVELOPMENT.md`.
 
-The profile needs `ec2:RunInstances`, `TerminateInstances`, `Describe*`, `CreateTags`, `AllocateHosts`, `ReleaseHosts`; `ec2:AttachVolume` of a `brain:home` volume to a `brain=dev` machine; `ssm:StartSession` on `brain=dev` machines with `AWS-StartSSHSession`, `ssm:ResumeSession` and `TerminateSession` on its own sessions, `ssm:DescribeInstanceInformation`; `ssm:GetParameter`; `scheduler:CreateSchedule`, `UpdateSchedule`, `DeleteSchedule`, `ListSchedules`; and `iam:PassRole` on the scheduler role.
+The profile needs the `brain-dev-operator` policy and nothing more; attach it rather than rebuilding it by hand. It launches machines only in the brain VPC with the `brain-dev` group and the `brain=dev` tag, tags only at creation (afterwards only a machine's `brain:expires-at`), attaches only `brain:home` volumes to `brain=dev` machines, opens Session Manager SSH only to `brain=dev` machines, and passes only the scheduler and machine roles.
 
 ## What guards the cost
 
@@ -63,7 +63,7 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
 ## Development
 
 1. `scripts/cloud-reap.sh`.
-2. `scripts/cloud-up.sh <ticket>` joins a machine with headroom or launches one, and prints `instance_id`, `home_volume`, `ssh`, `expires_at`, and `joined`. When it refuses, ask the user with its message and the metrics, record the answer on the ticket, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
+2. `scripts/cloud-up.sh <ticket>-<slug>` joins a machine with headroom or launches one, and prints `instance_id`, `home_volume`, `ssh`, `expires_at`, and `joined`. When it refuses, ask the user with its message and the metrics, record the answer on the ticket, then rerun with `--approved "<their words>"` (and `--type <type>` for a larger machine).
 3. SSH by instance ID inside a Session Manager session, with the command `cloud-up.sh` printed or this entry in `~/.ssh/config`, then `ssh <instance-id>`:
    ```
    Host i-*
@@ -121,4 +121,4 @@ skills/development-setup/scripts/ios-eas-build.sh production
 
 **iOS on this machine (override):** only with explicit user permission, on macOS with the Xcode version the project pins. Record the decision on the ticket; permission to build locally does not waive the pinned toolchain.
 
-**iOS on AWS (override):** `scripts/cloud-up.sh <ticket> --mac`. It reuses a free brain Mac host; when none exists it refuses until the user approves a new one, asked with "a Mac host bills for at least 24 hours" (DS17). A Mac takes several minutes to boot. Build with `eas build --platform ios --local` or `xcodebuild archive`. Signing credentials come the way `docs/DEVELOPMENT.md` says, for this build only, never committed. `scp` the artifact back or submit it from the machine, then `cloud-down.sh`. A Mac machine is terminated at once; its host stays allocated for further iOS builds and is released 24 hours after allocation by its schedule, or by `cloud-reap.sh` after that.
+**iOS on AWS (override):** `scripts/cloud-up.sh <ticket>-<slug> --mac`. It reuses a free brain Mac host; when none exists it refuses until the user approves a new one, asked with "a Mac host bills for at least 24 hours" (DS17). A Mac takes several minutes to boot. Build with `eas build --platform ios --local` or `xcodebuild archive`. Signing credentials come the way `docs/DEVELOPMENT.md` says, for this build only, never committed. `scp` the artifact back or submit it from the machine, then `cloud-down.sh`. A Mac machine is terminated at once; its host stays allocated for further iOS builds and is released 24 hours after allocation by its schedule, or by `cloud-reap.sh` after that.

@@ -226,11 +226,43 @@ resource "aws_iam_policy" "operator" {
         Sid    = "Machines"
         Effect = "Allow"
         Action = [
-          "ec2:RunInstances", "ec2:TerminateInstances",
-          "ec2:AllocateHosts", "ec2:ReleaseHosts", "ec2:Describe*",
+          "ec2:TerminateInstances", "ec2:AllocateHosts", "ec2:ReleaseHosts", "ec2:Describe*",
         ]
         Resource  = "*"
         Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
+      },
+      {
+        # A machine launches only into the brain VPC, with the brain-dev group and the brain=dev tag: with Session
+        # Manager, a machine in another VPC would be a way into it.
+        Sid       = "LaunchInBrainVpc"
+        Effect    = "Allow"
+        Action    = "ec2:RunInstances"
+        Resource  = ["${local.arn}:ec2:${var.region}:${local.account}:subnet/*", "${local.arn}:ec2:${var.region}:${local.account}:network-interface/*"]
+        Condition = { StringEquals = { "ec2:Vpc" = aws_vpc.dev.arn } }
+      },
+      {
+        Sid      = "LaunchWithBrainGroup"
+        Effect   = "Allow"
+        Action   = "ec2:RunInstances"
+        Resource = aws_security_group.dev.arn
+      },
+      {
+        Sid       = "LaunchBrainMachine"
+        Effect    = "Allow"
+        Action    = "ec2:RunInstances"
+        Resource  = "${local.arn}:ec2:${var.region}:${local.account}:instance/*"
+        Condition = { StringEquals = { "aws:RequestTag/brain" = "dev" } }
+      },
+      {
+        Sid    = "LaunchParts"
+        Effect = "Allow"
+        Action = "ec2:RunInstances"
+        Resource = [
+          "${local.arn}:ec2:${var.region}::image/*",
+          "${local.arn}:ec2:${var.region}:${local.account}:volume/*",
+          "${local.arn}:ec2:${var.region}:${local.account}:key-pair/*",
+          "${local.arn}:ec2:${var.region}:${local.account}:dedicated-host/*",
+        ]
       },
       {
         # Tags are what every condition below trusts, so they are set only when a machine or host is created, and
