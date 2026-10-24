@@ -28,11 +28,13 @@ PROXY=(-o "ProxyCommand=$PROXY_CMD" -o ServerAliveInterval=30)
 SSH=(ssh -n -A -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o BatchMode=yes "${PROXY[@]}")
 SSH_HINT="ssh -A -o ServerAliveInterval=30 -o ProxyCommand='$PROXY_CMD' ec2-user@"
 
-# wait_ssm <instance-id>: until its SSM agent is online, so SSH can reach it (up to 5 minutes after boot).
+# wait_ssm <instance-id>: until SSH answers through Session Manager (up to about 5 minutes after boot). The SSM agent
+# reports Online seconds before sshd listens, so Online alone is not ready.
 wait_ssm() {
   for _ in $(seq 60); do
     [ "$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$1" \
-      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)" = Online ] && return 0
+      --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)" = Online ] \
+      && "${SSH[@]}" "ec2-user@$1" true 2>/dev/null && return 0
     sleep 5
   done
   return 1

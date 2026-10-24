@@ -154,12 +154,15 @@ fail() { echo "$1, shutting down"; shutdown -h now; exit 1; }
 H="$(eval echo ~ec2-user)"
 for i in $(seq 150); do [ -e "$DEV" ] && break; sleep 2; done
 [ -e "$DEV" ] || fail "home volume never attached"
+udevadm settle
+for i in $(seq 15); do head -c 4096 "$DEV" >/dev/null 2>&1 && break; sleep 2; done
+head -c 4096 "$DEV" >/dev/null 2>&1 || fail "home volume unreadable"
 NEW=0
 if ! blkid -p "$DEV" >/dev/null 2>&1; then
-  # Format only a volume that reads back as never written; anything else is a fault, not an empty home.
-  head -c 1048576 "$DEV" > /run/brain-home-head || fail "home volume unreadable"
-  [ "$(wc -c < /run/brain-home-head)" = 1048576 ] && [ -z "$(tr -d '\0' < /run/brain-home-head | head -c 1)" ] \
-    || fail "home volume holds data blkid does not recognise"
+  # A new volume need not read back as zeros, so "no filesystem" decides. A volume whose primary superblock is gone
+  # but whose first ext4 backup survives is a damaged home, never a new one: it is refused, not formatted.
+  dumpe2fs -h -o superblock=32768 -o blocksize=4096 "$DEV" >/dev/null 2>&1 \
+    && fail "home volume has an ext4 backup superblock but no readable filesystem; repair it, never format it"
   mkfs.ext4 -q -L brain-home "$DEV" || fail "could not format the home volume"
   NEW=1
 fi
