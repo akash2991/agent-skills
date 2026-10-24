@@ -187,7 +187,7 @@ if [ "$RC" = 2 ]; then
   # A new volume need not read back as zeros, so "no filesystem" decides, with two guards: a snapshotted volume is
   # formatted only on --format-home, and one whose primary superblock is gone but an ext4 backup survives is a damaged
   # home, never formatted.
-  [ "$FORMAT_OK" = 1 ] || fail "home volume has no filesystem but has snapshots; if it never held a home, rerun cloud-up.sh with --format-home, else restore it from a snapshot"
+  [ "$FORMAT_OK" = 1 ] || fail "home volume has no filesystem but has snapshots; if it never held a home, rerun cloud-up.sh with --format-home --approved, else restore it from a snapshot"
   for sb in 8193:1024 16384:2048 32768:4096 98304:4096; do
     dumpe2fs -h -o superblock="${sb%:*}" -o blocksize="${sb#*:}" "$DEV" >/dev/null 2>&1 \
       && fail "home volume has an ext4 backup superblock but no readable filesystem; repair it, never format it"
@@ -271,8 +271,11 @@ fi
 if [ -n "$HOME_VOLUME" ]; then
   # Report success only once the home is mounted, and register this agent on the machine (DS14, DS18).
   echo "waiting for $ID to mount $HOME_VOLUME" >&2
-  WHY=""
-  if ! wait_ssm "$ID"; then
+  WHY=""; RC=0
+  wait_ssm "$ID" || RC=$?
+  if [ "$RC" = 2 ]; then
+    WHY="it shut itself down during setup"
+  elif [ "$RC" != 0 ]; then
     WHY="it never answered over SSH"
   elif ! "${SSH[@]}" "ec2-user@$ID" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~"; then
     WHY="home volume $HOME_VOLUME was not mounted"
@@ -281,9 +284,6 @@ if [ -n "$HOME_VOLUME" ]; then
   fi
   if [ -n "$WHY" ]; then
     WHY="$WHY; $(setup_reason "$ID")"
-    if [ "${SNAPS:-0}" != 0 ] && [ "$FORMAT_HOME" = 0 ]; then
-      WHY="$WHY. $HOME_VOLUME has snapshots: if it has no filesystem yet, it is formatted only with --format-home --approved \"<the user's words>\""
-    fi
     aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
     aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
     echo "$ID was terminated: $WHY (DS18)" >&2
