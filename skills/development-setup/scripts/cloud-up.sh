@@ -13,6 +13,8 @@
 #             host, and allocating a new one refuses without --approved. A new host is released 24 h after
 #             allocation (DS17)
 #   --approved  the user's explicit permission for this machine, recorded on the ticket
+#   --format-home  format CLOUD_HOME_VOLUME on first use although it already has snapshots (the daily policy snapshots
+#             a new volume before it is ever used); only on the user's word that it never held a home (DS18)
 #
 # With CLOUD_HOME_VOLUME set (DS18), a dev machine is that developer's own: it joins only the machine that has the
 # volume (waiting for it while it starts; without headroom only with --approved), and otherwise launches one in
@@ -32,12 +34,13 @@ usage() { sed -n '4p' "$0" | sed 's/^# //' >&2; exit 2; }
 TICKET="$(tag_safe "${1:-}" | tr -cd 'A-Za-z0-9._-')"
 [ -n "$TICKET" ] && [ "${1#-}" = "$1" ] || usage
 shift
-TYPE=""; MAC=0; APPROVED=""
+TYPE=""; MAC=0; APPROVED=""; FORMAT_HOME=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --type) TYPE="$2"; shift 2 ;;
     --mac) MAC=1; shift ;;
     --approved) APPROVED="$(tag_safe "$2")"; shift 2 ;;
+    --format-home) FORMAT_HOME=1; shift ;;
     *) usage ;;
   esac
 done
@@ -134,9 +137,11 @@ else
     SAZ="$(aws ec2 describe-subnets --subnet-ids "$CLOUD_SUBNET" --query 'Subnets[0].AvailabilityZone' --output text)"
     [ -n "$VOWNER" ] && [ "$VOWNER" != None ] || { echo "$HOME_VOLUME is not a brain home volume (no brain:home tag)" >&2; exit 2; }
     # A volume that has ever been snapshotted held a home: its machine must never format it, whatever it reads as.
-    HAS_SNAPSHOT=1
-    [ "$(aws ec2 describe-snapshots --owner-ids self --filters "Name=volume-id,Values=$HOME_VOLUME" \
-      --query 'length(Snapshots)' --output text)" = 0 ] && HAS_SNAPSHOT=0
+    # A volume that has ever been snapshotted may hold a home: its machine formats it only with --format-home.
+    SNAPS="$(aws ec2 describe-snapshots --owner-ids self --filters "Name=volume-id,Values=$HOME_VOLUME" \
+      --query 'length(Snapshots)' --output text)" || { echo "cannot list the snapshots of $HOME_VOLUME" >&2; exit 1; }
+    FORMAT_OK=0
+    { [ "$SNAPS" = 0 ] || [ "$FORMAT_HOME" = 1 ]; } && FORMAT_OK=1
     echo "home volume $HOME_VOLUME belongs to $VOWNER" >&2
     [ "$VSTATE" = available ] || { echo "home volume $HOME_VOLUME is $VSTATE, not available; cloud-reap.sh lists the machine that has it" >&2; exit 1; }
     [ "$VAZ" = "$SAZ" ] || { echo "home volume $HOME_VOLUME is in $VAZ but CLOUD_SUBNET is in $SAZ" >&2; exit 2; }
@@ -157,7 +162,7 @@ trap 'rm -f "$TMP"' EXIT
   if [ -n "$HOME_VOLUME" ]; then
     # DS18: the home volume becomes ec2-user's home before anything is written there. cloud-up.sh attaches it once
     # the machine runs; a machine it never reaches shuts down, which terminates it.
-    printf 'DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_%s\nHAS_SNAPSHOT=%s\n' "${HOME_VOLUME//-/}" "$HAS_SNAPSHOT"
+    printf 'DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_%s\nFORMAT_OK=%s\n' "${HOME_VOLUME//-/}" "$FORMAT_OK"
     cat <<'HOMEVOL'
 fail() { echo "$1, shutting down"; shutdown -h now; exit 1; }
 H="$(eval echo ~ec2-user)"
@@ -170,9 +175,10 @@ NEW=0
 blkid -p "$DEV" >/dev/null 2>&1 && RC=0 || RC=$?
 [ "$RC" = 0 ] || [ "$RC" = 2 ] || fail "blkid cannot tell what is on the home volume (exit $RC)"
 if [ "$RC" = 2 ]; then
-  # A new volume need not read back as zeros, so "no filesystem" decides, with two guards: a volume that has ever been
-  # snapshotted held a home, and one whose primary superblock is gone but an ext4 backup survives is a damaged home.
-  [ "$HAS_SNAPSHOT" = 0 ] || fail "home volume has snapshots but no readable filesystem; repair it, never format it"
+  # A new volume need not read back as zeros, so "no filesystem" decides, with two guards: a snapshotted volume is
+  # formatted only on --format-home, and one whose primary superblock is gone but an ext4 backup survives is a damaged
+  # home, never formatted.
+  [ "$FORMAT_OK" = 1 ] || fail "home volume has no filesystem but has snapshots; if it never held a home, rerun cloud-up.sh with --format-home, else restore it from a snapshot"
   for sb in 8193:1024 16384:2048 32768:4096 98304:4096; do
     dumpe2fs -h -o superblock="${sb%:*}" -o blocksize="${sb#*:}" "$DEV" >/dev/null 2>&1 \
       && fail "home volume has an ext4 backup superblock but no readable filesystem; repair it, never format it"
@@ -256,10 +262,18 @@ fi
 if [ -n "$HOME_VOLUME" ]; then
   # Report success only once the home is mounted, and register this agent on the machine (DS14, DS18).
   echo "waiting for $ID to mount $HOME_VOLUME" >&2
-  if ! wait_ssm "$ID" || ! "${SSH[@]}" "ec2-user@$ID" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~" || ! register "$ID"; then
+  WHY=""
+  if ! wait_ssm "$ID"; then
+    WHY="it never answered over SSH"
+  elif ! "${SSH[@]}" "ec2-user@$ID" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~"; then
+    WHY="home volume $HOME_VOLUME was not mounted; its console output says why"
+  elif ! register "$ID"; then
+    WHY="this agent could not register on it"
+  fi
+  if [ -n "$WHY" ]; then
     aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
     aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
-    echo "home volume $HOME_VOLUME was not mounted on $ID, so it was terminated; its console output says why (DS18)" >&2
+    echo "$ID was terminated: $WHY (DS18)" >&2
     exit 1
   fi
 fi
