@@ -68,7 +68,7 @@ if [ "$MAC" = 0 ] && [ -z "$TYPE" ]; then
       echo "$id is still starting; waiting for it" >&2
       if wait_ssm "$id"; then RC=0; CAP="$("$HERE/cloud-capacity.sh" "$id" 2>/dev/null)" || RC=$?; fi
     fi
-    if [ "$RC" = 0 ] || { [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
+    if [ "$RC" = 0 ] || { [ "$RC" = 1 ] && [ -n "$HOME_VOLUME" ] && [ -n "$APPROVED" ]; }; then
       [ "$RC" = 0 ] || echo "WARNING: joining $id without headroom, as approved: ${CAP:-metrics unreadable}" >&2
       echo "joining $id ($type): $CAP" >&2
       [ -z "$HOME_VOLUME" ] || register "$id" || echo "WARNING: could not register on $id; cloud-down.sh may terminate it under another agent" >&2
@@ -163,9 +163,9 @@ if ! blkid -p "$DEV" >/dev/null 2>&1; then
   NEW=1
 fi
 mkdir -p /mnt/brain-home && mount "$DEV" /mnt/brain-home || fail "could not mount the home volume"
-[ "$NEW" = 0 ] || cp -a "$H/." /mnt/brain-home/
+[ "$NEW" = 0 ] || cp -a "$H/." /mnt/brain-home/ || fail "could not seed the new home volume"
 # The key that launched this machine logs in, whatever an earlier machine left there.
-mkdir -p /mnt/brain-home/.ssh && cp "$H/.ssh/authorized_keys" /mnt/brain-home/.ssh/authorized_keys
+mkdir -p /mnt/brain-home/.ssh && cp "$H/.ssh/authorized_keys" /mnt/brain-home/.ssh/authorized_keys || fail "could not install the login key"
 umount /mnt/brain-home && mount "$DEV" "$H" && mountpoint -q "$H" || fail "could not mount the home volume on $H"
 chown ec2-user:ec2-user "$H" "$H/.ssh" "$H/.ssh/authorized_keys"
 chmod 700 "$H/.ssh" && chmod 600 "$H/.ssh/authorized_keys"
@@ -193,7 +193,10 @@ GITHUB
   if [ "$MAC" = 1 ]; then
     echo 'nohup /usr/local/bin/brain-watchdog >/var/log/brain-watchdog.log 2>&1 &'
   else
-    echo 'systemd-run --unit brain-watchdog /usr/local/bin/brain-watchdog'
+    # A unit, not systemd-run, so the watchdog comes back after a reboot and checks the home mount again (DS13, DS18).
+    printf '%s\n' '[Unit]' 'Description=brain watchdog' '[Service]' 'ExecStart=/usr/local/bin/brain-watchdog' 'Restart=always' \
+      '[Install]' 'WantedBy=multi-user.target' | sed 's/^/echo "/; s/$/" >> \/etc\/systemd\/system\/brain-watchdog.service/'
+    echo 'systemctl daemon-reload && systemctl enable --now brain-watchdog'
     echo 'dnf install -y docker git'
     echo 'systemctl enable --now docker'
     echo 'usermod -aG docker ec2-user'
@@ -213,7 +216,7 @@ ID="$(aws ec2 run-instances --image-id "$AMI" --instance-type "$TYPE" --key-name
   --network-interfaces "[{\"DeviceIndex\":0,\"SubnetId\":\"$CLOUD_SUBNET\",\"Groups\":[\"$CLOUD_SECURITY_GROUP\"],\"AssociatePublicIpAddress\":true}]" \
   --iam-instance-profile "Name=$CLOUD_INSTANCE_PROFILE" \
   --instance-initiated-shutdown-behavior terminate \
-  --metadata-options HttpTokens=required \
+  --metadata-options HttpTokens=required,HttpPutResponseHopLimit=1 \
   --user-data "file://$TMP" \
   --tag-specifications "[{\"ResourceType\":\"instance\",\"Tags\":[$TAGS]},{\"ResourceType\":\"volume\",\"Tags\":[$TAGS]}]" \
   "${EXTRA[@]}" \
@@ -235,7 +238,7 @@ fi
 if [ -n "$HOME_VOLUME" ]; then
   # Report success only once the home is mounted, and register this agent on the machine (DS14, DS18).
   echo "waiting for $ID to mount $HOME_VOLUME" >&2
-  if ! wait_ssm "$ID" || ! "${SSH[@]}" "ec2-user@$ID" "cloud-init status --wait >/dev/null; mountpoint -q ~" || ! register "$ID"; then
+  if ! wait_ssm "$ID" || ! "${SSH[@]}" "ec2-user@$ID" "timeout 900 cloud-init status --wait >/dev/null; mountpoint -q ~" || ! register "$ID"; then
     aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
     aws scheduler delete-schedule --name "brain-kill-$ID" >/dev/null 2>&1 || true
     echo "home volume $HOME_VOLUME was not mounted on $ID, so it was terminated; its console output says why (DS18)" >&2

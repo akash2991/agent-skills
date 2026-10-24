@@ -29,12 +29,14 @@ A new developer's home volume is a line in `home_volumes` and another apply. Ter
 | `CLOUD_REGION` | the region for every brain machine |
 | `CLOUD_SUBNET` | a subnet that assigns public addresses, used for outbound traffic only, in the home volumes' zone |
 | `CLOUD_SECURITY_GROUP` | no inbound rule at all; outbound for packages, images, git, and Session Manager (DS15) |
-| `CLOUD_INSTANCE_PROFILE` | the instance profile whose role lets a machine's SSM agent register, nothing else |
+| `CLOUD_INSTANCE_PROFILE` | the instance profile whose role lets a machine's SSM agent register and carry sessions, nothing else; containers on the machine cannot reach it (metadata hop limit 1) |
 | `CLOUD_KEY_NAME` | an EC2 key pair whose private key is in this machine's SSH agent |
 | `CLOUD_HOME_VOLUME` | optional: this developer's home volume, from `terraform output home_volume_ids` (DS18) |
 | `CLOUD_SCHEDULER_ROLE_ARN` | a role EventBridge Scheduler assumes (trust `scheduler.amazonaws.com`) with `ec2:TerminateInstances` and `ec2:ReleaseHosts`, conditioned on the tag `brain=dev` |
-| `CLOUD_MAC_AMI` | for iOS on AWS only: a macOS AMI prepared with the Xcode, Node, CocoaPods, and EAS CLI versions the project pins |
+| `CLOUD_MAC_AMI` | for iOS on AWS only: a macOS AMI prepared with the Xcode, Node, CocoaPods, and EAS CLI versions the project pins, and the SSM agent running (AWS's macOS AMIs include it), since Session Manager is the only way in |
 | `EXPO_TOKEN` | an Expo access token for EAS Build |
+
+A project whose `.env` predates Session Manager adds `CLOUD_INSTANCE_PROFILE` from `terraform output -raw env`; until then `cloud-up.sh` refuses and names it.
 
 The tunables, with their defaults, are in `.env.example`; a project that changes one records why in `docs/DEVELOPMENT.md`.
 

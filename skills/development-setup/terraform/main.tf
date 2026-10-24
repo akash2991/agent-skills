@@ -78,7 +78,8 @@ resource "aws_key_pair" "dev" {
   public_key = trimspace(file(pathexpand(var.ssh_public_key_path)))
 }
 
-# Every machine runs as this role so its SSM agent can register; it can do nothing else.
+# Every machine runs as this role so its SSM agent can register and carry sessions, and for nothing else: not the
+# managed AmazonSSMManagedInstanceCore, which also reads every Parameter Store value in the account (DS4, DS15).
 resource "aws_iam_role" "machine" {
   name = "brain-dev-machine"
 
@@ -92,9 +93,22 @@ resource "aws_iam_role" "machine" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "machine_ssm" {
-  role       = aws_iam_role.machine.name
-  policy_arn = "${local.arn}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+resource "aws_iam_role_policy" "machine_ssm" {
+  name = "session-manager-only"
+  role = aws_iam_role.machine.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:UpdateInstanceInformation",
+        "ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel",
+      ]
+      Resource = "*"
+    }]
+  })
 }
 
 resource "aws_iam_instance_profile" "machine" {
@@ -212,11 +226,32 @@ resource "aws_iam_policy" "operator" {
         Sid    = "Machines"
         Effect = "Allow"
         Action = [
-          "ec2:RunInstances", "ec2:TerminateInstances", "ec2:CreateTags",
+          "ec2:RunInstances", "ec2:TerminateInstances",
           "ec2:AllocateHosts", "ec2:ReleaseHosts", "ec2:Describe*",
         ]
         Resource  = "*"
         Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
+      },
+      {
+        # Tags are what every condition below trusts, so they are set only when a machine or host is created, and
+        # afterwards only a brain machine's deadline moves; nothing else can be tagged into the brain (DS15, DS18).
+        Sid      = "TagOnCreate"
+        Effect   = "Allow"
+        Action   = "ec2:CreateTags"
+        Resource = "*"
+        Condition = {
+          StringEquals = { "aws:RequestedRegion" = var.region, "ec2:CreateAction" = ["RunInstances", "AllocateHosts"] }
+        }
+      },
+      {
+        Sid      = "MoveDeadline"
+        Effect   = "Allow"
+        Action   = "ec2:CreateTags"
+        Resource = "${local.arn}:ec2:${var.region}:${local.account}:instance/*"
+        Condition = {
+          StringEquals                = { "aws:ResourceTag/brain" = "dev" }
+          "ForAllValues:StringEquals" = { "aws:TagKeys" = ["brain:expires-at"] }
+        }
       },
       {
         # A home volume attaches only to a brain machine, and only a brain home volume attaches (DS18). Which developer's
@@ -250,7 +285,7 @@ resource "aws_iam_policy" "operator" {
       {
         Sid      = "OwnSessions"
         Effect   = "Allow"
-        Action   = ["ssm:ResumeSession", "ssm:TerminateSession"]
+        Action   = ["ssm:ResumeSession", "ssm:TerminateSession", "ssmmessages:OpenDataChannel"]
         Resource = "${local.arn}:ssm:${var.region}:${local.account}:session/$${aws:userid}-*"
       },
       {
@@ -275,10 +310,18 @@ resource "aws_iam_policy" "operator" {
         Resource = "*"
       },
       {
-        Sid      = "PassRoles"
-        Effect   = "Allow"
-        Action   = "iam:PassRole"
-        Resource = [aws_iam_role.scheduler.arn, aws_iam_role.machine.arn]
+        Sid       = "PassSchedulerRole"
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = aws_iam_role.scheduler.arn
+        Condition = { StringEquals = { "iam:PassedToService" = "scheduler.amazonaws.com" } }
+      },
+      {
+        Sid       = "PassMachineRole"
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = aws_iam_role.machine.arn
+        Condition = { StringEquals = { "iam:PassedToService" = "ec2.amazonaws.com" } }
       },
     ]
   })

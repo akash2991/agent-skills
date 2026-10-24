@@ -46,7 +46,7 @@ REMOTE="ec2-user@$ID"
 
 # Clone or update the repo on the remote
 "${SSH[@]}" "$REMOTE" "
-  cloud-init status --wait >/dev/null
+  timeout 900 cloud-init status --wait >/dev/null
   mkdir -p ~/work
   if [ ! -d ~/work/$TICKET ]; then
     if [ -n '$REMOTE_ORIGIN' ]; then
