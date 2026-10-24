@@ -1,0 +1,6 @@
+# Local, commit-pinned reference checkouts; restore with restore_sources.py.
+sources/
+# Downloaded research notes; the UI links to their upstream originals.
+research/
+__pycache__/
+evals/__pycache__/
