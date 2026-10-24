@@ -1,5 +1,5 @@
 #!/bin/bash
-# cloud-reap.sh — find and kill leftover brain machines (development-setup M3, M4).
+# cloud-reap.sh — find and kill leftover brain machines (machine policy DM3, DM4).
 #
 # Usage: infra/dev-machines/scripts/cloud-reap.sh
 # Settings from CLOUD_ENV_FILE or ./.env (env.example). Run at the start and the end of every session that uses the cloud.

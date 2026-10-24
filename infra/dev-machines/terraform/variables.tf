@@ -1,10 +1,10 @@
 variable "aws_profile" {
-  description = "The local AWS profile Terraform and the cloud scripts run as (AWS_PROFILE in .env)."
+  description = "The local AWS profile Terraform and the cloud scripts run as (AWS_PROFILE in the settings file)."
   type        = string
 }
 
 variable "region" {
-  description = "The region for every brain machine (CLOUD_REGION in .env)."
+  description = "The region for every brain machine (CLOUD_REGION in the settings file)."
   type        = string
   default     = "ap-southeast-2"
 }
@@ -22,7 +22,7 @@ variable "availability_zones" {
 }
 
 variable "home_volumes" {
-  description = "A home volume per developer (M9): their name and its size in GiB. Its ID goes in that developer's CLOUD_HOME_VOLUME."
+  description = "A home volume per developer (DM9): their name and its size in GiB. Its ID goes in that developer's CLOUD_HOME_VOLUME."
   type        = map(number)
   default     = {}
 
@@ -50,7 +50,7 @@ variable "ssh_public_key_path" {
 }
 
 variable "key_name" {
-  description = "The EC2 key pair's name (CLOUD_KEY_NAME in .env)."
+  description = "The EC2 key pair's name (CLOUD_KEY_NAME in the settings file)."
   type        = string
   default     = "brain-dev"
 }

@@ -20,7 +20,7 @@ MAX_MEM_PCT="${CLOUD_MAX_MEM_PCT:-75}"
 MAX_DISK_PCT="${CLOUD_MAX_DISK_PCT:-80}"
 HOME_VOLUME="${CLOUD_HOME_VOLUME:-}"
 # A machine is reached by its instance ID, over SSH inside a Session Manager session opened as AWS_PROFILE; nothing is
-# open to the internet (M6): ssh ec2-user@<instance-id>. The keepalive keeps an idle session from timing out.
+# open to the internet (DM6): ssh ec2-user@<instance-id>. The keepalive keeps an idle session from timing out.
 need_ssh() {
   command -v session-manager-plugin >/dev/null \
     || { echo "install the Session Manager plugin: brew install --cask session-manager-plugin (README.md)" >&2; exit 2; }

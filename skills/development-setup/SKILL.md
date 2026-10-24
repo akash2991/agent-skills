@@ -25,7 +25,7 @@ What is in place before development starts: an environment that belongs to this 
 | DS1 | **Every agent creates its own environment.** Everything below is ephemeral and belongs to this agent only; the user's checkout stays untouched. Nothing lives only in the environment: commit and push before every pause. |
 | DS2 | **A git worktree beside the main repository, never inside it, with the agent named after it.** If the main checkout is `<workspace-root>/<repo-name>`, create the worktree at `<workspace-root>/<ticket>-<slug>` so both directories share the same parent. The visible runtime name of each main agent and subagent is exactly the basename of that agent's assigned worktree, `<ticket>-<slug>`; persona, role, and immutable harness IDs remain separate metadata. The worktree also never belongs inside a harness directory (such as a `herdr` or `claude` root) or the agent brain. Remove it after the PR is open. |
 | DS3 | **The service runs in its own Docker containers**; Docker is the local development standard. The Compose project is named after the worktree, `<ticket>-<slug>`, on host ports no other project on this machine uses (`docker ps --format '{{.Ports}}'`). Never reuse or touch another agent's containers, ports, or directory. |
-| DS4 | **LocalStack mocks AWS.** The app never calls a real AWS service from a development environment, wherever that environment runs, and no credentials are copied into it. |
+| DS4 | **LocalStack mocks AWS.** The app never calls a real AWS service from a development environment, wherever that environment runs, and no AWS credentials are copied into it. |
 | DS5 | **Its own data:** a snapshot of the database or a seed script. Never the shared database. |
 | DS6 | **Its own observability, metrics and logs, when debugging** (optional). |
 
@@ -33,7 +33,7 @@ What is in place before development starts: an environment that belongs to this 
 
 | ID | Rule |
 | --- | --- |
-| DS16 | **Android builds in this agent's own environment; EAS is used solely for iOS, with explicit permission.** Android: the project's `scripts/build-android.sh`, else `eas build --platform android --local` in a Docker container with the JDK and Android SDK the project pins — never on EAS, whose builds are the cost. iOS only with the user's explicit permission, to test UI bugs, because functionality should not differ between platforms: `scripts/ios-eas-build.sh` on EAS; its "free builds used up" (exit 4), "queue too long, canceled" (exit 5), and "build failed" (exit 1, after reading `eas build:view <id>`) each go to the user as a decision. An iOS build anywhere else, such as locally on macOS, also needs explicit permission and the Xcode version the project pins. Every override and its reason is recorded on the ticket. |
+| DS16 | **Android builds in this agent's own environment; EAS is used solely for iOS, with explicit permission.** Android: the project's own `scripts/build-android.sh`, else `eas build --platform android --local` in a Docker container with the JDK and Android SDK the project pins, signed in with the project's `EXPO_TOKEN` from `.env` — never on EAS's servers, whose builds are the cost. iOS only with the user's explicit permission, to test UI bugs, because functionality should not differ between platforms: this skill's `scripts/ios-eas-build.sh`, run from the app directory; its "free builds used up" (exit 4), "queue too long, canceled" (exit 5), and "build failed" (exit 1, after reading `eas build:view <id>`) each go to the user as a decision. An iOS build anywhere else, such as locally on macOS, also needs explicit permission and the Xcode version the project pins. Every override and its reason is recorded on the ticket. |
 
 ## Parallel work
 
@@ -80,7 +80,7 @@ What is in place before development starts: an environment that belongs to this 
 - A worktree created inside the main repository, a harness directory, or the agent brain instead of beside the main repository (DS2).
 - A main agent or subagent whose visible runtime name differs from its assigned worktree basename, including a persona or role appended to the name (DS2).
 - Two agents sharing a container, a Compose project, host ports, a database, or a worktree (DS3, DS5).
-- Tests run against real AWS or a shared database, or credentials copied into the environment (DS4, DS5).
+- Tests run against real AWS or a shared database, or AWS credentials copied into the environment (DS4, DS5).
 - Worktrees, containers, or snapshots left behind after the PR is open (DS2).
 - An Android build run on EAS, or an iOS build run without explicit user permission recorded on the ticket (DS16).
 - Frontend and backend serialized because no contract exists (DS7).

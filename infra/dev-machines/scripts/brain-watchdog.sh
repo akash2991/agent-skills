@@ -1,11 +1,11 @@
 #!/bin/bash
 # brain-watchdog.sh — runs on a cloud machine as root; cloud-up.sh installs it through user data.
 # Every minute it appends "epoch load1 vcpus mem_used_pct disk_used_pct" to /var/lib/brain/metrics
-# (the last 60 lines are kept) for cloud-capacity.sh (development-setup M2), and it shuts the
+# (the last 60 lines are kept) for cloud-capacity.sh (machine policy DM2), and it shuts the
 # machine down, which terminates it, once it has had no SSH connection and a 1-minute load under a
-# quarter of its vCPUs for IDLE_MINUTES, or at DEADLINE (epoch seconds) regardless (M4).
+# quarter of its vCPUs for IDLE_MINUTES, or at DEADLINE (epoch seconds) regardless (DM4).
 # Its settings are re-read every minute from /usr/local/etc/brain-watchdog.env, so cloud-up.sh can
-# move the deadline when another agent joins. With HOME_MOUNT set (M9), it shuts the machine down
+# move the deadline when another agent joins. With HOME_MOUNT set (DM9), it shuts the machine down
 # whenever the home volume is not mounted there, and disk use is the fuller of / and the home volume.
 # Its log goes to stdout.
 mkdir -p /var/lib/brain

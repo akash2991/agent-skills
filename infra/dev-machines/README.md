@@ -8,21 +8,21 @@ The scripts read their settings from the file named by `CLOUD_ENV_FILE`, else `.
 
 | ID | Policy |
 | --- | --- |
-| M1 | **Machines are shared and reached through `scripts/cloud-up.sh`.** One machine hosts several agents at once; each keeps its own clone at `~/work/<ticket>-<slug>` and its own Compose project and ports (`development-setup` DS1–DS6). |
-| M2 | **Metrics decide when another machine launches.** `cloud-up.sh` joins a live machine whose metrics show headroom (`scripts/cloud-capacity.sh`: 15-minute CPU under 70%, memory under 75%, disk under 80%); another machine launches only when none has. |
-| M3 | **The default type, anything else with permission.** A new machine is `m8i.2xlarge` (`CLOUD_DEFAULT_TYPE`). Any other type, more than `CLOUD_MAX_MACHINES` (2) shared machines live at once, and every new Mac host only with the user's explicit permission for that machine (`--approved`), asked with the evidence. Permission for one machine never carries to the next. |
-| M4 | **An unused machine dies.** A machine terminates itself after `CLOUD_IDLE_MINUTES` (30) with no SSH connection and no load, and at its deadline regardless, `CLOUD_MAX_HOURS` (8) after the last agent joined; an AWS-side schedule terminates it at that deadline if it cannot. Terminate, never stop: a stopped machine still bills its disk. |
-| M5 | **Leave when done, reap at every start and end.** `scripts/cloud-down.sh <instance-id> <work-dir>` removes that work's clone and containers and terminates the machine when nobody is left; `scripts/cloud-reap.sh` at the start and the end of every session that uses the cloud. |
-| M6 | **Nothing lives only on the machine, and no credentials go onto it.** Push before every pause. Git reaches the remote through SSH agent forwarding; the AWS profile's credentials, tokens, and keys stay on the developer's computer. SSH runs only inside a Session Manager session, and services only through SSH tunnels; the security group has no inbound rule. |
-| M7 | **Android can build on a dev machine.** `scripts/android-ec2-build.sh` joins or launches one and builds in Docker there, when the developer's own computer cannot (`development-setup` DS16 still decides Android versus EAS). |
-| M8 | **An iOS build on AWS is a 24-hour commitment.** An EC2 Mac runs on a dedicated host billed for at least 24 hours: only with that stated and approved (M3); reuse an allocated host for every iOS build in those 24 hours, and let the scheduled release free it. |
-| M9 | **A developer's files persist on their own home volume, never on a machine.** With `CLOUD_HOME_VOLUME` set, `cloud-up.sh` joins the machine that has that volume, or launches one in its zone and reports it only once the volume is mounted as `/home/ec2-user`. The machine stays short-lived (M4) and is that developer's alone: no one else's agents join it, and it does not count against `CLOUD_MAX_MACHINES`. One volume per developer, listed in the Terraform. |
+| DM1 | **Machines are shared and reached through `scripts/cloud-up.sh`.** One machine hosts several agents at once; each sets up its environment there exactly as on a laptop (`development-setup`), with the main checkout at `~/work/<repo-name>` and its worktree beside it at `~/work/<ticket>-<slug>`. `cloud-up.sh` registers each agent on the machine under that name. |
+| DM2 | **Metrics decide when another machine launches.** `cloud-up.sh` joins a live machine whose metrics show headroom (`scripts/cloud-capacity.sh`: 15-minute CPU under 70%, memory under 75%, disk under 80%); another machine launches only when none has. |
+| DM3 | **The default type, anything else with permission.** A new machine is `m8i.2xlarge` (`CLOUD_DEFAULT_TYPE`). Any other type, more than `CLOUD_MAX_MACHINES` (2) shared machines live at once, and every new Mac host only with the user's explicit permission for that machine (`--approved`), asked with the evidence. Permission for one machine never carries to the next. |
+| DM4 | **An unused machine dies.** A machine terminates itself after `CLOUD_IDLE_MINUTES` (30) with no SSH connection and no load, and at its deadline regardless, `CLOUD_MAX_HOURS` (8) after the last agent joined; an AWS-side schedule terminates it at that deadline if it cannot. Terminate, never stop: a stopped machine still bills its disk. |
+| DM5 | **Leave when done, reap at every start and end.** `scripts/cloud-down.sh <instance-id> <ticket>-<slug>` stops that agent's Compose project and removes its registration, and terminates the machine when no agent is registered (on a home machine, also no other SSH session); it never deletes a directory, as the agent removes its own worktree. `scripts/cloud-reap.sh` at the start and the end of every session that uses the cloud. |
+| DM6 | **Nothing lives only on the machine, and no AWS credentials go onto it.** Git reaches the remote through SSH agent forwarding; the AWS profile's credentials, tokens, and keys stay on the developer's computer. SSH runs only inside a Session Manager session, and services only through SSH tunnels; the security group has no inbound rule. |
+| DM7 | **Android can build on a dev machine.** `scripts/android-ec2-build.sh` joins or launches one and runs the build there, when the developer's own computer cannot (`development-setup` DS16 still decides Android versus EAS). |
+| DM8 | **An iOS build on AWS is a 24-hour commitment.** An EC2 Mac runs on a dedicated host billed for at least 24 hours: only with that stated and approved (DM3); reuse an allocated host for every iOS build in those 24 hours, and let the scheduled release free it. |
+| DM9 | **A developer's files persist on their own home volume, never on a machine.** With `CLOUD_HOME_VOLUME` set, `cloud-up.sh` joins the machine that has that volume, or launches one in its zone and reports it only once the volume is mounted as `/home/ec2-user`. The machine stays short-lived (DM4) and is that developer's alone: no one else's agents join it, and it does not count against `CLOUD_MAX_MACHINES`. One volume per developer, listed in the Terraform. |
 
 ## One-time setup
 
 The user creates these once per AWS account; when one is missing, the script names it.
 
-The network, access, and deadline role are defined in the [brain source repository's Terraform directory](https://github.com/akash2991/agent-skills/tree/main/infra/dev-machines/terraform), applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (no inbound rule: SSH runs inside Session Manager), the `brain-dev-machine` instance profile its SSM agent registers with, the `brain-dev` key pair, the `brain-dev-scheduler` role, a home volume per developer with daily snapshots (M9), and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
+The network, access, and deadline role are defined in the [brain source repository's Terraform directory](https://github.com/akash2991/agent-skills/tree/main/infra/dev-machines/terraform), applied once per AWS account and shared by every project in it: a dev VPC with public subnets and no NAT gateway, the `brain-dev` security group (no inbound rule: SSH runs inside Session Manager), the `brain-dev-machine` instance profile its SSM agent registers with, the `brain-dev` key pair, the `brain-dev-scheduler` role, a home volume per developer with daily snapshots (DM9), and a `brain-dev-operator` policy to attach to each developer's IAM user or role. State is in the S3 bucket `init.sh` creates.
 
 For initial setup or account-wide changes, run these from a checkout of this repository:
 
@@ -41,13 +41,13 @@ A new developer's home volume is a line in `home_volumes` and another apply. Ter
 
 | Setting | What it is |
 |---|---|
-| `AWS_PROFILE` | the profile the scripts run as; its credentials stay on this machine (M6) |
+| `AWS_PROFILE` | the profile the scripts run as; its credentials stay on this machine (DM6) |
 | `CLOUD_REGION` | the region for every brain machine |
 | `CLOUD_SUBNET` | a subnet that assigns public addresses, used for outbound traffic only, in the home volumes' zone |
-| `CLOUD_SECURITY_GROUP` | no inbound rule at all; outbound for packages, images, git, and Session Manager (M6) |
+| `CLOUD_SECURITY_GROUP` | no inbound rule at all; outbound for packages, images, git, and Session Manager (DM6) |
 | `CLOUD_INSTANCE_PROFILE` | the instance profile whose role lets a machine's SSM agent register and carry sessions, nothing else; bridge-networked containers on the machine cannot reach it (metadata hop limit 1) |
 | `CLOUD_KEY_NAME` | an EC2 key pair whose private key is in this machine's SSH agent |
-| `CLOUD_HOME_VOLUME` | optional: this developer's home volume, from `terraform output home_volume_ids` (M9) |
+| `CLOUD_HOME_VOLUME` | optional: this developer's home volume, from `terraform output home_volume_ids` (DM9) |
 | `CLOUD_SCHEDULER_ROLE_ARN` | a role EventBridge Scheduler assumes (trust `scheduler.amazonaws.com`) with `ec2:TerminateInstances` and `ec2:ReleaseHosts`, conditioned on the tag `brain=dev` |
 | `CLOUD_MAC_AMI` | for iOS on AWS only: a macOS AMI prepared with the Xcode, Node, CocoaPods, and EAS CLI versions the project pins, and the SSM agent running (AWS's macOS AMIs include it), since Session Manager is the only way in |
 
@@ -61,19 +61,19 @@ The profile needs the `brain-dev-operator` policy and nothing more; attach it ra
 
 | Guard | Where | Stops |
 |---|---|---|
-| Sharing | `cloud-up.sh` joins the first live machine with headroom by `cloud-capacity.sh` | a machine per agent (M2) |
-| Size and count | `cloud-up.sh` refuses another type, a machine past `CLOUD_MAX_MACHINES`, and a new Mac host without `--approved` | the machine nobody asked for (M3) |
-| Idle | a watchdog on the machine | a machine with no SSH connection and a load under a quarter of its vCPUs for `CLOUD_IDLE_MINUTES` (M4) |
-| Deadline | the watchdog, and an EventBridge schedule from the AWS side; each join moves it to `CLOUD_MAX_HOURS` from then | a forgotten or hung machine (M4) |
-| Shutdown | `--instance-initiated-shutdown-behavior terminate` | the disk bill: a shutdown terminates, it never stops (M4) |
-| Leaving | `cloud-down.sh` terminates when the last agent's directory is gone (on a home machine, the last registered agent and SSH session) | a machine nobody is on (M5) |
-| Reaper | `cloud-reap.sh` at every session's start and end | expired or stopped machines, stale schedules, Mac hosts past 24 hours (M5) |
+| Sharing | `cloud-up.sh` joins the first live machine with headroom by `cloud-capacity.sh` | a machine per agent (DM2) |
+| Size and count | `cloud-up.sh` refuses another type, a machine past `CLOUD_MAX_MACHINES`, and a new Mac host without `--approved` | the machine nobody asked for (DM3) |
+| Idle | a watchdog on the machine | a machine with no SSH connection and a load under a quarter of its vCPUs for `CLOUD_IDLE_MINUTES` (DM4) |
+| Deadline | the watchdog, and an EventBridge schedule from the AWS side; each join moves it to `CLOUD_MAX_HOURS` from then | a forgotten or hung machine (DM4) |
+| Shutdown | `--instance-initiated-shutdown-behavior terminate` | the disk bill: a shutdown terminates, it never stops (DM4) |
+| Leaving | `cloud-down.sh` terminates when the last agent's directory is gone (on a home machine, the last registered agent and SSH session) | a machine nobody is on (DM5) |
+| Reaper | `cloud-reap.sh` at every session's start and end | expired or stopped machines, stale schedules, Mac hosts past 24 hours (DM5) |
 
 A job left running detached with no SSH connection and a low load is idle; keep the SSH session open for the length of any long job.
 
 ## Metrics
 
-The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib/brain/metrics` every minute. `cloud-capacity.sh <instance-id>` reads the last 15 minutes and says whether the machine has headroom: average load under `CLOUD_MAX_CPU_PCT` of its vCPUs, and memory and disk under `CLOUD_MAX_MEM_PCT` and `CLOUD_MAX_DISK_PCT`. A machine with under 5 minutes of metrics counts as having room. These are the machine's metrics, not the app's: a project's own Prometheus and Grafana stay per agent (`development-setup` DS6). Run it yourself before starting a heavy job (a full build, a load test) on a shared machine; if it shows no headroom, wait or ask for another machine with its output as the evidence (M3).
+The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib/brain/metrics` every minute. `cloud-capacity.sh <instance-id>` reads the last 15 minutes and says whether the machine has headroom: average load under `CLOUD_MAX_CPU_PCT` of its vCPUs, and memory and disk under `CLOUD_MAX_MEM_PCT` and `CLOUD_MAX_DISK_PCT`. A machine with under 5 minutes of metrics counts as having room. These are the machine's metrics, not the app's: a project's own Prometheus and Grafana stay per agent (`development-setup` DS6). Run it yourself before starting a heavy job (a full build, a load test) on a shared machine; if it shows no headroom, wait or ask for another machine with its output as the evidence (DM3).
 
 ## Working on a machine
 
@@ -87,32 +87,32 @@ The watchdog appends `epoch load1 vcpus mem_used_pct disk_used_pct` to `/var/lib
      ServerAliveInterval 30
      ProxyCommand aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --profile <AWS_PROFILE> --region <CLOUD_REGION>
    ```
-   A new machine answers once SSH answers through Session Manager, a minute or two after launch; then wait for `cloud-init status --wait`. Session Manager closes a session after 20 minutes without input; the keepalive is that input. `git clone` the repository into `~/work/<ticket>-<slug>` and check out the branch. The forwarded agent pushes, and the machine pins GitHub to the key that logged in (`CLOUD_KEY_NAME`'s key), so an agent holding a work and a personal GitHub key uses the right one; clone with `git@github.com:<owner>/<repo>.git`. Nothing else is copied over (M6).
-4. In that directory, as locally: `docker compose -p <ticket>-<slug> up` for the services you touch, LocalStack, the seed or snapshot, and Prometheus, Grafana, and Loki when debugging (development-setup DS3–DS6, M1). Pick host ports no other project on the machine uses (`docker ps --format '{{.Ports}}'`) and set them in the directory's `.env`.
+   A new machine answers once SSH answers through Session Manager, a minute or two after launch; then wait for `cloud-init status --wait`. Session Manager closes a session after 20 minutes without input; the keepalive is that input. Clone the main repository once into `~/work/<repo-name>`, unless it is there already. The forwarded agent pushes, and the machine pins GitHub to the key that logged in (`CLOUD_KEY_NAME`'s key), so an agent holding a work and a personal GitHub key uses the right one; clone with `git@github.com:<owner>/<repo>.git`. Nothing else is copied over (DM6).
+4. Set up the environment as on a laptop (`development-setup`): the worktree beside the main checkout, its own Compose project and ports, LocalStack, data. `docker ps --format '{{.Ports}}'` shows the ports other agents on the machine already use.
 5. Reach a service with a tunnel, `ssh -L 3000:localhost:<port> <instance-id>`; never open a port on the security group.
-6. Commit and push before every pause (M6).
-7. Done: push, `scripts/cloud-down.sh <instance-id> <ticket>-<slug>`, `scripts/cloud-reap.sh`.
+6. Done with the work: remove the worktree as `development-setup` says.
+7. Leave: `scripts/cloud-down.sh <instance-id> <ticket>-<slug>`, then `scripts/cloud-reap.sh`.
 
 ## Home volume
 
-With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as `/home/ec2-user` (M9), so `~/work`, agent sessions, user-level tools, and anything else under the home folder survive termination; Docker images, system packages, and everything else on the root disk do not. The first machine formats an empty volume; later ones mount it as it was.
+With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as `/home/ec2-user` (DM9), so `~/work`, agent sessions, user-level tools, and anything else under the home folder survive termination; Docker images, system packages, and everything else on the root disk do not. The first machine formats an empty volume; later ones mount it as it was.
 
 - One machine at a time: the volume attaches to one machine, in its zone, so `cloud-up.sh` joins the machine that has it, waits for it while it starts, and joins it without headroom only with `--approved`. Each agent on it is registered in `/run/brain-agents` until `cloud-down.sh`.
 - Mounted or nothing: the first machine formats the volume only if it holds no filesystem and no ext4 backup superblock (a damaged home is refused, never formatted), and, once the daily policy has snapshotted it, only with `cloud-up.sh --format-home --approved "<the user's words>"` that it never held a home; a launch that fails says which step failed and the machine's own shutdown reason; a machine that cannot mount it, or loses the mount, shuts down, and `cloud-up.sh` reports the machine only after it confirmed the mount. Machine metrics count the fuller of the root disk and the home volume.
 - Snapshots: daily at 17:00 UTC, kept for `snapshot_days` (7); each stores only the blocks changed since the last. Restoring is the user's, with administrator access, since the operator policy cannot create volumes: create a volume from the snapshot in the same zone, tag it `brain:home=<name>` and `brain:backup=daily`, then either attach it beside the home and copy back, or replace the home with it (`terraform state rm` the old one, `terraform import` the new one under the same name, and update `CLOUD_HOME_VOLUME`).
 - Size: grow it in `home_volumes` and apply, then `sudo resize2fs` the device on the machine; a volume never shrinks.
-- It is one copy in one zone: push before every pause all the same (M6).
+- It is one copy in one zone: push before every pause all the same (DM6).
 
 ## Mobile builds on a machine
 
 `development-setup` DS16 decides where a build runs: Android in the agent's own environment, iOS on EAS only with explicit permission. These are the machine-side paths.
 
-**Android on a dev machine (M7).** From the app directory, with the settings file in `CLOUD_ENV_FILE`:
+**Android on a dev machine (DM7).** From the project root, with the settings file in `CLOUD_ENV_FILE` and this repository checked out at `<agent-skills>`:
 
 ```bash
-infra/dev-machines/scripts/android-ec2-build.sh production
+CLOUD_ENV_FILE=<settings file> <agent-skills>/infra/dev-machines/scripts/android-ec2-build.sh production
 ```
 
-It joins or launches a dev machine, builds in a Docker container with the JDK and Android SDK the project pins, copies the artifact back, and cleans up. Run `cloud-capacity.sh` first if the machine is shared: a Gradle release build needs several GiB of memory and all the cores it can get.
+It joins or launches a dev machine, clones the project's branch there, and runs the project's `scripts/build-android.sh`, else `npx eas-cli build --platform android --local`, on the machine itself, then copies the artifact back and cleans up. The machine image has neither Node, a JDK, nor the Android SDK, and no Expo login: a project that builds this way ships a `scripts/build-android.sh` that runs the build in a container with its pinned toolchain and reads `EXPO_TOKEN` from its own settings. Run `cloud-capacity.sh` first if the machine is shared: a Gradle release build needs several GiB of memory and all the cores it can get.
 
-**iOS on an AWS Mac (M8).** Only when the user has approved it: `scripts/cloud-up.sh <ticket>-<slug> --mac`. It reuses a free brain Mac host; when none exists it refuses until the user approves a new one, asked with "a Mac host bills for at least 24 hours". A Mac takes several minutes to boot. Build with `eas build --platform ios --local` or `xcodebuild archive`; signing credentials come the way the project's `docs/DEVELOPMENT.md` says, for this build only, never committed. Copy the artifact back or submit it from the machine, then `cloud-down.sh`. A Mac machine is terminated at once; its host stays allocated for further iOS builds and is released 24 hours after allocation by its schedule, or by `cloud-reap.sh` after that.
+**iOS on an AWS Mac (DM8).** Only when the user has approved it: `scripts/cloud-up.sh <ticket>-<slug> --mac`. It reuses a free brain Mac host; when none exists it refuses until the user approves a new one, asked with "a Mac host bills for at least 24 hours". A Mac takes several minutes to boot. Build with `eas build --platform ios --local` or `xcodebuild archive`; signing credentials come the way the project's `docs/DEVELOPMENT.md` says, for this build only, never committed. Copy the artifact back or submit it from the machine, then `cloud-down.sh`. A Mac machine is terminated at once; its host stays allocated for further iOS builds and is released 24 hours after allocation by its schedule, or by `cloud-reap.sh` after that.

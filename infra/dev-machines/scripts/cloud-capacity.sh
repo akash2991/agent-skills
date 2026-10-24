@@ -1,5 +1,5 @@
 #!/bin/bash
-# cloud-capacity.sh — whether a shared dev machine has room for one more agent (development-setup M2).
+# cloud-capacity.sh — whether a shared dev machine has room for one more agent (machine policy DM2).
 #
 # Usage: infra/dev-machines/scripts/cloud-capacity.sh <instance-id>
 # Settings from CLOUD_ENV_FILE or ./.env (env.example). Reads the last 15 minutes of the machine's /var/lib/brain/metrics over SSH,
@@ -15,10 +15,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ID="${1:-}"
 [ -n "$ID" ] || { echo "usage: cloud-capacity.sh <instance-id>" >&2; exit 2; }
 need_ssh
-# On a home machine (M9) the agents are the ones registered in /run/brain-agents: old clones stay on its volume.
-OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null
-  if [ -d /run/brain-agents ]; then n=$(ls /run/brain-agents | wc -l); else n=$(ls -d ~/work/*/ 2>/dev/null | wc -l); fi
-  echo "agents $n"')" \
+# The agents are the ones registered in /run/brain-agents by cloud-up.sh (DM5).
+OUT="$("${SSH[@]}" "ec2-user@$ID" 'tail -n 15 /var/lib/brain/metrics 2>/dev/null; echo "agents $(ls /run/brain-agents 2>/dev/null | wc -l)"')" \
   || { echo "cannot read metrics from $ID" >&2; exit 2; }
 
 printf '%s\n' "$OUT" | awk -v cpu_max="$MAX_CPU_PCT" -v mem_max="$MAX_MEM_PCT" -v disk_max="$MAX_DISK_PCT" '

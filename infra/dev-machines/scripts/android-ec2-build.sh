@@ -1,5 +1,5 @@
 #!/bin/bash
-# android-ec2-build.sh — build the Android app on an EC2 dev machine in Docker (development-setup M7).
+# android-ec2-build.sh — build the Android app on an EC2 dev machine (machine policy DM7).
 #
 # Usage: infra/dev-machines/scripts/android-ec2-build.sh [<profile>] [<ticket>]
 # Run from the project root, with the machine settings in CLOUD_ENV_FILE or the project's .env. The profile is passed to the build command; the ticket defaults to the

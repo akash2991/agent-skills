@@ -24,17 +24,16 @@ Everything an agent needs to set up, run, test, and debug this project. Kept cur
 
 <the commands that create and remove one agent's worktree, containers, and data here>
 
-## Cloud machines
+## Mobile builds
 
-<which `CLOUD_*` and `EAS_*` settings in `.env` this project changes from the defaults in `.env.example`, and why; never their secret values>
+<which `EAS_*` settings in `.env` this project changes from the defaults in `.env.example`, and why; never their secret values>
 
 | Purpose | Value |
 |---|---|
-| Default type | `m8i.2xlarge` |
 | EAS build profiles and what each produces | |
-| Android build image | |
-| Mac AMI and what it carries (Xcode, Node, CocoaPods, EAS CLI) | |
-| Signing credentials for a cloud build: where they come from | |
+| Android build: `scripts/build-android.sh`, or the Docker image `eas build --local` runs in | |
+| Xcode version an approved local iOS build needs | |
+| Signing credentials for a build: where they come from | |
 
 ## Commands
 

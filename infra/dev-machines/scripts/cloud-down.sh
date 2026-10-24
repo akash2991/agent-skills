@@ -1,16 +1,14 @@
 #!/bin/bash
-# cloud-down.sh — take an agent off a brain machine, and terminate the machine when nobody is left (development-setup M5).
+# cloud-down.sh — take an agent off a brain machine, and terminate the machine when nobody is left (machine policy DM5).
 #
 # Usage: infra/dev-machines/scripts/cloud-down.sh <instance-id> [<work-dir>]
 # Settings from CLOUD_ENV_FILE or ./.env (env.example). Refuses a machine without the brain=dev tag.
-#   dev machine  stops and removes the Compose project <work-dir> with its volumes and deletes ~/work/<work-dir>;
-#                terminates the machine only when no other agent's directory is left under ~/work.
-#                A machine that cannot be reached is left to its deadline and cloud-reap.sh
-#   home machine one with a developer's home volume (M9): stops and removes the Compose project <work-dir> but
-#                keeps ~/work/<work-dir> on the volume, and removes this agent's registration; terminates the machine
-#                when no other agent is registered on it and no other SSH session is open
+#   dev machine  stops and removes the Compose project <work-dir> with its volumes and this agent's registration;
+#                never deletes a directory: the agent removes its own worktree (development-setup DS2). Terminates
+#                the machine when no agent is registered on it (and, on a home machine (DM9), no other SSH session
+#                is open). A machine that cannot be reached is left to its deadline and cloud-reap.sh
 #   Mac machine  terminated; its host stays allocated until its scheduled release, 24 h after allocation,
-#                so further iOS builds reuse it (M8)
+#                so further iOS builds reuse it (DM8)
 # Prints the result as JSON on stdout; status goes to stderr.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -37,30 +35,18 @@ terminate() {
 [ "$KIND" = mac ] && terminate
 need_ssh
 
-if [ -n "$HOMEVOL" ]; then
-  # The clone stays on the home volume; what is left is the other registered agents and SSH sessions besides this one.
-  LEFT_CMD='echo $(( $(ls /run/brain-agents 2>/dev/null | wc -l) + $(ss -Htn state established "( sport = :22 )" | wc -l) - 1 ))'
-  REMOVE=""
-  # cloud-up.sh registered this agent under its work directory.
-  [ -z "$DIR" ] || UNREGISTER="sudo rm -f /run/brain-agents/'$DIR'"
-else
-  LEFT_CMD='ls -d ~/work/*/ 2>/dev/null | wc -l'
-  REMOVE="rm -rf ~/work/'$DIR'"
-fi
+# cloud-up.sh registered this agent under its work directory; what is left is the other registered agents, and on a
+# home machine also the SSH sessions besides this one (the developer working there).
+[ -z "$DIR" ] || UNREGISTER="sudo rm -f /run/brain-agents/'$DIR'"
+LEFT_CMD='echo $(ls /run/brain-agents 2>/dev/null | wc -l)'
+[ -z "$HOMEVOL" ] || LEFT_CMD='echo $(( $(ls /run/brain-agents 2>/dev/null | wc -l) + $(ss -Htn state established "( sport = :22 )" | wc -l) - 1 ))'
 LEFT="$("${SSH[@]}" "ec2-user@$ID" "
   ${UNREGISTER:-}
-  if [ -n '$DIR' ] && [ -d ~/work/'$DIR' ]; then
-    (cd ~/work/'$DIR' && docker compose -p '$DIR' down -v --remove-orphans >/dev/null 2>&1 || true)
-    $REMOVE
-  fi
+  [ -z '$DIR' ] || docker compose -p '$DIR' down -v --remove-orphans >/dev/null 2>&1 || true
   $LEFT_CMD")" \
   || { echo "cannot reach $ID; it terminates at its deadline, and cloud-reap.sh terminates it after that" >&2; exit 1; }
 LEFT="$(printf %s "$LEFT" | tr -d ' ')"
-if [ -n "$DIR" ] && [ -n "$HOMEVOL" ]; then
-  echo "removed the containers of ~/work/$DIR from $ID; the directory stays on home volume $HOMEVOL" >&2
-elif [ -n "$DIR" ]; then
-  echo "removed ~/work/$DIR and its containers from $ID" >&2
-fi
+[ -z "$DIR" ] || echo "removed the Compose project $DIR and its registration from $ID" >&2
 [ "$LEFT" = 0 ] && terminate
-echo "$ID still has $LEFT agent directories or sessions; left running for them" >&2
+echo "$ID still has $LEFT registered agents or sessions; left running for them" >&2
 echo "{\"instance_id\":\"$ID\",\"terminated\":false,\"agents_left\":$LEFT,\"host_id\":\"\"}"
