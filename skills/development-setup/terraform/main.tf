@@ -110,7 +110,7 @@ resource "aws_key_pair" "dev" {
 }
 
 # --- Home volumes (DS18): one per developer, in the first zone (CLOUD_SUBNET's). cloud-up.sh attaches it to that
-# developer's machine as /home/ec2-user; it outlives every machine. Daily snapshots, kept for snapshot_days.
+# developer's machine as /home/ec2-user; it outlives every machine. A snapshot every 24 hours, the last snapshot_days kept.
 
 resource "aws_ebs_volume" "home" {
   for_each          = var.home_volumes

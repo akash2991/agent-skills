@@ -33,9 +33,9 @@ variable "home_volumes" {
 }
 
 variable "snapshot_days" {
-  description = "How many daily snapshots of each home volume are kept."
+  description = "How many daily snapshots of each home volume are kept; with 1, only the latest, at most a day old."
   type        = number
-  default     = 7
+  default     = 1
 }
 
 variable "ssh_public_key_path" {
