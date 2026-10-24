@@ -21,6 +21,7 @@ you ──▶ /brain-status                   who is running what, on which mode
 | `templates/` | the documents a project fills in: ARCHITECTURE, PRD, HLD, LLD, DOMAIN, ADR, DEVELOPMENT, DEPLOYMENT, CHANGELOG, LEARNINGS |
 | `docs/` | skill and persona anatomies, per-tool setup guides |
 | `evals/` | trigger and routing evals for every skill |
+| [`tools/skill-atlas/`](tools/skill-atlas/README.md) | interactive cross-repository skill comparison, app-stack workspace, and proposed evaluation playground |
 
 ## Use it
 

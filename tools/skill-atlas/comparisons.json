@@ -1,0 +1,2313 @@
+{
+  "groups": [
+    {
+      "id": "testing",
+      "title": "Test behavior",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "gates",
+          "label": "GATES"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/tdd"
+          ],
+          "cells": {
+            "when": {
+              "text": "Small bug with a cheap local check",
+              "highlight": "cheap local check",
+              "detail": "Use this workflow when TDD is requested or the bug has an obvious inexpensive test target.",
+              "source": "cursor/tdd"
+            },
+            "approach": {
+              "text": "Reproduce first, then make the smallest fix",
+              "highlight": "Reproduce first",
+              "detail": "Choose an existing nearby test that captures intended behavior rather than implementation details.",
+              "source": "cursor/tdd"
+            },
+            "gates": {
+              "text": "Fail for the right reason before fixing",
+              "highlight": "right reason",
+              "detail": "Run the new check before production edits and correct unrelated failures before continuing.",
+              "source": "cursor/tdd"
+            },
+            "output": {
+              "text": "Named failing-before and passing-after evidence",
+              "highlight": "failing-before",
+              "detail": "Report the executable check, its original failure, and the validation after the fix.",
+              "source": "cursor/tdd"
+            },
+            "watch-out": {
+              "text": "Skip impractical tests; explain the alternative proof",
+              "highlight": "Skip impractical tests",
+              "detail": "Avoid building expensive infrastructure for a small fix and report the closest useful executable verification instead.",
+              "source": "cursor/tdd"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/tdd"
+          ],
+          "cells": {
+            "when": {
+              "text": "Features or bugs built test-first",
+              "highlight": "test-first",
+              "detail": "Apply the red-to-green discipline when implementing features or fixing bugs through tests.",
+              "source": "matt/tdd"
+            },
+            "approach": {
+              "text": "One public behavior per red-green cycle",
+              "highlight": "One public behavior",
+              "detail": "Write one test and one minimal implementation at a time rather than batching speculative tests.",
+              "source": "matt/tdd"
+            },
+            "gates": {
+              "text": "User confirms test boundaries before any test",
+              "highlight": "User confirms",
+              "detail": "List each proposed seam with what it catches and misses, then obtain user confirmation.",
+              "source": "matt/tdd"
+            },
+            "output": {
+              "text": "Tests that survive internal refactoring",
+              "highlight": "survive internal refactoring",
+              "detail": "Observe behavior through public interfaces with expected values from an independent source of truth.",
+              "source": "matt/tdd"
+            },
+            "watch-out": {
+              "text": "Refactoring belongs in review, outside the loop",
+              "highlight": "outside the loop",
+              "detail": "The implementation loop excludes refactoring and hands that work to the review stage.",
+              "source": "matt/tdd"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/test-driven-development"
+          ],
+          "cells": {
+            "when": {
+              "text": "New logic, bug fixes, or changed behavior",
+              "highlight": "changed behavior",
+              "detail": "Use TDD for behavior changes but not documentation or static configuration without behavioral effects.",
+              "source": "addy/test-driven-development"
+            },
+            "approach": {
+              "text": "Red, green, then refactor with tests running",
+              "highlight": "then refactor",
+              "detail": "Write a failing test, implement the minimum fix, and clean up while keeping tests green.",
+              "source": "addy/test-driven-development"
+            },
+            "gates": {
+              "text": "Focused test first; full suite before completion",
+              "highlight": "full suite",
+              "detail": "Discover the repository's actual test commands rather than assuming a particular language or runner.",
+              "source": "addy/test-driven-development"
+            },
+            "output": {
+              "text": "Regression test plus verified behavior",
+              "highlight": "Regression test",
+              "detail": "A bug fix starts with a reproducing test and finishes with the test passing and the suite checked.",
+              "source": "addy/test-driven-development"
+            },
+            "watch-out": {
+              "text": "Avoid internal-call assertions and excessive mocking",
+              "highlight": "excessive mocking",
+              "detail": "Prefer observable outcomes and real implementations unless controlled doubles are necessary.",
+              "source": "addy/test-driven-development"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/test-driven-development"
+          ],
+          "cells": {
+            "when": {
+              "text": "Behavior changes and acceptance-criterion verification",
+              "highlight": "acceptance-criterion verification",
+              "detail": "The skill covers writing and reviewing tests as well as proving story criteria and milestone outcomes.",
+              "source": "akash/test-driven-development"
+            },
+            "approach": {
+              "text": "Red-green-refactor plus tests through real entry points",
+              "highlight": "real entry points",
+              "detail": "End-to-end scenarios exercise the HTTP API, CLI, UI, or queue that actual users or services use.",
+              "source": "akash/test-driven-development"
+            },
+            "gates": {
+              "text": "Test every acceptance criterion and milestone outcome",
+              "highlight": "every acceptance criterion",
+              "detail": "Rule T2 requires coverage of each criterion and outcome without weakening or skipping tests to pass.",
+              "source": "akash/test-driven-development"
+            },
+            "output": {
+              "text": "Verification commands and results in the report",
+              "highlight": "commands and results",
+              "detail": "Record runnable verification in milestone documentation and report the command and result after executing it.",
+              "source": "akash/test-driven-development"
+            },
+            "watch-out": {
+              "text": "Performance tests deferred; record that on the ticket",
+              "highlight": "Performance tests deferred",
+              "detail": "Rule T5 explicitly defers performance testing and requires noting where it would have applied.",
+              "source": "akash/test-driven-development"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "small-local-bug",
+          "label": "Small local bug",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Focused regression checks avoid imposing a new harness."
+        },
+        {
+          "id": "user-chosen-boundaries",
+          "label": "User chosen boundaries",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "Pre-agreed seams fit collaborative decisions about test scope."
+        },
+        {
+          "id": "refactor-during-tdd",
+          "label": "Refactor during TDD",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "The explicit red-green-refactor cycle includes cleanup."
+        },
+        {
+          "id": "acceptance-driven-coverage",
+          "label": "Acceptance driven coverage",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Criteria and milestone outcomes each receive executable checks."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "planning",
+      "title": "Decompose work",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "human-input",
+          "label": "HUMAN INPUT"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/figure-it-out"
+          ],
+          "cells": {
+            "when": {
+              "text": "Ambitious work without a narrower playbook",
+              "highlight": "without a narrower playbook",
+              "detail": "Design a workflow for large migrations or multi-part changes when existing playbooks do not fit.",
+              "source": "cursor/figure-it-out"
+            },
+            "approach": {
+              "text": "Risk-first units, baseline checks, hypothesis loops",
+              "highlight": "Risk-first units",
+              "detail": "Build verification before features and measure each small change against a falsifiable completion condition.",
+              "source": "cursor/figure-it-out"
+            },
+            "human-input": {
+              "text": "Present framing before a long run",
+              "highlight": "before a long run",
+              "detail": "Reversible work proceeds, but a multi-hour run gets a checkpoint on framing and tradeoffs.",
+              "source": "cursor/figure-it-out"
+            },
+            "output": {
+              "text": "Designed playbook and auditable decision trail",
+              "highlight": "auditable decision trail",
+              "detail": "Hand back the phase list, rigor rationale, trail location, verified results, and remaining gaps.",
+              "source": "cursor/figure-it-out"
+            },
+            "watch-out": {
+              "text": "Inconclusive evidence is not a pass",
+              "highlight": "not a pass",
+              "detail": "Judge the actual artifact rather than worker self-reports and keep negative findings visible.",
+              "source": "cursor/figure-it-out"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/to-tickets"
+          ],
+          "cells": {
+            "when": {
+              "text": "A plan, spec, or conversation needs tickets",
+              "highlight": "needs tickets",
+              "detail": "Turn existing requirements into independently demonstrable pieces of work with explicit blockers.",
+              "source": "matt/to-tickets"
+            },
+            "approach": {
+              "text": "Complete vertical slices with blocking edges",
+              "highlight": "blocking edges",
+              "detail": "Each tracer-bullet ticket spans the relevant layers and fits within a fresh context window.",
+              "source": "matt/to-tickets"
+            },
+            "human-input": {
+              "text": "Approve granularity and dependencies before publication",
+              "highlight": "before publication",
+              "detail": "Ask the user to review ticket size, blocking relationships, and opportunities to merge or split.",
+              "source": "matt/to-tickets"
+            },
+            "output": {
+              "text": "One ticket per slice in configured tracker",
+              "highlight": "configured tracker",
+              "detail": "Publish approved tickets as local files or tracker issues with their blocking relationships.",
+              "source": "matt/to-tickets"
+            },
+            "watch-out": {
+              "text": "Wide refactors may need expand-contract sequencing",
+              "highlight": "expand-contract sequencing",
+              "detail": "Mechanical changes that cannot land as green vertical slices use expansion, migration batches, and contraction.",
+              "source": "matt/to-tickets"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/planning-and-task-breakdown"
+          ],
+          "cells": {
+            "when": {
+              "text": "Clear requirements need ordered implementable tasks",
+              "highlight": "ordered implementable tasks",
+              "detail": "Use planning when scope or dependencies need decomposition rather than for an obvious single-file change.",
+              "source": "addy/planning-and-task-breakdown"
+            },
+            "approach": {
+              "text": "Read-only planning, then dependency-aware vertical slices",
+              "highlight": "Read-only planning",
+              "detail": "Inspect the spec and code without implementing, then define small tasks with acceptance and verification criteria.",
+              "source": "addy/planning-and-task-breakdown"
+            },
+            "human-input": {
+              "text": "Human checkpoints after two or three tasks",
+              "highlight": "Human checkpoints",
+              "detail": "The plan includes periodic tests, builds, end-to-end checks, and human review before continuing.",
+              "source": "addy/planning-and-task-breakdown"
+            },
+            "output": {
+              "text": "Plan document plus markdown or tracker tasks",
+              "highlight": "markdown or tracker",
+              "detail": "Keep decisions in tasks/plan.md and use tasks/todo.md unless the project designates an external tracker.",
+              "source": "addy/planning-and-task-breakdown"
+            },
+            "watch-out": {
+              "text": "Never overwrite another incomplete plan",
+              "highlight": "Never overwrite",
+              "detail": "Stop and ask if existing unchecked work belongs to a different plan rather than deleting or replacing it.",
+              "source": "addy/planning-and-task-breakdown"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/planning-and-task-breakdown"
+          ],
+          "cells": {
+            "when": {
+              "text": "Reviewed design needs milestones and sprint planning",
+              "highlight": "milestones and sprint planning",
+              "detail": "Large requirements become projects, milestones, cycles, stories, and tasks before implementation.",
+              "source": "akash/planning-and-task-breakdown"
+            },
+            "approach": {
+              "text": "Usable milestones; shared foundation before parallel tasks",
+              "highlight": "shared foundation",
+              "detail": "One engineer merges shared definitions before concurrent tasks begin on disjoint owned paths.",
+              "source": "akash/planning-and-task-breakdown"
+            },
+            "human-input": {
+              "text": "User approves plan and reviews phase checkpoints",
+              "highlight": "User approves plan",
+              "detail": "Execution waits for plan approval and checkpoints include user review before the next phase.",
+              "source": "akash/planning-and-task-breakdown"
+            },
+            "output": {
+              "text": "Plan document, Linear work, and sprint reviews",
+              "highlight": "Linear work",
+              "detail": "The plan indexes Linear identifiers while cycle reviews record delivery, spillover, and estimation error.",
+              "source": "akash/planning-and-task-breakdown"
+            },
+            "watch-out": {
+              "text": "Concurrent tasks must not own the same file",
+              "highlight": "same file",
+              "detail": "Split shared files, extract a common contract, serialize work, or combine assignments to prevent overlapping ownership.",
+              "source": "akash/planning-and-task-breakdown"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "unfamiliar-large-change",
+          "label": "Unfamiliar large change",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "A custom experimental playbook fits work without a matching workflow."
+        },
+        {
+          "id": "collaborative-ticket-graph",
+          "label": "Collaborative ticket graph",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "Approval focuses on slice size and genuine blocking edges."
+        },
+        {
+          "id": "portable-task-checklist",
+          "label": "Portable task checklist",
+          "preferredRepos": [
+            "addy"
+          ],
+          "reason": "Markdown tasks or a designated tracker fit existing project habits."
+        },
+        {
+          "id": "linear-sprint-delivery",
+          "label": "Linear sprint delivery",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Milestones, cycle capacity, ownership, and spillover are explicit planning artifacts."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "intent",
+      "title": "Clarify intent",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "human-input",
+          "label": "HUMAN INPUT"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/sharpen"
+          ],
+          "cells": {
+            "when": {
+              "text": "Before starting an underspecified or overconstrained task",
+              "highlight": "Before starting",
+              "detail": "Consider the expert approach, the user's real goal, and whether the specification helps or hinders it.",
+              "source": "cursor/sharpen"
+            },
+            "approach": {
+              "text": "Adjust constraints; keep an outside correctness check",
+              "highlight": "outside correctness check",
+              "detail": "Add or loosen constraints only where doing so improves the work while retaining an external check.",
+              "source": "cursor/sharpen"
+            },
+            "human-input": {
+              "text": "Leave the user's choices open",
+              "highlight": "user's choices",
+              "detail": "Do not silently decide choices that properly belong to the user.",
+              "source": "cursor/sharpen"
+            },
+            "output": {
+              "text": "Better-framed execution, not a rewritten prompt",
+              "highlight": "not a rewritten prompt",
+              "detail": "Fold useful framing into the work without returning a replacement prompt or narrating the framing.",
+              "source": "cursor/sharpen"
+            },
+            "watch-out": {
+              "text": "Improve the work without expanding it",
+              "highlight": "without expanding it",
+              "detail": "The instruction is to make the task better rather than bigger.",
+              "source": "cursor/sharpen"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/grilling"
+          ],
+          "cells": {
+            "when": {
+              "text": "Stress-test a plan, decision, or idea",
+              "highlight": "Stress-test",
+              "detail": "Interview until there is shared understanding across the design's decision tree.",
+              "source": "matt/grilling"
+            },
+            "approach": {
+              "text": "Ask all currently answerable questions per round",
+              "highlight": "per round",
+              "detail": "Batch questions whose prerequisites are settled and attach a recommended answer to each.",
+              "source": "matt/grilling"
+            },
+            "human-input": {
+              "text": "User decides; agent looks up facts",
+              "highlight": "User decides",
+              "detail": "Environmental facts are researched by the agent while design decisions are put to the user.",
+              "source": "matt/grilling"
+            },
+            "output": {
+              "text": "Confirmed understanding across the decision tree",
+              "highlight": "Confirmed understanding",
+              "detail": "Finish when every branch has been visited and the user confirms shared understanding.",
+              "source": "matt/grilling"
+            },
+            "watch-out": {
+              "text": "Dependent questions wait for earlier decisions",
+              "highlight": "Dependent questions wait",
+              "detail": "A question that depends on an unsettled answer belongs in a later round.",
+              "source": "matt/grilling"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/interview-me"
+          ],
+          "cells": {
+            "when": {
+              "text": "Unclear user, outcome, constraint, or reason",
+              "highlight": "Unclear user",
+              "detail": "Interview before planning when missing intent would otherwise be filled with silent assumptions.",
+              "source": "addy/interview-me"
+            },
+            "approach": {
+              "text": "One question at a time, with a guess",
+              "highlight": "One question at a time",
+              "detail": "State a hypothesis and confidence, then attach a proposed answer to each focused question.",
+              "source": "addy/interview-me"
+            },
+            "human-input": {
+              "text": "Explicit confirmation; needs a responsive user",
+              "highlight": "responsive user",
+              "detail": "Wait for the user's reaction and seek an explicit yes to the restated intent.",
+              "source": "addy/interview-me"
+            },
+            "output": {
+              "text": "Confirmed intent, then hand control back",
+              "highlight": "hand control back",
+              "detail": "Deliver the statement of intent, offer downstream paths, and stop the turn without starting them.",
+              "source": "addy/interview-me"
+            },
+            "watch-out": {
+              "text": "Not for unattended runs or mechanical changes",
+              "highlight": "Not for unattended runs",
+              "detail": "In non-interactive contexts, flag ambiguous requirements as a blocker instead of conducting the interview.",
+              "source": "addy/interview-me"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/interview-me"
+          ],
+          "cells": {
+            "when": {
+              "text": "Unclear user, outcome, constraint, or reason",
+              "highlight": "Unclear user",
+              "detail": "Interview before planning when missing intent would otherwise be filled with silent assumptions.",
+              "source": "akash/interview-me"
+            },
+            "approach": {
+              "text": "One question at a time, with a guess",
+              "highlight": "One question at a time",
+              "detail": "State a hypothesis and confidence, then attach a proposed answer to each focused question.",
+              "source": "akash/interview-me"
+            },
+            "human-input": {
+              "text": "Explicit confirmation; needs a responsive user",
+              "highlight": "responsive user",
+              "detail": "Wait for the user's reaction and seek an explicit yes to the restated intent.",
+              "source": "akash/interview-me"
+            },
+            "output": {
+              "text": "Confirmed intent, then hand control back",
+              "highlight": "hand control back",
+              "detail": "Deliver the statement of intent, offer downstream paths, and stop the turn without starting them.",
+              "source": "akash/interview-me"
+            },
+            "watch-out": {
+              "text": "Not for unattended runs or mechanical changes",
+              "highlight": "Not for unattended runs",
+              "detail": "In non-interactive contexts, flag ambiguous requirements as a blocker instead of conducting the interview.",
+              "source": "akash/interview-me"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "lightweight-task-framing",
+          "label": "Lightweight task framing",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Sharpen adjusts framing while continuing the requested work."
+        },
+        {
+          "id": "branching-design-decisions",
+          "label": "Branching design decisions",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "Round-based questions fit decisions with known prerequisite relationships."
+        },
+        {
+          "id": "unclear-underlying-need",
+          "label": "Unclear underlying need",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "The shared one-question interview tests assumptions before planning."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "implementation",
+      "title": "Build incrementally",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "gates",
+          "label": "GATES"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/principle-sequence-verifiable-units"
+          ],
+          "cells": {
+            "when": {
+              "text": "Sweeps, migrations, and multi-step changes",
+              "highlight": "multi-step changes",
+              "detail": "Apply the principle to repeated edits and the order of commits and pull requests.",
+              "source": "cursor/principle-sequence-verifiable-units"
+            },
+            "approach": {
+              "text": "Known-good state, one change, then check",
+              "highlight": "one change",
+              "detail": "Treat every unit as a before-and-after bracket rather than verifying only after a batch.",
+              "source": "cursor/principle-sequence-verifiable-units"
+            },
+            "gates": {
+              "text": "Do not advance until the unit is green",
+              "highlight": "unit is green",
+              "detail": "Verify each change before the next and start from clean trunk so checks use the real baseline.",
+              "source": "cursor/principle-sequence-verifiable-units"
+            },
+            "output": {
+              "text": "A delivery sequence reviewers can replay",
+              "highlight": "reviewers can replay",
+              "detail": "Order commits so the proof is visible, such as a failing test followed by its fix.",
+              "source": "cursor/principle-sequence-verifiable-units"
+            },
+            "watch-out": {
+              "text": "Batching checks hides which change broke behavior",
+              "highlight": "Batching checks",
+              "detail": "Delayed checks bury the cause of failure under later work built on the broken state.",
+              "source": "cursor/principle-sequence-verifiable-units"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/implement"
+          ],
+          "cells": {
+            "when": {
+              "text": "Implement work from a spec or tickets",
+              "highlight": "spec or tickets",
+              "detail": "Fetch a referenced ticket and state its title before starting the implementation.",
+              "source": "matt/implement"
+            },
+            "approach": {
+              "text": "Use TDD where possible at agreed boundaries",
+              "highlight": "agreed boundaries",
+              "detail": "Invoke the TDD skill where practical using pre-agreed seams.",
+              "source": "matt/implement"
+            },
+            "gates": {
+              "text": "Regular focused checks; full suite at completion",
+              "highlight": "full suite at completion",
+              "detail": "Run typechecking and single test files regularly, then the complete suite once at the end.",
+              "source": "matt/implement"
+            },
+            "output": {
+              "text": "Reviewed work committed to the current branch",
+              "highlight": "current branch",
+              "detail": "After implementation, invoke code-review and commit the work on the existing branch.",
+              "source": "matt/implement"
+            },
+            "watch-out": {
+              "text": "Ask when the ticket reference is ambiguous",
+              "highlight": "ticket reference is ambiguous",
+              "detail": "Resolve uncertainty about the requested ticket before implementing it.",
+              "source": "matt/implement"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/incremental-implementation"
+          ],
+          "cells": {
+            "when": {
+              "text": "Multi-file features or the next planned task",
+              "highlight": "Multi-file features",
+              "detail": "Use incremental implementation when a change is too large to build and verify in one minimal step.",
+              "source": "addy/incremental-implementation"
+            },
+            "approach": {
+              "text": "Small complete slices; contract-first when working in parallel",
+              "highlight": "Small complete slices",
+              "detail": "Prefer vertical slices, with a shared API contract before frontend and backend work proceeds independently.",
+              "source": "addy/incremental-implementation"
+            },
+            "gates": {
+              "text": "Tests and build pass after each increment",
+              "highlight": "after each increment",
+              "detail": "Verify each piece before committing and moving to the next slice.",
+              "source": "addy/incremental-implementation"
+            },
+            "output": {
+              "text": "Working slices with descriptive atomic commits",
+              "highlight": "Working slices",
+              "detail": "Save each verified increment separately rather than restarting or waiting for the entire feature.",
+              "source": "addy/incremental-implementation"
+            },
+            "watch-out": {
+              "text": "Keep unrelated cleanup out of scope",
+              "highlight": "unrelated cleanup",
+              "detail": "Note adjacent improvements without modifying them as part of the current task.",
+              "source": "addy/incremental-implementation"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/incremental-implementation"
+          ],
+          "cells": {
+            "when": {
+              "text": "Multi-file features or the next planned task",
+              "highlight": "Multi-file features",
+              "detail": "Use incremental implementation when a change is too large to build and verify in one minimal step.",
+              "source": "akash/incremental-implementation"
+            },
+            "approach": {
+              "text": "Small complete slices; contract-first when working in parallel",
+              "highlight": "Small complete slices",
+              "detail": "Prefer vertical slices, with a shared API contract before frontend and backend work proceeds independently.",
+              "source": "akash/incremental-implementation"
+            },
+            "gates": {
+              "text": "Tests and build pass after each increment",
+              "highlight": "after each increment",
+              "detail": "Verify each piece before committing and moving to the next slice.",
+              "source": "akash/incremental-implementation"
+            },
+            "output": {
+              "text": "Working slices with descriptive atomic commits",
+              "highlight": "Working slices",
+              "detail": "Save each verified increment separately rather than restarting or waiting for the entire feature.",
+              "source": "akash/incremental-implementation"
+            },
+            "watch-out": {
+              "text": "Keep unrelated cleanup out of scope",
+              "highlight": "unrelated cleanup",
+              "detail": "Note adjacent improvements without modifying them as part of the current task.",
+              "source": "akash/incremental-implementation"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "repeated-mechanical-edits",
+          "label": "Repeated mechanical edits",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Per-unit checks and ordered proof fit sweeps and migrations."
+        },
+        {
+          "id": "implement-an-existing-ticket",
+          "label": "Implement an existing ticket",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "The compact wrapper connects agreed TDD, review, and a branch commit."
+        },
+        {
+          "id": "multi-file-feature-slices",
+          "label": "Multi-file feature slices",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "The shared increment cycle fits end-to-end feature development."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "title": "Review changes",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "gates",
+          "label": "GATES"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/interrogate"
+          ],
+          "cells": {
+            "when": {
+              "text": "Challenge a diff with multiple model perspectives",
+              "highlight": "multiple model perspectives",
+              "detail": "Use independent reviewers from configured models to look for blind spots in code changes.",
+              "source": "cursor/interrogate"
+            },
+            "approach": {
+              "text": "Independent reviews, then lead judgment",
+              "highlight": "lead judgment",
+              "detail": "Merge duplicate findings, note model agreement and disagreement, and judge issues against the actual goals.",
+              "source": "cursor/interrogate"
+            },
+            "gates": {
+              "text": "State intent; ask if it is unclear",
+              "highlight": "State intent",
+              "detail": "Establish the intended behavior before dispatching reviewers so they assess the same change.",
+              "source": "cursor/interrogate"
+            },
+            "output": {
+              "text": "Act, consider, noted, and dismissed findings",
+              "highlight": "dismissed findings",
+              "detail": "Return a synthesized verdict with rationale and an agreement map rather than disconnected reports.",
+              "source": "cursor/interrogate"
+            },
+            "watch-out": {
+              "text": "Do not automatically apply review suggestions",
+              "highlight": "Do not automatically apply",
+              "detail": "The deliverable is a review verdict, not edits made on the reviewers' behalf.",
+              "source": "cursor/interrogate"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/code-review"
+          ],
+          "cells": {
+            "when": {
+              "text": "Review changes since a fixed reference",
+              "highlight": "fixed reference",
+              "detail": "Compare HEAD with a supplied commit, branch, tag, or merge-base.",
+              "source": "matt/code-review"
+            },
+            "approach": {
+              "text": "Separate standards and specification reviewers",
+              "highlight": "Separate standards",
+              "detail": "Parallel reviewers assess documented conventions and requested behavior without mixing their contexts.",
+              "source": "matt/code-review"
+            },
+            "gates": {
+              "text": "Resolve reference and confirm a nonempty diff",
+              "highlight": "nonempty diff",
+              "detail": "Validate the fixed point before spawning reviewers and find or request the originating specification.",
+              "source": "matt/code-review"
+            },
+            "output": {
+              "text": "Two reports kept side by side",
+              "highlight": "side by side",
+              "detail": "Present standards and specification findings separately with a summary for each axis.",
+              "source": "matt/code-review"
+            },
+            "watch-out": {
+              "text": "Missing spec means skipping that review axis",
+              "highlight": "Missing spec",
+              "detail": "If the user confirms no specification exists, omit that reviewer and explicitly report the omission.",
+              "source": "matt/code-review"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/code-review-and-quality"
+          ],
+          "cells": {
+            "when": {
+              "text": "Before merging a feature, fix, or refactor",
+              "highlight": "Before merging",
+              "detail": "Review changes from agents or humans across correctness, readability, architecture, security, and performance.",
+              "source": "addy/code-review-and-quality"
+            },
+            "approach": {
+              "text": "Five axes with concrete structural remedies",
+              "highlight": "structural remedies",
+              "detail": "When identifying complexity, propose the restructuring that removes unnecessary moving pieces.",
+              "source": "addy/code-review-and-quality"
+            },
+            "gates": {
+              "text": "Approve improved code health, not personal perfection",
+              "highlight": "improved code health",
+              "detail": "A change need not match the reviewer's preferred implementation if it improves the codebase and follows conventions.",
+              "source": "addy/code-review-and-quality"
+            },
+            "output": {
+              "text": "Actionable findings and proposed restructuring",
+              "highlight": "Actionable findings",
+              "detail": "Explain the issue and suggest concrete moves such as extracting ownership or making a type boundary explicit.",
+              "source": "addy/code-review-and-quality"
+            },
+            "watch-out": {
+              "text": "Separate refactoring from new feature work",
+              "highlight": "Separate refactoring",
+              "detail": "Keep behavior additions distinct from structural changes so each remains reviewable.",
+              "source": "addy/code-review-and-quality"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/code-review-and-quality"
+          ],
+          "cells": {
+            "when": {
+              "text": "PR review under a named discipline role",
+              "highlight": "discipline role",
+              "detail": "Reviewers import this checklist plus relevant discipline skills for code, QA, performance, or security review.",
+              "source": "akash/code-review-and-quality"
+            },
+            "approach": {
+              "text": "Fixed checklist, then five review axes",
+              "highlight": "Fixed checklist",
+              "detail": "Check scope, flags, regressions, telemetry, comments, domain rules, and strings before the broader review dimensions.",
+              "source": "akash/code-review-and-quality"
+            },
+            "gates": {
+              "text": "Reviewed-class PRs need approval and resolved comments",
+              "highlight": "Reviewed-class PRs",
+              "detail": "Review can be optional on a ticket, but reviewed-class changes require discipline-reviewer approval.",
+              "source": "akash/code-review-and-quality"
+            },
+            "output": {
+              "text": "Linear issue per finding; open-PR comments",
+              "highlight": "Linear issue per finding",
+              "detail": "Record each finding in Linear and comment on the pull request while it remains open.",
+              "source": "akash/code-review-and-quality"
+            },
+            "watch-out": {
+              "text": "Security audits explicitly do not hold the PR",
+              "highlight": "do not hold the PR",
+              "detail": "Rule R2 allows a security audit to become later work rather than blocking the current pull request.",
+              "source": "akash/code-review-and-quality"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "model-diverse-challenge",
+          "label": "Model diverse challenge",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Independent model findings feed a synthesized judgment without automatic edits."
+        },
+        {
+          "id": "standards-versus-requirements",
+          "label": "Standards versus requirements",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "Separate reports prevent one review axis from masking the other."
+        },
+        {
+          "id": "general-premerge-checklist",
+          "label": "General premerge checklist",
+          "preferredRepos": [
+            "addy"
+          ],
+          "reason": "Five axes support a broad code-health review without prescribed tracker output."
+        },
+        {
+          "id": "tracked-discipline-review",
+          "label": "Tracked discipline review",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Checklist findings become Linear issues and pull-request comments."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "debugging",
+      "title": "Find root causes",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "gates",
+          "label": "GATES"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/principle-fix-root-causes"
+          ],
+          "cells": {
+            "when": {
+              "text": "A symptom may hide an earlier faulty decision",
+              "highlight": "earlier faulty decision",
+              "detail": "Trace the visible failure back to the first wrong action or missing handling in the system.",
+              "source": "cursor/principle-fix-root-causes"
+            },
+            "approach": {
+              "text": "Reproduce, follow causes, instrument when stuck",
+              "highlight": "instrument when stuck",
+              "detail": "Read actual errors and state instead of guessing or adding symptom-level workarounds.",
+              "source": "cursor/principle-fix-root-causes"
+            },
+            "gates": {
+              "text": "Distinguish legitimate states from impossible ones",
+              "highlight": "legitimate states",
+              "detail": "Handling a valid state can be the fix, while guarding against an invalid state may only hide its producer.",
+              "source": "cursor/principle-fix-root-causes"
+            },
+            "output": {
+              "text": "Root-cause fix across matching instances",
+              "highlight": "matching instances",
+              "detail": "Search for the same fault pattern elsewhere and fix those occurrences rather than only the reported instance.",
+              "source": "cursor/principle-fix-root-causes"
+            },
+            "watch-out": {
+              "text": "Retries and guards can conceal the fault",
+              "highlight": "conceal the fault",
+              "detail": "Do not use swallowed errors, discarded state, or clamping as substitutes for understanding the cause.",
+              "source": "cursor/principle-fix-root-causes"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/diagnosing-bugs"
+          ],
+          "cells": {
+            "when": {
+              "text": "Hard bugs or performance regressions",
+              "highlight": "Hard bugs",
+              "detail": "Use the phased diagnosis discipline when behavior is broken, failing, throwing, or unexpectedly slow.",
+              "source": "matt/diagnosing-bugs"
+            },
+            "approach": {
+              "text": "Build a feedback loop before forming theories",
+              "highlight": "before forming theories",
+              "detail": "Create an agent-runnable command that detects the exact symptom, then minimize its reproduction.",
+              "source": "matt/diagnosing-bugs"
+            },
+            "gates": {
+              "text": "No red-capable command, no hypothesis phase",
+              "highlight": "No red-capable command",
+              "detail": "If a working reproduction loop cannot be built, stop and request access, artifacts, or instrumentation permission.",
+              "source": "matt/diagnosing-bugs"
+            },
+            "output": {
+              "text": "Regression proof and a documented winning hypothesis",
+              "highlight": "documented winning hypothesis",
+              "detail": "Verify the original scenario after fixing and state the confirmed cause in the commit or pull request.",
+              "source": "matt/diagnosing-bugs"
+            },
+            "watch-out": {
+              "text": "Redact evidence and remove temporary instrumentation",
+              "highlight": "Redact evidence",
+              "detail": "Keep credentials out of shown commands and artifacts, then remove tagged debug logs before completion.",
+              "source": "matt/diagnosing-bugs"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/debugging-and-error-recovery"
+          ],
+          "cells": {
+            "when": {
+              "text": "Tests fail, builds break, or behavior surprises",
+              "highlight": "behavior surprises",
+              "detail": "Use structured triage for regressions, runtime errors, and unexpected failures.",
+              "source": "addy/debugging-and-error-recovery"
+            },
+            "approach": {
+              "text": "Stop feature work; reproduce, localize, reduce",
+              "highlight": "Stop feature work",
+              "detail": "Preserve evidence and work through the ordered triage checklist before fixing the root cause.",
+              "source": "addy/debugging-and-error-recovery"
+            },
+            "gates": {
+              "text": "Resume only after verification passes",
+              "highlight": "verification passes",
+              "detail": "Check the focused test, full suite, build, and applicable end-to-end scenario before continuing feature work.",
+              "source": "addy/debugging-and-error-recovery"
+            },
+            "output": {
+              "text": "Minimal reproduction and recurrence-catching regression test",
+              "highlight": "Minimal reproduction",
+              "detail": "Reduce the failure to its essential inputs and add a test that fails without the fix.",
+              "source": "addy/debugging-and-error-recovery"
+            },
+            "watch-out": {
+              "text": "Unreproducible failures need documented conditions and monitoring",
+              "highlight": "documented conditions",
+              "detail": "Investigate timing, environment, and state differences, then monitor genuinely non-reproducible cases rather than claiming certainty.",
+              "source": "addy/debugging-and-error-recovery"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/debugging-and-error-recovery"
+          ],
+          "cells": {
+            "when": {
+              "text": "Tests fail, builds break, or behavior surprises",
+              "highlight": "behavior surprises",
+              "detail": "Use structured triage for regressions, runtime errors, and unexpected failures.",
+              "source": "akash/debugging-and-error-recovery"
+            },
+            "approach": {
+              "text": "Stop feature work; reproduce, localize, reduce",
+              "highlight": "Stop feature work",
+              "detail": "Preserve evidence and work through the ordered triage checklist before fixing the root cause.",
+              "source": "akash/debugging-and-error-recovery"
+            },
+            "gates": {
+              "text": "Resume only after verification passes",
+              "highlight": "verification passes",
+              "detail": "Check the focused test, full suite, build, and applicable end-to-end scenario before continuing feature work.",
+              "source": "akash/debugging-and-error-recovery"
+            },
+            "output": {
+              "text": "Minimal reproduction and recurrence-catching regression test",
+              "highlight": "Minimal reproduction",
+              "detail": "Reduce the failure to its essential inputs and add a test that fails without the fix.",
+              "source": "akash/debugging-and-error-recovery"
+            },
+            "watch-out": {
+              "text": "Unreproducible failures need documented conditions and monitoring",
+              "highlight": "documented conditions",
+              "detail": "Investigate timing, environment, and state differences, then monitor genuinely non-reproducible cases rather than claiming certainty.",
+              "source": "akash/debugging-and-error-recovery"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "suspicious-symptom-workaround",
+          "label": "Suspicious symptom workaround",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "The legitimate-state distinction helps evaluate whether a guard actually fixes the fault."
+        },
+        {
+          "id": "elusive-hard-failure",
+          "label": "Elusive hard failure",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "A red-capable feedback command gates hypothesis testing."
+        },
+        {
+          "id": "broken-build-or-test",
+          "label": "Broken build or test",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "The shared stop-the-line checklist fits structured regression triage."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "architecture",
+      "title": "Shape architecture",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "human-input",
+          "label": "HUMAN INPUT"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/architect"
+          ],
+          "cells": {
+            "when": {
+              "text": "Nontrivial work risks locking in the wrong shape",
+              "highlight": "wrong shape",
+              "detail": "Sketch interfaces and module structure before implementation commits to an unsuitable architecture.",
+              "source": "cursor/architect"
+            },
+            "approach": {
+              "text": "Ground the system; synthesize distinct design sketches",
+              "highlight": "distinct design sketches",
+              "detail": "Use existing-system explanations and at least two structurally different candidates before selecting a synthesized design.",
+              "source": "cursor/architect"
+            },
+            "human-input": {
+              "text": "Human sign-off is an opt-in checkpoint",
+              "highlight": "opt-in checkpoint",
+              "detail": "Proceed to implementation by default unless the user explicitly requests review of the sketch first.",
+              "source": "cursor/architect"
+            },
+            "output": {
+              "text": "Usage sketch, types, module map, and rationale",
+              "highlight": "Usage sketch",
+              "detail": "Write caller usage first, derive the type sketch, and ship the synthesis rationale alongside it.",
+              "source": "cursor/architect"
+            },
+            "watch-out": {
+              "text": "Repeated workarounds mean reconsidering the sketch",
+              "highlight": "reconsidering the sketch",
+              "detail": "A pattern of implementation deviations should trigger re-grounding and redesign rather than accumulated patches.",
+              "source": "cursor/architect"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/codebase-design"
+          ],
+          "cells": {
+            "when": {
+              "text": "Design interfaces or choose test boundaries",
+              "highlight": "Design interfaces",
+              "detail": "Use this shared vocabulary when shaping modules, finding deepening opportunities, or improving testability.",
+              "source": "matt/codebase-design"
+            },
+            "approach": {
+              "text": "Hide substantial behavior behind a small interface",
+              "highlight": "small interface",
+              "detail": "Design for caller leverage and maintenance locality rather than measuring depth by lines of code.",
+              "source": "matt/codebase-design"
+            },
+            "human-input": {
+              "text": "Reference vocabulary, not an interview workflow",
+              "highlight": "Reference vocabulary",
+              "detail": "This skill supplies design terms and principles rather than prescribing a human approval sequence.",
+              "source": "matt/codebase-design"
+            },
+            "output": {
+              "text": "A shared language for modules and seams",
+              "highlight": "shared language",
+              "detail": "Use consistent meanings for interface, implementation, depth, adapter, leverage, and locality.",
+              "source": "matt/codebase-design"
+            },
+            "watch-out": {
+              "text": "Avoid hypothetical seams without real variation",
+              "highlight": "hypothetical seams",
+              "detail": "One adapter suggests an imagined variation point, while two adapters demonstrate an actual need for the seam.",
+              "source": "matt/codebase-design"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/hld"
+          ],
+          "cells": {
+            "when": {
+              "text": "Reviewed PRD changes modules or service interactions",
+              "highlight": "Reviewed PRD",
+              "detail": "Create a high-level design when a reviewed requirement introduces or changes cross-service boundaries.",
+              "source": "akash/hld"
+            },
+            "approach": {
+              "text": "Define owners, API names, scale, and tradeoffs",
+              "highlight": "Define owners",
+              "detail": "Assign one owner per responsibility and describe critical interactions with sequence diagrams and linked decisions.",
+              "source": "akash/hld"
+            },
+            "human-input": {
+              "text": "User reviews HLD; decides new services",
+              "highlight": "User reviews HLD",
+              "detail": "A new service needs the user's decision, and the high-level design is reviewed before it counts as approved.",
+              "source": "akash/hld"
+            },
+            "output": {
+              "text": "HLD with diagrams, linked ADRs, and LLD handoff",
+              "highlight": "LLD handoff",
+              "detail": "Record boundaries and interactions while explicitly naming the details left for low-level design.",
+              "source": "akash/hld"
+            },
+            "watch-out": {
+              "text": "Keep exact contracts and internals for LLD",
+              "highlight": "for LLD",
+              "detail": "Do not turn the high-level document into a folder layout or exact implementation contract.",
+              "source": "akash/hld"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "competing-architecture-sketches",
+          "label": "Competing architecture sketches",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Distinct candidates and synthesis fit unresolved structural choices."
+        },
+        {
+          "id": "deep-module-vocabulary",
+          "label": "Deep module vocabulary",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "A shared interface vocabulary fits local design and testing discussions."
+        },
+        {
+          "id": "cross-service-design-handoff",
+          "label": "Cross-service design handoff",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Reviewed HLD boundaries and named APIs fit coordinated service ownership."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "domain",
+      "title": "Model the domain",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "checks",
+          "label": "CHECKS"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/principle-model-the-domain"
+          ],
+          "cells": {
+            "when": {
+              "text": "Stateful logic or repeated branching assumptions",
+              "highlight": "repeated branching",
+              "detail": "Use a domain-shaped data structure when state and shape assumptions are scattered across conditionals.",
+              "source": "cursor/principle-model-the-domain"
+            },
+            "approach": {
+              "text": "Replace scattered rules with fitting data structures",
+              "highlight": "fitting data structures",
+              "detail": "Choose state machines, typed models, maps, reducers, or other structures that match the problem.",
+              "source": "cursor/principle-model-the-domain"
+            },
+            "checks": {
+              "text": "Does the structure remove invalid states or duplication?",
+              "highlight": "remove invalid states",
+              "detail": "Assess whether an abstraction removes branches, repeated rules, invalid states, or lifecycle risk.",
+              "source": "cursor/principle-model-the-domain"
+            },
+            "output": {
+              "text": "Domain-shaped code with localized ownership",
+              "highlight": "localized ownership",
+              "detail": "Gather related knowledge and invariants into a structure or module instead of organizing only by execution phase.",
+              "source": "cursor/principle-model-the-domain"
+            },
+            "watch-out": {
+              "text": "Do not force abstractions onto already clear code",
+              "highlight": "Do not force abstractions",
+              "detail": "Prefer ordinary local code when a new abstraction would add indirection without removing a real problem.",
+              "source": "cursor/principle-model-the-domain"
+            }
+          }
+        },
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/domain-modeling"
+          ],
+          "cells": {
+            "when": {
+              "text": "Design discussions expose ambiguous domain language",
+              "highlight": "ambiguous domain language",
+              "detail": "Actively sharpen terminology while discussing concepts or editing glossary and decision records.",
+              "source": "matt/domain-modeling"
+            },
+            "approach": {
+              "text": "Challenge terms with concrete scenarios and code",
+              "highlight": "concrete scenarios",
+              "detail": "Probe edge cases and compare stated behavior with the implementation to expose disagreements.",
+              "source": "matt/domain-modeling"
+            },
+            "checks": {
+              "text": "Resolve vocabulary conflicts; reserve ADRs for real tradeoffs",
+              "highlight": "real tradeoffs",
+              "detail": "Offer an ADR only for a hard-to-reverse, surprising decision made among genuine alternatives.",
+              "source": "matt/domain-modeling"
+            },
+            "output": {
+              "text": "Glossary updates as terms become settled",
+              "highlight": "as terms become settled",
+              "detail": "Write resolved terminology immediately rather than postponing all documentation until the session ends.",
+              "source": "matt/domain-modeling"
+            },
+            "watch-out": {
+              "text": "Keep implementation details out of the glossary",
+              "highlight": "out of the glossary",
+              "detail": "The glossary is vocabulary, not a specification, scratchpad, or record of implementation choices.",
+              "source": "matt/domain-modeling"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/domain-modeling"
+          ],
+          "cells": {
+            "when": {
+              "text": "Define identities, aggregates, contracts, or service ownership",
+              "highlight": "service ownership",
+              "detail": "Apply domain modeling before coding concepts or when ambiguous types and impossible states cause bugs.",
+              "source": "akash/domain-modeling"
+            },
+            "approach": {
+              "text": "Typed identities, explicit variants, local invariants",
+              "highlight": "Typed identities",
+              "detail": "Classify concepts and encode their rules through distinct types, constructor guards, and aggregate validators.",
+              "source": "akash/domain-modeling"
+            },
+            "checks": {
+              "text": "Test every invariant and aggregate validation shape",
+              "highlight": "Test every invariant",
+              "detail": "Cover valid and invalid aggregate cases along with the location and message of each structured error.",
+              "source": "akash/domain-modeling"
+            },
+            "output": {
+              "text": "DOMAIN.md, model records, and typed code",
+              "highlight": "model records",
+              "detail": "Record ownership, identity, contracts, translations, and invariants before carrying the types into design and code.",
+              "source": "akash/domain-modeling"
+            },
+            "watch-out": {
+              "text": "Storage maps and dispatch registries are not models",
+              "highlight": "not models",
+              "detail": "Keep the domain model distinct from persistence representations and derive contract consumers from one specification.",
+              "source": "akash/domain-modeling"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "branch-heavy-state-logic",
+          "label": "Branch-heavy state logic",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "A fitting data structure can replace scattered state assumptions."
+        },
+        {
+          "id": "conflicting-team-terminology",
+          "label": "Conflicting team terminology",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "Live glossary updates and concrete scenarios help settle meanings."
+        },
+        {
+          "id": "typed-service-contracts",
+          "label": "Typed service contracts",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Explicit identities, aggregate validation, and ownership fit formal domain conventions."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "runtime",
+      "title": "Verify real applications",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "gates",
+          "label": "GATES"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/create-verification-skill"
+          ],
+          "cells": {
+            "when": {
+              "text": "Project lacks a scripted real-app verification path",
+              "highlight": "scripted real-app verification path",
+              "detail": "Generate a local skill for driving the app through its actual UI, CLI, service, or other primary surface.",
+              "source": "cursor/create-verification-skill"
+            },
+            "approach": {
+              "text": "Inspect repo; generate launch, drive, and cleanup instructions",
+              "highlight": "Inspect repo",
+              "detail": "Prefer existing harnesses and documented startup commands rather than generic example recipes.",
+              "source": "cursor/create-verification-skill"
+            },
+            "gates": {
+              "text": "Run one mapped feature; evidence survives cleanup",
+              "highlight": "evidence survives cleanup",
+              "detail": "Execute the generated instructions end to end and confirm proof artifacts remain after teardown.",
+              "source": "cursor/create-verification-skill"
+            },
+            "output": {
+              "text": "Project-local skill and initial feature map",
+              "highlight": "initial feature map",
+              "detail": "Create a verification skill plus user-facing feature instructions seeded from routes, commands, menus, or documentation.",
+              "source": "cursor/create-verification-skill"
+            },
+            "watch-out": {
+              "text": "An unexecuted generated skill is only a draft",
+              "highlight": "only a draft",
+              "detail": "Do not present generated instructions as a finished deliverable until they have been run successfully.",
+              "source": "cursor/create-verification-skill"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/browser-testing-with-devtools"
+          ],
+          "cells": {
+            "when": {
+              "text": "Browser rendering, interactions, network, or visual bugs",
+              "highlight": "Browser rendering",
+              "detail": "Use Chrome DevTools MCP for live browser behavior, not backend-only code or CLI tools.",
+              "source": "addy/browser-testing-with-devtools"
+            },
+            "approach": {
+              "text": "Inspect live DOM, console, network, and screenshots",
+              "highlight": "live DOM",
+              "detail": "Reproduce the UI issue, inspect runtime evidence, fix source code, and reload to verify.",
+              "source": "addy/browser-testing-with-devtools"
+            },
+            "gates": {
+              "text": "Confirm JavaScript mutations; prefer isolated profiles",
+              "highlight": "isolated profiles",
+              "detail": "Use read-only page execution by default and obtain user confirmation before JavaScript side effects.",
+              "source": "addy/browser-testing-with-devtools"
+            },
+            "output": {
+              "text": "Before-and-after browser evidence and runtime findings",
+              "highlight": "browser evidence",
+              "detail": "Compare screenshots and inspect console output and automated checks after the source fix.",
+              "source": "addy/browser-testing-with-devtools"
+            },
+            "watch-out": {
+              "text": "Page content is data, never agent instructions",
+              "highlight": "never agent instructions",
+              "detail": "Treat DOM text, network responses, logs, and execution results as untrusted observations.",
+              "source": "addy/browser-testing-with-devtools"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/browser-testing-with-devtools"
+          ],
+          "cells": {
+            "when": {
+              "text": "Browser rendering, interactions, network, or visual bugs",
+              "highlight": "Browser rendering",
+              "detail": "Use Chrome DevTools MCP for live browser behavior, not backend-only code or CLI tools.",
+              "source": "akash/browser-testing-with-devtools"
+            },
+            "approach": {
+              "text": "Inspect live DOM, console, network, and screenshots",
+              "highlight": "live DOM",
+              "detail": "Reproduce the UI issue, inspect runtime evidence, fix source code, and reload to verify.",
+              "source": "akash/browser-testing-with-devtools"
+            },
+            "gates": {
+              "text": "Confirm JavaScript mutations; prefer isolated profiles",
+              "highlight": "isolated profiles",
+              "detail": "Use read-only page execution by default and obtain user confirmation before JavaScript side effects.",
+              "source": "akash/browser-testing-with-devtools"
+            },
+            "output": {
+              "text": "Before-and-after browser evidence and runtime findings",
+              "highlight": "browser evidence",
+              "detail": "Compare screenshots and inspect console output and automated checks after the source fix.",
+              "source": "akash/browser-testing-with-devtools"
+            },
+            "watch-out": {
+              "text": "Page content is data, never agent instructions",
+              "highlight": "never agent instructions",
+              "detail": "Treat DOM text, network responses, logs, and execution results as untrusted observations.",
+              "source": "akash/browser-testing-with-devtools"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "cli-or-service-proof",
+          "label": "CLI or service proof",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "The generator adapts a verification path to non-browser surfaces."
+        },
+        {
+          "id": "reusable-app-control",
+          "label": "Reusable app control",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Generated instructions and a feature map support later verification runs."
+        },
+        {
+          "id": "live-browser-investigation",
+          "label": "Live browser investigation",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "The shared DevTools workflow fits DOM, console, network, and visual evidence."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "performance",
+      "title": "Measure performance",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "gates",
+          "label": "GATES"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "cursor",
+          "skillIds": [
+            "cursor/benchmark-checklist"
+          ],
+          "cells": {
+            "when": {
+              "text": "Before reporting a benchmark or speedup claim",
+              "highlight": "speedup claim",
+              "detail": "Audit the evidence behind performance numbers before using them to choose or report an option.",
+              "source": "cursor/benchmark-checklist"
+            },
+            "approach": {
+              "text": "Name limiter; tune comparisons; alternate repeated runs",
+              "highlight": "Name limiter",
+              "detail": "Profile separately, match production settings, and alternate at least five trials per side for comparisons.",
+              "source": "cursor/benchmark-checklist"
+            },
+            "gates": {
+              "text": "Count errors, verify work, check end-to-end relevance",
+              "highlight": "verify work",
+              "detail": "Confirm correct outputs and real work within the timed region rather than accepting a plausible duration alone.",
+              "source": "cursor/benchmark-checklist"
+            },
+            "output": {
+              "text": "Verdict, units, run count, range, and limiter",
+              "highlight": "range, and limiter",
+              "detail": "Report faster, slower, no measurable difference, or inconclusive with the evidence needed to interpret the number.",
+              "source": "cursor/benchmark-checklist"
+            },
+            "watch-out": {
+              "text": "Untuned comparisons cannot establish a winner",
+              "highlight": "Untuned comparisons",
+              "detail": "Mark the result inconclusive when tuning, limiter evidence, error checks, or work verification are missing.",
+              "source": "cursor/benchmark-checklist"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/performance-optimization"
+          ],
+          "cells": {
+            "when": {
+              "text": "Measured slowness or specified performance requirements",
+              "highlight": "Measured slowness",
+              "detail": "Optimize when requirements, user reports, monitoring, or profiling provide evidence of a performance problem.",
+              "source": "addy/performance-optimization"
+            },
+            "approach": {
+              "text": "Baseline, profile, fix bottleneck, measure again",
+              "highlight": "measure again",
+              "detail": "Use synthetic measurements and real-user data to identify what actually limits the relevant experience.",
+              "source": "addy/performance-optimization"
+            },
+            "gates": {
+              "text": "Keep or revert based on remeasurement",
+              "highlight": "remeasurement",
+              "detail": "Measure after the change to decide whether it improves the identified bottleneck.",
+              "source": "addy/performance-optimization"
+            },
+            "output": {
+              "text": "Measured improvement with regression monitoring or tests",
+              "highlight": "regression monitoring",
+              "detail": "Guard the affected performance after verification rather than relying on a one-time optimization.",
+              "source": "addy/performance-optimization"
+            },
+            "watch-out": {
+              "text": "Do not optimize without evidence of a problem",
+              "highlight": "without evidence",
+              "detail": "Speculative optimization adds complexity without demonstrating that users benefit.",
+              "source": "addy/performance-optimization"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/performance-optimization"
+          ],
+          "cells": {
+            "when": {
+              "text": "Measured slowness, regressions, or database tuning",
+              "highlight": "database tuning",
+              "detail": "The workflow explicitly includes profiling database queries and indexes before tuning.",
+              "source": "akash/performance-optimization"
+            },
+            "approach": {
+              "text": "Same baseline conditions; one change at a time",
+              "highlight": "Same baseline conditions",
+              "detail": "Compare measurements with the same command and budget so effects can be attributed to the change.",
+              "source": "akash/performance-optimization"
+            },
+            "gates": {
+              "text": "Revert neutral, slower, or correctness-breaking changes",
+              "highlight": "Revert neutral",
+              "detail": "Keep an optimization only when it beats the threshold beyond noise and tests remain green.",
+              "source": "akash/performance-optimization"
+            },
+            "output": {
+              "text": "Before-and-after numbers plus a ledger of attempts",
+              "highlight": "ledger of attempts",
+              "detail": "Record retained and reverted experiments so later work does not repeat failed ideas without context.",
+              "source": "akash/performance-optimization"
+            },
+            "watch-out": {
+              "text": "A gain within measurement noise is not a win",
+              "highlight": "within measurement noise",
+              "detail": "Repeat measurements and compare the delta with run-to-run variation before claiming improvement.",
+              "source": "akash/performance-optimization"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "audit-a-speedup-claim",
+          "label": "Audit a speedup claim",
+          "preferredRepos": [
+            "cursor"
+          ],
+          "reason": "Error counts, actual work, tuning, and repeatability directly test measurement validity."
+        },
+        {
+          "id": "find-application-bottlenecks",
+          "label": "Find application bottlenecks",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "Both workflows start with evidence and profile the affected experience."
+        },
+        {
+          "id": "track-optimization-experiments",
+          "label": "Track optimization experiments",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "The attempt ledger and explicit neutral-result reverts fit iterative performance work."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "specification",
+      "title": "Write specifications",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "human-input",
+          "label": "HUMAN INPUT"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "matt",
+          "skillIds": [
+            "matt/to-spec"
+          ],
+          "cells": {
+            "when": {
+              "text": "Existing discussion is ready to become a spec",
+              "highlight": "Existing discussion",
+              "detail": "Synthesize the conversation and repository understanding rather than restarting requirements discovery.",
+              "source": "matt/to-spec"
+            },
+            "approach": {
+              "text": "Capture stories, decisions, tests, and exclusions",
+              "highlight": "Capture stories",
+              "detail": "Use domain glossary terms and relevant architectural decisions while documenting the intended feature.",
+              "source": "matt/to-spec"
+            },
+            "human-input": {
+              "text": "Confirm testing boundaries, not another intent interview",
+              "highlight": "Confirm testing boundaries",
+              "detail": "Propose the highest practical existing seams and check that they match the user's expectations.",
+              "source": "matt/to-spec"
+            },
+            "output": {
+              "text": "Spec published to the configured issue tracker",
+              "highlight": "configured issue tracker",
+              "detail": "Publish the specification with the ready-for-agent triage label after capturing the agreed content.",
+              "source": "matt/to-spec"
+            },
+            "watch-out": {
+              "text": "Avoid file paths and incidental code snippets",
+              "highlight": "Avoid file paths",
+              "detail": "Allow only decision-rich prototype snippets when code expresses a settled choice better than prose.",
+              "source": "matt/to-spec"
+            }
+          }
+        },
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/spec-driven-development"
+          ],
+          "cells": {
+            "when": {
+              "text": "New feature or significant change lacks a spec",
+              "highlight": "lacks a spec",
+              "detail": "Write requirements before implementation when the work is substantial or ambiguous.",
+              "source": "addy/spec-driven-development"
+            },
+            "approach": {
+              "text": "Specify, plan, task, implement; map bundled capabilities",
+              "highlight": "map bundled capabilities",
+              "detail": "For requests containing independently testable capabilities, approve a dependency map before writing per-module specifications.",
+              "source": "addy/spec-driven-development"
+            },
+            "human-input": {
+              "text": "Human reviews every phase before advancing",
+              "highlight": "every phase",
+              "detail": "Validate the current artifact with the human before proceeding to the next stage.",
+              "source": "addy/spec-driven-development"
+            },
+            "output": {
+              "text": "Structured spec with commands, boundaries, and success criteria",
+              "highlight": "commands, boundaries",
+              "detail": "Capture objective, executable commands, structure, style, testing strategy, and always/ask/never boundaries.",
+              "source": "addy/spec-driven-development"
+            },
+            "watch-out": {
+              "text": "Surface assumptions before writing specification content",
+              "highlight": "Surface assumptions",
+              "detail": "Do not silently fill missing requirements with guesses that later become implementation commitments.",
+              "source": "addy/spec-driven-development"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/prd-writing"
+          ],
+          "cells": {
+            "when": {
+              "text": "Feature ticket needs product requirements or revised scope",
+              "highlight": "product requirements",
+              "detail": "Write or update a phased PRD before design when the feature lacks a current product contract.",
+              "source": "akash/prd-writing"
+            },
+            "approach": {
+              "text": "Define MVP, later phases, stories, and success target",
+              "highlight": "Define MVP",
+              "detail": "Specify the first usable outcome and explicitly defer later work to prevent scope creep.",
+              "source": "akash/prd-writing"
+            },
+            "human-input": {
+              "text": "User resolves blocking questions and reviews PRD",
+              "highlight": "reviews PRD",
+              "detail": "A PRD counts only after user review, and questions affecting implementation are surfaced rather than guessed.",
+              "source": "akash/prd-writing"
+            },
+            "output": {
+              "text": "Docs-based PRD linked from Linear project and stories",
+              "highlight": "linked from Linear",
+              "detail": "Publish the product document in docs with named affected services, testable criteria, and product and business metrics.",
+              "source": "akash/prd-writing"
+            },
+            "watch-out": {
+              "text": "Product requirements say what, not technical design",
+              "highlight": "what, not technical design",
+              "detail": "Leave engineering architecture to downstream design rather than embedding implementation decisions in the PRD.",
+              "source": "akash/prd-writing"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "synthesize-settled-discussion",
+          "label": "Synthesize settled discussion",
+          "preferredRepos": [
+            "matt"
+          ],
+          "reason": "Conversation synthesis avoids repeating an interview while confirming test seams."
+        },
+        {
+          "id": "gated-engineering-specification",
+          "label": "Gated engineering specification",
+          "preferredRepos": [
+            "addy"
+          ],
+          "reason": "Explicit phase reviews and capability mapping fit specification-led implementation."
+        },
+        {
+          "id": "product-to-engineering-handoff",
+          "label": "Product to engineering handoff",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Phased PRDs link user outcomes, success metrics, services, and Linear stories."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    },
+    {
+      "id": "observability",
+      "title": "Instrument production",
+      "rows": [
+        {
+          "id": "when",
+          "label": "WHEN"
+        },
+        {
+          "id": "approach",
+          "label": "APPROACH"
+        },
+        {
+          "id": "signals",
+          "label": "SIGNALS"
+        },
+        {
+          "id": "output",
+          "label": "OUTPUT"
+        },
+        {
+          "id": "watch-out",
+          "label": "WATCH OUT"
+        }
+      ],
+      "columns": [
+        {
+          "repo": "addy",
+          "skillIds": [
+            "addy/observability-and-instrumentation"
+          ],
+          "cells": {
+            "when": {
+              "text": "Shipping production behavior or closing telemetry gaps",
+              "highlight": "telemetry gaps",
+              "detail": "Instrument alongside features and revisit observability when incidents reveal missing diagnostic evidence.",
+              "source": "addy/observability-and-instrumentation"
+            },
+            "approach": {
+              "text": "Start with two to four on-call questions",
+              "highlight": "on-call questions",
+              "detail": "Every emitted signal should answer a concrete operational question rather than merely increase logging volume.",
+              "source": "addy/observability-and-instrumentation"
+            },
+            "signals": {
+              "text": "Structured logs, bounded metrics, and distributed traces",
+              "highlight": "distributed traces",
+              "detail": "Choose logs for individual events, metrics for aggregate behavior, and OpenTelemetry traces for cross-service timing.",
+              "source": "addy/observability-and-instrumentation"
+            },
+            "output": {
+              "text": "Correlated evidence of what happened and where",
+              "highlight": "Correlated evidence",
+              "detail": "Propagate request identifiers and entry-point attribution across boundaries so individual runs can be reconstructed.",
+              "source": "addy/observability-and-instrumentation"
+            },
+            "watch-out": {
+              "text": "Unbounded labels and secret-bearing logs create risk",
+              "highlight": "Unbounded labels",
+              "detail": "Use fixed label sets and allowlisted fields rather than raw URLs, user identifiers, or complete request bodies.",
+              "source": "addy/observability-and-instrumentation"
+            }
+          }
+        },
+        {
+          "repo": "akash",
+          "skillIds": [
+            "akash/observability-and-instrumentation"
+          ],
+          "cells": {
+            "when": {
+              "text": "Each shipped task and instrumentation review",
+              "highlight": "Each shipped task",
+              "detail": "New endpoints, jobs, and external calls emit technical metrics alongside the product metrics named in the PRD.",
+              "source": "akash/observability-and-instrumentation"
+            },
+            "approach": {
+              "text": "Low-noise logs; PM owns product metric choices",
+              "highlight": "PM owns product metric choices",
+              "detail": "Engineers select technical metrics while product and business metrics come from the product manager.",
+              "source": "akash/observability-and-instrumentation"
+            },
+            "signals": {
+              "text": "Prometheus, Grafana, Loki; cross-service traces deferred",
+              "highlight": "traces deferred",
+              "detail": "The named operational stack handles metrics, dashboards, and logs, while rule O7 defers traces and runbooks.",
+              "source": "akash/observability-and-instrumentation"
+            },
+            "output": {
+              "text": "Tested metric emission now; dashboards at planned milestones",
+              "highlight": "metric emission now",
+              "detail": "Emission is always required, but dashboards and alerts are provisioned at the milestone specified by the plan.",
+              "source": "akash/observability-and-instrumentation"
+            },
+            "watch-out": {
+              "text": "No per-iteration logs or duplicated metric noise",
+              "highlight": "No per-iteration logs",
+              "detail": "Restrict logs to boundaries, state transitions, and errors unless a recorded operational requirement justifies more.",
+              "source": "akash/observability-and-instrumentation"
+            }
+          }
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "distributed-request-tracing",
+          "label": "Distributed request tracing",
+          "preferredRepos": [
+            "addy"
+          ],
+          "reason": "OpenTelemetry tracing is part of the instrumentation workflow rather than deferred."
+        },
+        {
+          "id": "milestoned-operations-stack",
+          "label": "Milestoned operations stack",
+          "preferredRepos": [
+            "akash"
+          ],
+          "reason": "Named tooling and staged dashboards fit the prescribed operational conventions."
+        },
+        {
+          "id": "production-signal-hygiene",
+          "label": "Production signal hygiene",
+          "preferredRepos": [
+            "addy",
+            "akash"
+          ],
+          "reason": "Both start with operational questions and constrain labels and sensitive fields."
+        },
+        {
+          "id": "overall",
+          "label": "Overall",
+          "preferredRepos": [],
+          "reason": "Different constraints, different fits; no measured overall winner."
+        }
+      ]
+    }
+  ]
+}
