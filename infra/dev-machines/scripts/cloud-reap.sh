@@ -1,8 +1,8 @@
 #!/bin/bash
-# cloud-reap.sh — find and kill leftover brain machines (development-setup DS12, DS13).
+# cloud-reap.sh — find and kill leftover brain machines (machine policy DM3, DM4).
 #
-# Usage: skills/development-setup/scripts/cloud-reap.sh
-# Run from the project root at the start and the end of every session that uses the cloud.
+# Usage: infra/dev-machines/scripts/cloud-reap.sh
+# Settings from CLOUD_ENV_FILE or ./.env (env.example). Run at the start and the end of every session that uses the cloud.
 #   - terminates every brain=dev machine past its brain:expires-at, and every stopped one
 #   - deletes brain-kill-* schedules whose machine is gone
 #   - releases every brain Mac host with no machine on it once its 24-hour minimum has passed

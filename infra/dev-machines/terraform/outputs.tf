@@ -12,12 +12,12 @@ output "operator_policy_arn" {
 }
 
 output "home_volume_ids" {
-  description = "Each developer's home volume; theirs goes in CLOUD_HOME_VOLUME in their .env (DS18)."
+  description = "Each developer's home volume; theirs goes in CLOUD_HOME_VOLUME in their settings file (DM9)."
   value       = { for n, v in aws_ebs_volume.home : n => v.id }
 }
 
 output "env" {
-  description = "Paste into a project's .env (terraform output -raw env)."
+  description = "Paste into the scripts' settings file (terraform output -raw env; env.example)."
   value       = <<-EOT
     AWS_PROFILE=${var.aws_profile}
     CLOUD_REGION=${var.region}
@@ -26,6 +26,6 @@ output "env" {
     CLOUD_KEY_NAME=${aws_key_pair.dev.key_name}
     CLOUD_SCHEDULER_ROLE_ARN=${aws_iam_role.scheduler.arn}
     CLOUD_INSTANCE_PROFILE=${aws_iam_instance_profile.machine.name}
-    # CLOUD_HOME_VOLUME=   your volume from terraform output home_volume_ids (DS18)
+    # CLOUD_HOME_VOLUME=   your volume from terraform output home_volume_ids (DM9)
   EOT
 }

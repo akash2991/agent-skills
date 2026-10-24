@@ -17,9 +17,9 @@ Before changing installation layout, inspect the consumer's tracked files, relev
 | Organization, soul, environment example | `project/AGENTS.md`, `project/SOUL.md`, `project/.env.example` |
 | Selection | `manifest.json` |
 | Skill/persona anatomy guides (source-only; not installed) | `docs/skill-anatomy.md`, `docs/persona-anatomy.md` |
-| Account-wide provisioning (source-only; not installed) | `skills/development-setup/terraform/` |
+| Dev machines: provisioning, scripts, policy (source-only; not installed) | `infra/dev-machines/` |
 
-The anatomy guides describe how maintainers author this brain; consuming projects do not need them. Terraform provisioning is shared per AWS account, not per project: installed cloud guidance links back here for provisioning, while per-project cloud and mobile-build scripts remain installed. Neither authoring guides nor provisioning sources are included in the generated bundle or npm package. Updates prune only previously managed copies, never unmanaged state or variables.
+The anatomy guides describe how maintainers author this brain; consuming projects do not need them. The dev machines are infrastructure a developer chooses to work on, not something an agent decides: their Terraform, scripts, and policy live in `infra/dev-machines/` and nothing installed refers to them, so an agent sets up the same environment wherever it runs. Neither authoring guides nor `infra/` are included in the generated bundle or npm package. Updates prune only previously managed copies, never unmanaged state or variables.
 
 `build/` is ignored, generated output. Consumer-specific documents created from templates remain owned by that project. In installed `AGENTS.md`, the `## This project` section remains project-specific; shared instructions are rebuilt here.
 

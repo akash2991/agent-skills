@@ -14,6 +14,7 @@ references/      shared checklists and the way-of-working contracts
 templates/       documents a project fills in under docs/: ARCHITECTURE, PRD, HLD, LLD, LEARNINGS, ...
 manifest.json    which skills and personas make up the brain
 scripts/         validators, the eval runner, and build-brain.js
+infra/           source-only, never installed: dev-machines/ (Terraform, scripts, and policy for the EC2 machines developers work on)
 .claude/commands/ .gemini/commands/ commands/ .pi/prompts/   slash commands: /brain, /brain-status (plus the upstream set in the first three)
 evals/           trigger and routing evals; every skill needs a case
 docs/            anatomies and per-tool setup guides
