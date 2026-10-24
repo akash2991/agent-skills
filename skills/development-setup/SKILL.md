@@ -24,7 +24,7 @@ What is in place before development starts: an environment that belongs to this 
 | --- | --- |
 | DS1 | **Every agent creates its own environment.** Everything below is ephemeral and belongs to this agent only; the user's checkout stays untouched. Nothing lives only in the environment: commit and push before every pause. |
 | DS2 | **A git worktree beside the main repository, never inside it, with the agent named after it.** If the main checkout is `<workspace-root>/<repo-name>`, create the worktree at `<workspace-root>/<ticket>-<slug>` so both directories share the same parent. The visible runtime name of each main agent and subagent is exactly the basename of that agent's assigned worktree, `<ticket>-<slug>`; persona, role, and immutable harness IDs remain separate metadata. The worktree also never belongs inside a harness directory (such as a `herdr` or `claude` root) or the agent brain. Remove it after the PR is open. |
-| DS3 | **The service runs in its own Docker containers**; Docker is the local development standard. The Compose project is named after the worktree, `<ticket>-<slug>`, on host ports no other project on this machine uses (`docker ps --format '{{.Ports}}'`). Never reuse or touch another agent's containers, ports, or directory. |
+| DS3 | **The service runs in its own Docker containers**; Docker is the local development standard. The Compose project is named after the worktree in lowercase (Compose accepts no capitals: `eng-123-login` for `ENG-123-login`), on host ports no other project on this machine uses (`docker ps --format '{{.Ports}}'`). Never reuse or touch another agent's containers, ports, or directory. |
 | DS4 | **LocalStack mocks AWS.** The app never calls a real AWS service from a development environment, wherever that environment runs, and no AWS credentials are copied into it. |
 | DS5 | **Its own data:** a snapshot of the database or a seed script. Never the shared database. |
 | DS6 | **Its own observability, metrics and logs, when debugging** (optional). |
@@ -46,7 +46,7 @@ What is in place before development starts: an environment that belongs to this 
 ## Procedure
 
 1. From the main repository, run `git worktree add ../<ticket>-<slug>` so the worktree is its sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts (DS2).
-2. Start Docker and LocalStack for the services you touch as the Compose project `<ticket>-<slug>` on free host ports (DS3, DS4); snapshot or seed the database (DS5).
+2. Start Docker and LocalStack for the services you touch as the Compose project `<ticket>-<slug>`, lowercased, on free host ports (DS3, DS4); snapshot or seed the database (DS5).
 3. Confirm the API contract, DB model, and every dependency's shape exist for the slice you are about to build (DS7–DS9); if not, that is the first task, not a thing to work around.
 4. Work; run the app and tests inside this environment, and push before every pause (DS1). Build Android here; iOS on EAS only with explicit permission (DS16).
 5. Open the PR, then remove the worktree, containers, and snapshot (DS2).

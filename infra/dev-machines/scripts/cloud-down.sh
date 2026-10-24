@@ -43,7 +43,7 @@ LEFT_CMD="echo $AGENTS"
 [ -z "$HOMEVOL" ] || LEFT_CMD="echo \$(( $AGENTS + \$(ss -Htn state established '( sport = :22 )' | wc -l) - 1 ))"
 LEFT="$("${SSH[@]}" "ec2-user@$ID" "
   ${UNREGISTER:-}
-  [ -z '$DIR' ] || docker compose -p '$DIR' down -v --remove-orphans >/dev/null 2>&1 || true
+  [ -z '$DIR' ] || docker compose -p '$(printf %s "$DIR" | tr '[:upper:]' '[:lower:]')' down -v --remove-orphans >/dev/null 2>&1 || true
   $LEFT_CMD")" \
   || { echo "cannot reach $ID; it terminates at its deadline, and cloud-reap.sh terminates it after that" >&2; exit 1; }
 LEFT="$(printf %s "$LEFT" | tr -d ' ')"

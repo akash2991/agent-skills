@@ -35,16 +35,17 @@ echo "provisioning EC2 dev machine for Android build..." >&2
 MACHINE="$("$HERE/cloud-up.sh" "$NAME")"
 ID="$(printf %s "$MACHINE" | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).instance_id)")"
 echo "machine $ID" >&2
-need_ssh
-# A new machine is reachable once SSH answers through Session Manager, and ready once cloud-init has finished.
-wait_ssm "$ID" || exit 1
-
+# Set at once: cloud-up.sh has registered $NAME, and a registration left behind keeps the machine alive (DM5).
 cleanup() {
   echo "cleaning up..." >&2
   "${SSH[@]}" "ec2-user@$ID" "rm -rf ~/work/$NAME" >/dev/null 2>&1 || true
   "$HERE/cloud-down.sh" "$ID" "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+
+need_ssh
+# A new machine is reachable once SSH answers through Session Manager, and ready once cloud-init has finished.
+wait_ssm "$ID" || exit 1
 
 REMOTE="ec2-user@$ID"
 
