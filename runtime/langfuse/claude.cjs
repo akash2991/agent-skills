@@ -221,7 +221,8 @@ async function boundedFlush(flow, timeoutMs = 2500) {
   } finally { clearTimeout(timer); }
 }
 
-/** Handle one native hook. Returns only a PreToolUse input update, or null.
+/** Handle one native hook. Returns supported actor additionalContext, or null.
+ * Never rewrites tool input or participates in native permission decisions.
  * A supplied flow makes this module usable without loading the transport. */
 async function handleClaudeHook(payload, options = {}) {
   const env = options.env || process.env;
@@ -289,6 +290,17 @@ async function handleClaudeHook(payload, options = {}) {
   }
 
   let output = null;
+  if (['SessionStart', 'UserPromptSubmit', 'SubagentStart'].includes(event)) {
+    // Mint for this exact actor, even while its native ancestry is pending.
+    // The capability permits own-metadata edits, never guessed export ancestry.
+    const binding = flow.createToolLaunch(run);
+    if (/^[A-Za-z0-9_-]{16,128}$/.test(binding?.nonce || '')) {
+      output = { hookSpecificOutput: { hookEventName: event, additionalContext:
+        `Brain tracing actor: --actor ${binding.nonce}. This local non-secret capability identifies only this actor; do not reuse a parent's actor in a child. ` +
+        'Use brain-trace.cjs context --actor NONCE status|set, launch --actor NONCE ..., or exec --actor NONCE --harness pi|claude [--cwd PATH] -- NATIVE_ARGS for explicit tracing. ' +
+        'Replace NONCE with this actor value. Ordinary Bash commands are unchanged and retain native permissions. Never put credentials or task content in tracing identifiers.' } };
+    }
+  }
   const toolId = identity(payload.tool_use_id);
   if (['PreToolUse', 'PostToolUse', 'PostToolUseFailure'].includes(event) && toolId) {
     const stateKey = key(flow, 'tool', nativeSessionId, toolId);
@@ -299,26 +311,6 @@ async function handleClaudeHook(payload, options = {}) {
     if (event === 'PreToolUse') {
       if (!prior?.caller) flow.writeState(stateKey, { ...prior, id, toolName: name,
         startTime: prior?.startTime || now, caller: callerIdentity(run) });
-      if (name === 'Bash' && typeof payload.tool_input?.command === 'string') {
-        // One reusable launch binding per exact native tool call, including
-        // calls inside unresolved children. No prompt/context enters the shell.
-        const launchKey = key(flow, 'bash-launch', nativeSessionId, toolId);
-        let launch = flow.readState(launchKey);
-        if (!launch) {
-          const binding = flow.createToolLaunch(run);
-          if (identity(binding?.nonce)) {
-            launch = { nonce: binding.nonce };
-            flow.writeState(launchKey, launch);
-          }
-        }
-        if (launch) {
-          const prefix = `export BRAIN_TRACE_LAUNCH_ID='${launch.nonce}'\n`;
-          const command = payload.tool_input.command;
-          output = { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: {
-            ...payload.tool_input, command: command.startsWith(prefix) ? command : prefix + command
-          } } };
-        }
-      }
       if (name === 'Skill') run = flow.captureSkill(run, { toolName: 'Skill',
         input: payload.tool_input, cwd, success: false, invoked: true });
     } else {
