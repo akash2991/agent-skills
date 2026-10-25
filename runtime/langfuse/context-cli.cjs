@@ -6,11 +6,16 @@
 function resolveActor(flow, explicit, env = process.env) {
   const nonce = explicit === undefined ? env.BRAIN_TRACE_LAUNCH_ID : explicit;
   if (!/^[a-zA-Z0-9_-]{32,128}$/.test(nonce || '')) throw new Error('Exact brain actor capability required.');
-  const actor = flow.actorForTool(nonce);
-  if (!actor) throw new Error('Brain actor unavailable or expired; no context was guessed.');
-  const resolved = flow.resolve(actor);
+  // Explicit actors are tool-minted capabilities, not arbitrary child launch
+  // nonces. Ambient Pi callers also retain the older exact store binding API.
+  const actor = flow.actorForTool?.(nonce);
+  const binding = explicit === undefined ? flow.store.resolveLaunch({ nonce }) : null;
+  const current = actor || binding?.parent;
+  if (!current) throw new Error('Brain actor unavailable or expired; no context was guessed.');
+  const resolved = flow.resolve(current);
   // Pending native children may edit only their own metadata or prebind a
-// descendant that remains deferred. This does not authorize export.
+  // descendant that remains deferred. This does not authorize export.
+  if (!resolved && !actor) throw new Error('Brain actor ancestry unavailable.');
   return { nonce, current: resolved || actor, resolved };
 }
 

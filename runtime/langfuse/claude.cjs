@@ -294,7 +294,7 @@ async function handleClaudeHook(payload, options = {}) {
     // Mint for this exact actor, even while its native ancestry is pending.
     // The capability permits own-metadata edits, never guessed export ancestry.
     const binding = flow.createToolLaunch(run);
-    if (/^[A-Za-z0-9_-]{16,128}$/.test(binding?.nonce || '')) {
+    if (/^[A-Za-z0-9_-]{32,128}$/.test(binding?.nonce || '')) {
       output = { hookSpecificOutput: { hookEventName: event, additionalContext:
         `Brain tracing actor: --actor ${binding.nonce}. This local non-secret capability identifies only this actor; do not reuse a parent's actor in a child. ` +
         'Use brain-trace.cjs context --actor NONCE status|set, launch --actor NONCE ..., or exec --actor NONCE --harness pi|claude [--cwd PATH] -- NATIVE_ARGS for explicit tracing. ' +

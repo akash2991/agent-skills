@@ -106,6 +106,48 @@ test('an unresolved native child can set its own context without bypassing linea
   assert.equal(records.length, 0, 'metadata editing must not export a guessed root');
 });
 
+test('supported actor contexts identify root and pending child exactly, while all ordinary Bash forms remain immutable', async t => {
+  const { cwd, flow, records, sessionId, hook } = fixture(t);
+  const actorFrom = output => {
+    assert.deepEqual(Object.keys(output), ['hookSpecificOutput']);
+    assert.deepEqual(Object.keys(output.hookSpecificOutput).sort(), ['additionalContext', 'hookEventName']);
+    return output.hookSpecificOutput.additionalContext.match(/--actor ([A-Za-z0-9_-]{32,128})/)[1];
+  };
+  const rootActor = actorFrom(await hook('SessionStart'));
+  const turnActor = actorFrom(await hook('UserPromptSubmit', { prompt: 'PRIVATE_PROMPT' }));
+  assert.equal(flow.actorForTool(rootActor).rootSpanId, flow.actorForTool(turnActor).rootSpanId);
+  await hook('PreToolUse', { tool_use_id: 'dispatch-explicit', tool_name: 'Agent' });
+  const childActor = actorFrom(await hook('SubagentStart', { agent_id: 'explicit-child' }));
+  assert.notEqual(flow.actorForTool(childActor).rootSpanId, flow.actorForTool(rootActor).rootSpanId);
+  assert.equal(flow.resolve(flow.actorForTool(childActor)), null);
+  const env = { BRAIN_TRACE_LAUNCH_ID: rootActor };
+  const context = runContext(['--actor', childActor, 'set', '--persona', 'backend-engineer', '--ticket', 'TEST-21'], { cwd, flow, env });
+  assert.equal(context.ancestryPending, true); assert.equal(context.sessionId, 'UNKNOWN');
+  assert.equal(context.ticketId, 'TEST-21'); assert.equal(flow.session(sessionId).ticketId, null);
+  for (const agent_id of [undefined, 'explicit-child']) for (const command of [
+    'echo PRIVATE_COMMAND', 'cd subdir && pi --print "PRIVATE_PROMPT"',
+    'X=1 node child.cjs | tee /dev/null', 'echo first\nclaude --print "second"',
+    "export BRAIN_TRACE_LAUNCH_ID='foreign'\ntrue", '$(echo PRIVATE_COMMAND)'
+  ]) {
+    const payload = { cwd, session_id: sessionId, hook_event_name: 'PreToolUse', agent_id,
+      tool_use_id: `bash-${flow.id()}`, tool_name: 'Bash', tool_input: { command, timeout: 42 } };
+    const snapshot = structuredClone(payload);
+    assert.equal(await handleClaudeHook(payload, { flow }), null);
+    assert.deepEqual(payload, snapshot);
+  }
+  await hook('SubagentStop', { agent_id: 'explicit-child' });
+  assert.equal(records.length, 0, 'child terminal evidence stays deferred before exact dispatch binds it');
+  assert.throws(() => runContext(['--actor', 'x'.repeat(43), 'status'], { cwd, flow, env }), /unavailable/);
+  await hook('PostToolUse', { tool_use_id: 'dispatch-explicit', tool_name: 'Agent', tool_response: { agentId: 'explicit-child' } });
+  const resolved = runContext(['--actor', childActor, 'status'], { cwd, flow, env });
+  assert.equal(resolved.ancestryPending, false); assert.equal(resolved.sessionId, flow.session(sessionId).sessionId);
+  const child = records.find(record => record.type === 'AGENT');
+  assert.equal(child.parentId, flow.session(sessionId).rootSpanId); assert.equal(child.context.ticketId, 'TEST-21');
+  const checkpoints = fs.readdirSync(path.join(flow.stateDir, 'adapters')).filter(name => name.endsWith('.json'))
+    .map(name => fs.readFileSync(path.join(flow.stateDir, 'adapters', name), 'utf8')).join('');
+  assert.ok(!checkpoints.includes('PRIVATE_COMMAND') && !checkpoints.includes('PRIVATE_PROMPT'));
+});
+
 test('real disk outbox and pinned SDK drain deferred batches beyond count/byte capacities across restart', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-backlog-sdk-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -310,6 +352,7 @@ test('many completed Claude runs/tools/generations expire on disk while an activ
     const session = crypto.randomUUID(), file = path.join(cwd, 'synthetic.jsonl');
     const hook = (event, extra = {}) => handleClaudeHook({ cwd, session_id: session, hook_event_name: event, ...extra }, { flow, clock: () => now });
     await hook('SessionStart');
+    await hook('UserPromptSubmit', { prompt: 'synthetic lifecycle turn' });
     for (let n = 0; n < 3; n++) {
       await hook('PreToolUse', { tool_name: 'Bash', tool_use_id: `tool-${n}`, tool_input: { command: 'true' } });
       await hook('PostToolUse', { tool_name: 'Bash', tool_use_id: `tool-${n}` });

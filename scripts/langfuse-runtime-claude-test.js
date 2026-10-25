@@ -25,7 +25,7 @@ class TestFlow {
     this.flushes = 0;
     this.store = {
       createLaunch: (parent, opts = {}) => {
-        const nonce = opts.launchId ? this.id(opts.launchId) : this.id(`nonce:${this.launches.size}`);
+        const nonce = (opts.launchId ? this.id(opts.launchId) : this.id(`nonce:${this.launches.size}`)).repeat(2);
         const binding = { nonce, parent, child: opts.child, multiUse: opts.multiUse };
         this.launches.set(nonce, binding);
         if (opts.launchId) this.launches.set(opts.launchId, binding);
@@ -144,15 +144,15 @@ test('native parallel children, grandchild, and foreign Bash descendants bind on
 
   const bash = { agent_id: 'child-b', tool_name: 'Bash', tool_use_id: 'bash-child',
     tool_input: { command: 'node synthetic-child.cjs', description: 'private description' } };
-  const update = await hook('PreToolUse', bash);
-  assert.equal(update.hookSpecificOutput.hookEventName, 'PreToolUse');
-  assert.equal(update.hookSpecificOutput.permissionDecision, undefined);
-  const prefix = update.hookSpecificOutput.updatedInput.command;
-  const nonce = prefix.match(/^export BRAIN_TRACE_LAUNCH_ID='([a-f0-9]+)'\n/)[1];
-  assert.ok(prefix.endsWith(bash.tool_input.command));
-  assert.equal((await hook('PreToolUse', bash)).hookSpecificOutput.updatedInput.command, prefix);
-  assert.equal((await hook('PreToolUse', { ...bash, tool_input: { command: prefix } }))
-    .hookSpecificOutput.updatedInput.command, prefix, 'replay does not stack exports');
+  const snapshot = structuredClone(bash);
+  assert.equal(await hook('PreToolUse', bash), null);
+  assert.equal(await hook('PreToolUse', bash), null);
+  assert.deepEqual(bash, snapshot, 'ordinary Bash is never rewritten or permission-approved');
+  const context = await hook('UserPromptSubmit', { agent_id: 'child-b', prompt: 'private' });
+  const nonce = context.hookSpecificOutput.additionalContext.match(/--actor ([A-Za-z0-9_-]+)/)[1];
+  assert.equal(context.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.equal(context.hookSpecificOutput.updatedInput, undefined);
+  assert.equal(context.hookSpecificOutput.permissionDecision, undefined);
   const binding = flow.store.resolveLaunch({ nonce });
   assert.equal(binding.parent.rootSpanId, childRun(flow, 'child-b').rootSpanId);
   assert.equal(binding.multiUse, true);
@@ -467,7 +467,7 @@ test('stdin JSON parser is byte-bounded and never exposes parser excerpts', asyn
   await assert.rejects(readPayload(timeout, 10), { message: 'Claude metadata hook input unavailable.' });
 });
 
-test('CLI uses only stdin, emits only native Bash JSON, and fails open without payload logging', t => {
+test('CLI uses only stdin, leaves Bash untouched, emits actor context only on supported events, and fails open', t => {
   const dir = sandbox(t);
   for (const name of ['claude.cjs', 'claude-hook.cjs', 'privacy.cjs']) {
     fs.copyFileSync(path.join(__dirname, '../runtime/langfuse', name), path.join(dir, name));
@@ -481,7 +481,7 @@ test('CLI uses only stdin, emits only native Bash JSON, and fails open without p
         sessionId:'test-session',nativeSessionId:'session-test',startedAt:1800000000000 };
       return { id:s=>crypto.createHash('sha256').update(s).digest('hex').slice(0,16),
         session:()=>run,resolve:r=>r,readState:k=>state.get(k),writeState:(k,v)=>state.set(k,v),
-        submit:()=>{},flush:async()=>{},createToolLaunch:()=>({nonce:'testnonce'}),store:{createLaunch:()=>({nonce:'testnonce'})} };
+        submit:()=>{},flush:async()=>{},captureBrainCommand:r=>r,createToolLaunch:()=>({nonce:'a'.repeat(43)}),store:{createLaunch:()=>({nonce:'a'.repeat(43)})} };
     };
   `);
   const cli = path.join(dir, 'claude-hook.cjs');
@@ -490,8 +490,16 @@ test('CLI uses only stdin, emits only native Bash JSON, and fails open without p
     tool_use_id: 'tool-test', tool_name: 'Bash', tool_input: { command: 'echo synthetic-only' } }));
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '');
-  assert.deepEqual(JSON.parse(result.stdout), { hookSpecificOutput: { hookEventName: 'PreToolUse',
-    updatedInput: { command: "export BRAIN_TRACE_LAUNCH_ID='testnonce'\necho synthetic-only" } } });
+  assert.equal(result.stdout, '');
+  for (const hook_event_name of ['SessionStart', 'UserPromptSubmit', 'SubagentStart']) {
+    const context = run(JSON.stringify({ hook_event_name, session_id: 'session-test',
+      ...(hook_event_name === 'SubagentStart' ? { agent_id: 'child' } : {}) }));
+    assert.equal(context.status, 0, context.stderr);
+    const output = JSON.parse(context.stdout).hookSpecificOutput;
+    assert.deepEqual(Object.keys(output).sort(), ['additionalContext', 'hookEventName']);
+    assert.equal(output.hookEventName, hook_event_name);
+    assert.ok(output.additionalContext.includes(`--actor ${'a'.repeat(43)}`));
+  }
   for (const input of ['{private malformed secret', 'a'.repeat(MAX_INPUT_BYTES + 1)]) {
     const invalid = run(input);
     assert.equal(invalid.status, 0);

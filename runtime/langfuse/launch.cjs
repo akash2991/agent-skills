@@ -5,10 +5,12 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { resolveActor } = require('./context-cli.cjs');
+const { assertTarget, claudeSettings } = require('./exec.cjs');
 
 function parse(argv) {
   const result = {};
-  const allowed = new Set(['--pane', '--harness', '--name', '--cwd', '--model', '--effort', '--persona', '--ticket', '--parent-session', '--parent-harness', '--timeout']);
+  const allowed = new Set(['--actor', '--pane', '--harness', '--name', '--cwd', '--model', '--effort', '--persona', '--ticket', '--timeout']);
   for (let i = 0; i < argv.length; i += 2) {
     if (!allowed.has(argv[i]) || !argv[i + 1] || argv[i + 1].startsWith('--') || Object.hasOwn(result, argv[i])) throw new Error('Invalid launch option');
     result[argv[i]] = argv[i + 1];
@@ -30,13 +32,9 @@ async function launch(argv, options = {}) {
   const run = options.run || spawnSync;
   const harness = flags['--harness'];
   const cwd = path.resolve(flags['--cwd'] || process.cwd());
-  const flow = options.flow || require('./flow.cjs').createFlow({ harness: flags['--parent-harness'] || 'pi', cwd, env });
-  const binding = env.BRAIN_TRACE_LAUNCH_ID ? flow.store.resolveLaunch({ nonce: env.BRAIN_TRACE_LAUNCH_ID }) : null;
-  const actor = env.BRAIN_TRACE_LAUNCH_ID && flow.actorForTool?.(env.BRAIN_TRACE_LAUNCH_ID);
-  const parent = binding?.parent || actor || (flags['--parent-session'] && flow.store.getSession(flags['--parent-harness'] || 'pi', flags['--parent-session']));
-  const resolvedParent = parent && flow.resolve(parent);
-  const launchParent = resolvedParent || actor;
-  if (!launchParent) throw new Error('Exact parent context required; no active-parent guesses');
+  assertTarget(cwd, env);
+  const flow = options.flow || require('./flow.cjs').createFlow({ harness: 'pi', cwd, env });
+  const { current: launchParent, resolved: resolvedParent } = resolveActor(flow, flags['--actor'], env);
   const info = run('herdr', ['pane', 'process-info', '--pane', flags['--pane']], { encoding: 'utf8', timeout: 5000, env });
   let pane;
   try { pane = JSON.parse(info.stdout).result.process_info; } catch { throw new Error('Unable to inspect target pane'); }
@@ -66,12 +64,7 @@ async function launch(argv, options = {}) {
     native.push('-e', path.join(__dirname, 'pi.js'), '--brain-tracing');
     if (flags['--persona']) native.push('--append-system-prompt', path.join(cwd, '.pi/agents', `${flags['--persona']}.md`));
   } else {
-    const command = 'node "$HOME/.cache/agent-brain/bootstrap/bootstrap-claude.cjs"';
-    const hooks = {};
-    for (const event of ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop', 'Stop', 'StopFailure', 'SessionEnd', 'PostModelSwitch']) {
-      hooks[event] = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
-    }
-    native.push('--settings', JSON.stringify({ hooks, enabledPlugins: { 'langfuse-observability@langfuse-observability': false } }));
+    native.push('--settings', JSON.stringify(claudeSettings(sessionId, cwd)));
     if (flags['--persona']) native.push('--agent', flags['--persona']);
   }
   const timeout = +(flags['--timeout'] || 30000);
