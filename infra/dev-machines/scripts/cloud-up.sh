@@ -246,15 +246,15 @@ case "$1" in
     mkdir -p /home/ec2-user/.config/herdr /home/ec2-user/.brain
     # A server a client started during setup has no docker group and runs on the state without agents: replace it.
     if running; then timeout 30 herdr server stop; fi
-    # Put back the copy the last stop kept, unless Herdr has run long after it (a copy older than the state by more
-    # than ten minutes is stale).
+    # Put back the copy the last stop kept (its time is when it was taken, just before that stop), unless Herdr has
+    # run long after it: a copy older than the state by more than ten minutes is stale.
     if [ -f "$S" ]; then
       if [ ! -f "$J" ] || [ "$(stat -c %Y "$S")" -ge $(( $(stat -c %Y "$J") - 600 )) ]; then mv -f "$S" "$J"; else rm -f "$S"; fi
     fi ;;
   stop)
     # The start consumed the last copy, so one here is this boot's reclaim hook's: keep it.
     if running; then
-      [ -e "$S" ] || cp -p "$J" "$S" 2>/dev/null
+      [ -e "$S" ] || cp "$J" "$S" 2>/dev/null
       timeout 30 herdr server stop
     fi ;;
 esac

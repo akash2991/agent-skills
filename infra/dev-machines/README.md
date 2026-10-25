@@ -106,14 +106,14 @@ With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as 
 
 ## Surviving a Spot reclaim
 
-With Spot (DM10), AWS may take the machine back with two minutes' warning. Work on the home volume (DM9) is never lost; what follows brings the running agents back on the next machine, in the same Herdr workspaces, once the developer's Herdr reconnects. That needs Herdr's machine to be a stable SSH host whose `ProxyCommand` finds whichever machine holds the home volume, not an instance id (the `Host i-*` entry above reaches only one machine).
+With Spot (DM10), AWS may take the machine back with two minutes' warning. Work on the home volume (DM9) is never lost; what follows brings the running agents back on the next machine, in the same Herdr workspaces, as soon as its Herdr server starts. For the developer's Herdr to show them, its machine must be a stable SSH host whose `ProxyCommand` finds whichever machine holds the home volume, not an instance id (the `Host i-*` entry above reaches only one machine).
 
 | When | What happens | Where |
 |---|---|---|
 | Always | Herdr keeps the layout and each agent's session in `~/.config/herdr/session.json` on the home volume, and resumes agents after a restart (`claude --resume`, `codex resume`, `pi --session`) | Herdr, with its agent integrations installed |
-| Two-minute warning | `brain-spot-watch` runs `~/.brain/on-reclaim`: Herdr's state saved to `~/.brain/herdr-session.saved.json`, then Herdr stopped so agents flush their sessions; every repository's uncommitted work committed to `reclaim-wip/<path under ~>/<branch>` (branch, index, and files untouched; nothing for untracked-only changes; tracked changes only unless `BRAIN_WIP_UNTRACKED=1`), pushed without hooks and with `[skip ci]` while the developer is connected | the machine |
+| Two-minute warning | `brain-spot-watch` runs `~/.brain/on-reclaim`: Herdr's state saved to `~/.brain/herdr-session.saved.json`, then Herdr stopped so agents flush their sessions; every repository's uncommitted work committed to `reclaim-wip/<folder>-<path hash>/<branch, + for />` (branch, index, and files untouched; nothing for untracked-only changes; tracked changes only unless `BRAIN_WIP_UNTRACKED=1`), pushed without hooks and with `[skip ci]` while the developer is connected | the machine |
 | Machine gone | `spot-relaunch-watch.sh` sees the home machine ended with `Server.SpotInstanceTermination` and runs `cloud-up.sh --spot` once the old machine is gone, retrying a failed replacement every minute up to 10 times; a machine launched by anyone else ends the wait; idle and deadline terminations are left alone | the developer's computer |
-| New machine boots | at the end of setup, after Docker, `herdr-server.service` replaces any server a client started during setup, puts the saved state back (unless it is stale) and starts `herdr server`; when the developer's Herdr attaches, each agent resumes in its pane. Any later stop of the unit (idle, deadline, reboot) saves the state first, without replacing the reclaim hook's copy, so agents resume after those too | the machine |
+| New machine boots | at the end of setup, after Docker, `herdr-server.service` replaces any server a client started during setup, puts the saved state back (unless it is stale) and starts `herdr server`, which resumes each agent in its pane at once; until the developer connects, agents have no forwarded SSH agent, so they cannot push. Any later stop of the unit (idle, deadline, reboot) saves the state first, without replacing the reclaim hook's copy, so agents resume after those too | the machine |
 
 One-time setup, per developer:
 
@@ -138,7 +138,7 @@ One-time setup, per developer:
    ```
    then `launchctl load ~/Library/LaunchAgents/dev.brain.spot-relaunch.plist`. Remove it with `launchctl unload` and deleting the file.
 
-Limits: agents resume once the developer's Herdr reconnects, not before, and a replacement nobody connects to is shut down after `CLOUD_IDLE_MINUTES` like any other machine (not relaunched; its saved state waits for the next one); Herdr resumes with the bare commands, so options such as `--model` come from each agent's own config; a turn in flight at the warning is cut off (the conversation up to it is kept); the watcher acts only while the developer's computer is awake and the AWS login is valid (it notifies when AWS cannot be reached), and AWS lists a terminated machine for about an hour, so a computer asleep longer misses the reclaim.
+Limits: a replacement nobody connects to and whose agents sit idle is shut down after `CLOUD_IDLE_MINUTES` like any other machine (not relaunched; its saved state waits for the next one); Herdr resumes with the bare commands, so options such as `--model` come from each agent's own config; a turn in flight at the warning is cut off (the conversation up to it is kept); the watcher acts only while the developer's computer is awake and the AWS login is valid (it notifies when AWS cannot be reached), and AWS lists a terminated machine for about an hour, so a computer asleep longer misses the reclaim.
 
 ## Mobile builds on a machine
 

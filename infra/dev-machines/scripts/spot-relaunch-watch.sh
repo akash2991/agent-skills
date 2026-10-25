@@ -5,7 +5,7 @@
 # A reclaim is seen when no machine holds CLOUD_HOME_VOLUME and the last one to hold it ended with
 # Server.SpotInstanceTermination. It is then pending until a machine holds the volume again, whoever launched it, so a
 # replacement that fails (and terminates itself) is retried the next minute, up to 10 times; nothing is launched while
-# the reclaimed machine is still shutting down. Agents resume when the developer's Herdr reconnects to the new machine
+# the reclaimed machine is still shutting down. Agents resume when the new machine's Herdr server starts
 # (README, "Surviving a Spot reclaim"). AWS lists a terminated machine for about an hour: a computer asleep longer
 # misses the reclaim.
 #
@@ -47,7 +47,7 @@ if [ -n "$live" ]; then
   exit 0
 fi
 
-ended="$(describe shutting-down,terminated)"
+ended="$(describe shutting-down,terminated)" || { echo "$(date '+%F %T') AWS lookup failed; next minute"; exit 1; }
 read -r last reason ticket <<<"$(printf '%s\n' "$ended" | tail -1)"
 if [ "$reason" = Server.SpotInstanceTermination ] && [ ! -e "$STATE/$last.done" ] && [ ! -e "$STATE/$last.pending" ] \
   && [ ! -e "$STATE/$last.failed" ]; then
@@ -57,7 +57,8 @@ fi
 pending="$(find "$STATE" -name '*.pending' -print 2>/dev/null | head -1)"
 [ -n "$pending" ] || exit 0
 # The volume is released only once the machine is gone.
-[ -z "$(describe shutting-down)" ] || exit 0
+shutting="$(describe shutting-down)" || { echo "$(date '+%F %T') AWS lookup failed; next minute"; exit 1; }
+[ -z "$shutting" ] || exit 0
 
 reclaimed="$(basename "$pending" .pending)"
 tries="$(wc -l < "$pending" | tr -d ' ')"
@@ -71,7 +72,7 @@ fi
 notify "AWS reclaimed $reclaimed (Spot); launching a replacement for $name (try $tries)"
 if out="$("$HERE/cloud-up.sh" "$name" --spot 2>&1)"; then
   mv "$pending" "$STATE/$reclaimed.done"
-  notify "replacement $(printf %s "$out" | sed -n 's/.*"instance_id":"\([^"]*\)".*/\1/p' | tail -1) ready; open Herdr to resume the agents"
+  notify "replacement $(printf %s "$out" | sed -n 's/.*"instance_id":"\([^"]*\)".*/\1/p' | tail -1) ready; its agents resume as Herdr starts"
 else
   echo "$out"
   echo "retry" >> "$pending"

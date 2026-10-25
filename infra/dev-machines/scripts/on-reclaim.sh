@@ -7,12 +7,13 @@
 #   1. Herdr's saved layout and agent sessions: copied to ~/.brain/herdr-session.saved.json, then Herdr stopped so
 #      every agent flushes its session. The next machine's herdr-server unit puts the copy back before Herdr starts
 #      (a stopping agent clears its own resume entry, so the state after the stop is not the one to resume).
-#   2. Every repository's uncommitted work as a commit on reclaim-wip/<path under ~>/<branch> (the path with - for /),
+#   2. Every repository's uncommitted work as a commit on reclaim-wip/<folder>-<path hash>/<branch, + for />,
 #      without touching the branch, the
 #      index, or the files: tracked changes and staged files, and untracked files too when BRAIN_WIP_UNTRACKED=1
 #      (off by default: an untracked file can be a secret, and a pushed branch is as public as its repository; the
 #      files themselves stay on the home volume either way). Pushed with [skip ci] and without hooks when
 #      SSH_AUTH_SOCK is set, else kept on the home volume.
+# Agents resume on the next machine as soon as its Herdr server starts, before anyone connects.
 # Settings come from ~/.brain/config, sourced if present: BRAIN_WIP_ROOTS (default "$HOME/Desktop $HOME/work"; searched
 # three levels deep) and BRAIN_WIP_UNTRACKED.
 LEFT="${1:-120}"
@@ -25,19 +26,27 @@ mkdir -p "$HOME/.brain"
 echo "on-reclaim: ${LEFT}s left"
 
 # 1. Herdr: keep the state to resume from, then stop cleanly (it signals every pane).
+SAVED="$HOME/.brain/herdr-session.saved.json"
 if [ -x "$HERDR" ] && [ -f "$STATE" ]; then
-  cp -p "$STATE" "$HOME/.brain/herdr-session.saved.json"
+  # A copy from the last half hour is a reclaim's this machine has not started from yet (reclaimed during setup): keep it.
+  [ -n "$(find "$SAVED" -mmin -30 2>/dev/null)" ] || cp "$STATE" "$SAVED"
   timeout 20 "$HERDR" server stop >/dev/null 2>&1 || echo "on-reclaim: herdr server stop did not finish"
 fi
 
 # 2. Work in progress: one commit per repository with changes.
 wip() {
-  local dir="$1" branch rel ref idx tree commit add
+  local dir="$1" branch name ref idx tree commit add
   cd "$dir" || return 0
   [ -n "$(git --no-optional-locks status --porcelain 2>/dev/null)" ] || return 0
+  if ! git rev-parse -q --verify HEAD >/dev/null; then
+    echo "on-reclaim: $dir: no commits yet; its files stay on the home volume"
+    return 0
+  fi
   branch="$(git symbolic-ref -q --short HEAD || echo detached)"
-  rel="${dir#"$HOME"/}"
-  ref="reclaim-wip/${rel//\//-}/$branch"
+  # A ref name git accepts whatever the folder is called, unique per path, never nested under an older one.
+  name="$(basename "$dir")"
+  name="${name//[^A-Za-z0-9_-]/_}"
+  ref="reclaim-wip/${name}-$(printf %s "$dir" | cksum | cut -d' ' -f1)/${branch//\//+}"
   idx="$(mktemp -u)"
   cp "$(git rev-parse --git-path index)" "$idx" 2>/dev/null || true   # no index yet: git starts from an empty one
   if [ "${BRAIN_WIP_UNTRACKED:-0}" = 1 ]; then add=(-A); else add=(-u); fi
