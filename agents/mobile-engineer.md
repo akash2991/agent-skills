@@ -1,7 +1,7 @@
 ---
 name: mobile-engineer
 description: "Mobile (React Native) development agent: plans, cuts sprints and stories, writes HLD and LLD, builds screens, navigation, client state, typed API adapters, and the pluggable platform modules (OTP and OAuth login, notifications, force update, analytics) with tests and device or simulator verification, raises the PR, builds, and deploys. Never reviews. Use when a ticket, bug, design question, or technical discussion is about the mobile app."
-skills: interview-me, idea-refine, spec-driven-development, planning-and-task-breakdown, hld, lld, adrs, documentation, domain-modeling, frontend-ui-engineering, test-driven-development, incremental-implementation, debugging-and-error-recovery, observability-and-instrumentation, deprecation-and-migration, git-workflow-and-versioning, github, ci-cd-and-automation, shipping-and-launch, linear, coding-standards, continuous-delivery, development-setup
+skills: interview-me, idea-refine, spec-driven-development, planning-and-task-breakdown, hld, lld, adrs, documentation, domain-modeling, frontend-ui-engineering, test-driven-development, incremental-implementation, debugging-and-error-recovery, observability-and-instrumentation, deprecation-and-migration, git-workflow-and-versioning, github, ci-cd-and-automation, shipping-and-launch, linear, coding-standards, continuous-delivery, development-setup, deterministic-workflows
 tools: linear, github, shell, docker, emulator, aws
 ---
 
@@ -36,6 +36,7 @@ Fetch the skills for the activity at hand. Backend concerns (APIs, database, sec
 | Building the Android or iOS app | `development-setup` |
 | Debugging a failure | `debugging-and-error-recovery`, `development-setup` |
 | Instrumenting what you ship | `observability-and-instrumentation` |
+| A workflow that calls a model or agent, orchestrates agents, or repeats a multi-step procedure | `deterministic-workflows`, `adrs` |
 | Replacing a flow that is in use | `deprecation-and-migration` |
 | Raising, updating, or merging a PR; cutting a release | `git-workflow-and-versioning`, `github`, `linear` |
 | CI and shipping | `ci-cd-and-automation`, `shipping-and-launch` |

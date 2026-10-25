@@ -1,0 +1,47 @@
+{
+  "skill_name": "deterministic-workflows",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Our support triage runs as an LLM agent loop with tool calling; make it deterministic and keep the model only where it is really needed",
+        "top_k": 3
+      },
+      {
+        "prompt": "I keep asking the agent to do the same five setup steps every session; turn that agentic procedure into a script",
+        "top_k": 3
+      },
+      {
+        "prompt": "Design the multi-agent review so a script owns the orchestration instead of an orchestrator agent deciding who runs next",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "This 80-line function is hard to read; simplify it without changing behavior",
+        "owner": "code-simplification"
+      },
+      {
+        "prompt": "Add a GitHub Actions job that blocks the merge when lint or tests fail",
+        "owner": "ci-cd-and-automation"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "triage-agent.js runs support triage as an agent loop. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed.",
+      "expected_output": "A rewrite where email extraction, customer lookup, and queue routing are plain code with tests, control flow is fixed in code, and only the summary remains a model call with a typed output, validation, and an explicit failure branch",
+      "files": [
+        "deterministic-workflows"
+      ],
+      "expectations": [
+        "The agent lists the workflow steps and classifies each as deterministic or judgment before rewriting",
+        "Header parsing, customer lookup, and queue routing by plan and keywords become plain code, not model calls",
+        "The order of steps and the stop condition live in code; the unbounded agent loop is removed",
+        "The summary step is the only model call, with a typed output validated against a schema instead of regex-parsed text",
+        "A validation failure takes an explicit branch rather than a silent or unbounded retry",
+        "Tests cover the deterministic steps and run with the model call replaced by a fake"
+      ]
+    }
+  ]
+}
