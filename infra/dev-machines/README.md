@@ -106,18 +106,18 @@ With `CLOUD_HOME_VOLUME` set, a developer's machine mounts their home volume as 
 
 ## Surviving a Spot reclaim
 
-With Spot (DM10), AWS may take the machine back with two minutes' warning. Work on the home volume (DM9) is never lost; what follows makes the running agents come back by themselves on the next machine, in the same Herdr workspaces.
+With Spot (DM10), AWS may take the machine back with two minutes' warning. Work on the home volume (DM9) is never lost; what follows brings the running agents back on the next machine, in the same Herdr workspaces, once the developer's Herdr reconnects (the watcher asks it to).
 
 | When | What happens | Where |
 |---|---|---|
 | Always | Herdr keeps the layout and each agent's session in `~/.config/herdr/session.json` on the home volume, and resumes agents after a restart (`claude --resume`, `codex resume`, `pi --session`) | Herdr, with its agent integrations installed |
-| Two-minute warning | `brain-spot-watch` runs `~/.brain/on-reclaim`: Herdr's state copied aside, Herdr stopped so agents flush their sessions, the state put back; every repository's uncommitted work committed to `wip/<branch>` (branch, index, and files untouched), pushed while the developer is connected | the machine |
-| Machine gone | `spot-relaunch-watch.sh` sees the home machine ended with `Server.SpotInstanceTermination` and runs `cloud-up.sh --spot` once; idle and deadline terminations are left alone | the developer's computer |
-| New machine boots | the home volume is mounted and `herdr server` starts (`herdr-server.service`); when the developer's Herdr attaches, each agent resumes in its pane | the machine |
+| Two-minute warning | `brain-spot-watch` runs `~/.brain/on-reclaim`: Herdr's state saved to `~/.brain/herdr-session.saved.json`, then Herdr stopped so agents flush their sessions; every repository's uncommitted work committed to `wip/<folder>/<branch>` (branch, index, and files untouched; tracked changes only unless `BRAIN_WIP_UNTRACKED=1`), pushed without hooks and with `[skip ci]` while the developer is connected | the machine |
+| Machine gone | `spot-relaunch-watch.sh` sees the home machine ended with `Server.SpotInstanceTermination` and runs `cloud-up.sh --spot`, retrying a failed replacement every minute up to 10 times, then `herdr machine reconnect` when `BRAIN_HERDR_MACHINE` is set; idle and deadline terminations are left alone | the developer's computer |
+| New machine boots | at the end of setup, after Docker, `herdr-server.service` puts the saved state back and starts `herdr server`; when the developer's Herdr attaches, each agent resumes in its pane. Any later stop of the unit (idle, deadline, reboot) saves the state first, so agents resume after those too | the machine |
 
 One-time setup, per developer:
 
-1. On the machine (stored on the home volume): `herdr integration install claude`, then `codex` and `pi`, so Herdr learns each agent's session; Codex may ask once to trust the hook. Then install the hook: `mkdir -p ~/.brain && cp <agent-skills>/infra/dev-machines/scripts/on-reclaim.sh ~/.brain/on-reclaim`.
+1. On the machine (stored on the home volume): `herdr integration install claude`, then `codex` and `pi`, so Herdr learns each agent's session; Codex may ask once to trust the hook. Then install the hook: `mkdir -p ~/.brain && cp <agent-skills>/infra/dev-machines/scripts/on-reclaim.sh ~/.brain/on-reclaim`. Its settings go in `~/.brain/config` (it runs from a system service, not your shell): `BRAIN_WIP_ROOTS` (default `~/Desktop ~/work`) and `BRAIN_WIP_UNTRACKED=1` to include untracked files (only where every pushable remote is private: an untracked file can be a secret).
 2. On the developer's computer, a launchd job that runs the watcher every minute, `~/Library/LaunchAgents/dev.brain.spot-relaunch.plist`:
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
@@ -129,6 +129,7 @@ One-time setup, per developer:
      </array>
      <key>EnvironmentVariables</key><dict>
        <key>CLOUD_ENV_FILE</key><string><settings file></string>
+       <key>BRAIN_HERDR_MACHINE</key><string><the machine's name in Herdr></string>
        <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
      </dict>
      <key>StartInterval</key><integer>60</integer>
@@ -138,7 +139,7 @@ One-time setup, per developer:
    ```
    then `launchctl load ~/Library/LaunchAgents/dev.brain.spot-relaunch.plist`. Remove it with `launchctl unload` and deleting the file.
 
-Limits: agents resume once the developer's Herdr reconnects, not before; Herdr resumes with the bare commands, so options such as `--model` come from each agent's own config; a turn in flight at the warning is cut off (the conversation up to it is kept); the watcher acts only while the developer's computer is awake and the AWS login is valid.
+Limits: agents resume once the developer's Herdr reconnects, not before, and a replacement nobody connects to is shut down after `CLOUD_IDLE_MINUTES` like any other machine (not relaunched; its saved state waits for the next one); Herdr resumes with the bare commands, so options such as `--model` come from each agent's own config; a turn in flight at the warning is cut off (the conversation up to it is kept); the watcher acts only while the developer's computer is awake and the AWS login is valid (it notifies when AWS cannot be reached), and AWS lists a terminated machine for about an hour, so a computer asleep longer misses the reclaim.
 
 ## Mobile builds on a machine
 

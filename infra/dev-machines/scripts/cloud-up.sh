@@ -230,24 +230,30 @@ chmod 700 "$H/.ssh" && chmod 600 "$H/.ssh/authorized_keys"
 echo "$DEV $H ext4 defaults,nofail 0 2" >> /etc/fstab
 # The watchdog shuts the machine down if the home is ever not mounted, after a reboot for one.
 echo "HOME_MOUNT=$H" >> /usr/local/etc/brain-watchdog.env
-# Herdr, when the developer keeps it on the home volume: start its server at boot, so it restores the saved workspaces
-# and resumes the agents in them once the developer's Herdr attaches (DM10). Started detached, whether the server
-# stays in the foreground or not; the unit stays active so systemd leaves it running.
+# Herdr, when the developer keeps it on the home volume: a unit that starts its server at boot, so it restores the
+# saved workspaces and resumes the agents once the developer's Herdr attaches (DM10). It is enabled at the end of this
+# setup, after Docker, so the server and its panes are in the docker group. Before each start it puts back the state
+# its last stop saved (a stopping agent clears its own resume entry); each stop saves it first, then stops Herdr.
 if [ -x "$H/.local/bin/herdr" ]; then
   cat > /etc/systemd/system/herdr-server.service <<'UNIT'
 [Unit]
 Description=Herdr server for ec2-user
-After=network-online.target
+Wants=network-online.target
+After=network-online.target docker.service
+RequiresMountsFor=/home/ec2-user
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 User=ec2-user
 Environment=HOME=/home/ec2-user
-ExecStart=/bin/sh -c 'mkdir -p /home/ec2-user/.config/herdr; PATH=/home/ec2-user/.local/bin:$PATH setsid -f herdr server >>/home/ec2-user/.config/herdr/boot.log 2>&1 </dev/null'
+Environment=PATH=/home/ec2-user/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/bin/sh -c 'S=/home/ec2-user/.brain/herdr-session.saved.json; if [ -f "$S" ]; then mkdir -p /home/ec2-user/.config/herdr && mv -f "$S" /home/ec2-user/.config/herdr/session.json; fi'
+ExecStart=/bin/sh -c 'setsid -f herdr server >>/home/ec2-user/.config/herdr/boot.log 2>&1 </dev/null'
+ExecStop=/bin/sh -c 'if pgrep -u ec2-user -f "herdr server$" >/dev/null; then mkdir -p /home/ec2-user/.brain; cp -p /home/ec2-user/.config/herdr/session.json /home/ec2-user/.brain/herdr-session.saved.json 2>/dev/null; timeout 30 herdr server stop; fi'
+TimeoutStopSec=40
 [Install]
 WantedBy=multi-user.target
 UNIT
-  systemctl daemon-reload && systemctl enable --now herdr-server
 fi
 HOMEVOL
   fi
@@ -281,6 +287,8 @@ GITHUB
     echo 'chown ec2-user:ec2-user /home/ec2-user/work'
     echo 'curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose'
     echo 'chmod +x /usr/local/lib/docker/cli-plugins/docker-compose'
+    # Last: Herdr starts once Docker and the docker group exist (DM10).
+    echo '[ ! -f /etc/systemd/system/herdr-server.service ] || { systemctl daemon-reload && systemctl enable --now herdr-server; }'
   fi
 } > "$TMP"
 
