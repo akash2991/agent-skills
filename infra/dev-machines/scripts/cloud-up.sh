@@ -232,9 +232,35 @@ echo "$DEV $H ext4 defaults,nofail 0 2" >> /etc/fstab
 echo "HOME_MOUNT=$H" >> /usr/local/etc/brain-watchdog.env
 # Herdr, when the developer keeps it on the home volume: a unit that starts its server at boot, so it restores the
 # saved workspaces and resumes the agents once the developer's Herdr attaches (DM10). It is enabled at the end of this
-# setup, after Docker, so the server and its panes are in the docker group. Before each start it puts back the state
-# its last stop saved (a stopping agent clears its own resume entry); each stop saves it first, then stops Herdr.
+# setup, after Docker, so the server and its panes are in the docker group. brain-herdr does its start and stop steps:
+# a stop keeps the state to resume from (a stopping agent clears its own resume entry), the next start puts it back.
 if [ -x "$H/.local/bin/herdr" ]; then
+  cat > /usr/local/bin/brain-herdr <<'HERDR'
+#!/bin/sh
+# brain-herdr pre|stop — herdr-server.service's start and stop steps, as ec2-user (DM10).
+S=/home/ec2-user/.brain/herdr-session.saved.json
+J=/home/ec2-user/.config/herdr/session.json
+running() { pgrep -u ec2-user -f "herdr server$" >/dev/null; }
+case "$1" in
+  pre)
+    mkdir -p /home/ec2-user/.config/herdr /home/ec2-user/.brain
+    # A server a client started during setup has no docker group and runs on the state without agents: replace it.
+    if running; then timeout 30 herdr server stop; fi
+    # Put back the copy the last stop kept, unless Herdr has run long after it (a copy older than the state by more
+    # than ten minutes is stale).
+    if [ -f "$S" ]; then
+      if [ ! -f "$J" ] || [ "$(stat -c %Y "$S")" -ge $(( $(stat -c %Y "$J") - 600 )) ]; then mv -f "$S" "$J"; else rm -f "$S"; fi
+    fi ;;
+  stop)
+    # The start consumed the last copy, so one here is this boot's reclaim hook's: keep it.
+    if running; then
+      [ -e "$S" ] || cp -p "$J" "$S" 2>/dev/null
+      timeout 30 herdr server stop
+    fi ;;
+esac
+exit 0
+HERDR
+  chmod 755 /usr/local/bin/brain-herdr
   cat > /etc/systemd/system/herdr-server.service <<'UNIT'
 [Unit]
 Description=Herdr server for ec2-user
@@ -247,9 +273,9 @@ RemainAfterExit=yes
 User=ec2-user
 Environment=HOME=/home/ec2-user
 Environment=PATH=/home/ec2-user/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStartPre=/bin/sh -c 'S=/home/ec2-user/.brain/herdr-session.saved.json; if [ -f "$S" ]; then mkdir -p /home/ec2-user/.config/herdr && mv -f "$S" /home/ec2-user/.config/herdr/session.json; fi'
+ExecStartPre=/usr/local/bin/brain-herdr pre
 ExecStart=/bin/sh -c 'setsid -f herdr server >>/home/ec2-user/.config/herdr/boot.log 2>&1 </dev/null'
-ExecStop=/bin/sh -c 'if pgrep -u ec2-user -f "herdr server$" >/dev/null; then mkdir -p /home/ec2-user/.brain; cp -p /home/ec2-user/.config/herdr/session.json /home/ec2-user/.brain/herdr-session.saved.json 2>/dev/null; timeout 30 herdr server stop; fi'
+ExecStop=/usr/local/bin/brain-herdr stop
 TimeoutStopSec=40
 [Install]
 WantedBy=multi-user.target

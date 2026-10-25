@@ -7,7 +7,8 @@
 #   1. Herdr's saved layout and agent sessions: copied to ~/.brain/herdr-session.saved.json, then Herdr stopped so
 #      every agent flushes its session. The next machine's herdr-server unit puts the copy back before Herdr starts
 #      (a stopping agent clears its own resume entry, so the state after the stop is not the one to resume).
-#   2. Every repository's uncommitted work as a commit on wip/<folder>/<branch>, without touching the branch, the
+#   2. Every repository's uncommitted work as a commit on reclaim-wip/<path under ~>/<branch> (the path with - for /),
+#      without touching the branch, the
 #      index, or the files: tracked changes and staged files, and untracked files too when BRAIN_WIP_UNTRACKED=1
 #      (off by default: an untracked file can be a secret, and a pushed branch is as public as its repository; the
 #      files themselves stay on the home volume either way). Pushed with [skip ci] and without hooks when
@@ -31,16 +32,20 @@ fi
 
 # 2. Work in progress: one commit per repository with changes.
 wip() {
-  local dir="$1" branch ref idx tree commit
+  local dir="$1" branch rel ref idx tree commit add
   cd "$dir" || return 0
   [ -n "$(git --no-optional-locks status --porcelain 2>/dev/null)" ] || return 0
   branch="$(git symbolic-ref -q --short HEAD || echo detached)"
-  ref="wip/$(basename "$dir")/$branch"
+  rel="${dir#"$HOME"/}"
+  ref="reclaim-wip/${rel//\//-}/$branch"
   idx="$(mktemp -u)"
   cp "$(git rev-parse --git-path index)" "$idx" 2>/dev/null || true   # no index yet: git starts from an empty one
   if [ "${BRAIN_WIP_UNTRACKED:-0}" = 1 ]; then add=(-A); else add=(-u); fi
-  if GIT_INDEX_FILE="$idx" git add "${add[@]}" >/dev/null 2>&1 && tree="$(GIT_INDEX_FILE="$idx" git write-tree)" \
-    && commit="$(git commit-tree "$tree" -p HEAD -m "wip: Spot reclaim $(date -u +%FT%TZ) [skip ci]")" \
+  if GIT_INDEX_FILE="$idx" git add "${add[@]}" >/dev/null 2>&1 && tree="$(GIT_INDEX_FILE="$idx" git write-tree)"; then
+    # Only untracked changes, left out: nothing to keep.
+    [ "$tree" != "$(git rev-parse -q --verify 'HEAD^{tree}')" ] || { rm -f "$idx"; return 0; }
+  fi
+  if [ -n "${tree:-}" ] && commit="$(git commit-tree "$tree" -p HEAD -m "wip: Spot reclaim $(date -u +%FT%TZ) [skip ci]")" \
     && git update-ref "refs/heads/$ref" "$commit"; then
     if [ -n "${SSH_AUTH_SOCK:-}" ] && timeout 45 git push -q --no-verify -f origin "$ref" >/dev/null 2>&1; then
       echo "on-reclaim: $dir: pushed $ref"
