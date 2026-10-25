@@ -97,7 +97,8 @@ test('configured literal detection, budgets and identity requirements cannot sil
     { parentId: base().id }, { endTime: 1 }, { startTime: NaN }, { endTime: Infinity }]) assert.throws(() => sanitizeObservation(base(change)));
   assert.equal(sanitizeObservation(base({ model: 'a'.repeat(129) })).model, undefined);
   assert.equal(sanitizeObservation(base({ model: 'abcdef'.repeat(10) })).model, undefined);
-  assert.equal(sanitizeObservation(base({ context: { skillsInvoked: Array(33).fill('safe') } })).context, undefined);
+  assert.deepEqual(sanitizeObservation(base({ context: { skillsInvoked: Array(33).fill('safe') } })).context,
+    { skillsInvoked: ['safe'] });
   assert.equal(sanitizeObservation(base({ usage: Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`metric_${i}`, i])) })).usage, undefined);
 });
 

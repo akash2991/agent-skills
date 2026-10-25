@@ -104,15 +104,28 @@ function numericMap(value) {
   }
   return Object.keys(result).length ? result : undefined;
 }
-function skillList(value) {
-  if (!Array.isArray(value) || value.length > LIMITS.skills) return undefined;
+// Output remains bounded to 32 names per list; inspect at most the capture
+// schema's 128 entries. Never discard the valid prefix merely due to overflow.
+// Status is an enum, not caller text. Severity only increases on replay, so a
+// partial list can never be mistaken for complete evidence after projection.
+const SKILL_STATUSES = Object.freeze(['filtered', 'truncated', 'refused']);
+function skillList(value, previousStatus) {
   const result = [];
-  for (let i = 0; i < value.length; i++) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
-    const safe = safeIdentity(descriptor && descriptor.value);
-    if (safe && !result.includes(safe)) result.push(safe);
+  let severity = SKILL_STATUSES.indexOf(previousStatus);
+  const mark = status => { severity = Math.max(severity, SKILL_STATUSES.indexOf(status)); };
+  if (value !== undefined && !Array.isArray(value)) mark('refused');
+  if (Array.isArray(value)) {
+    if (value.length > 128) mark('refused');
+    for (let i = 0; i < Math.min(value.length, 128); i++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+      const safe = safeIdentity(descriptor && descriptor.value);
+      if (!safe) { mark('filtered'); continue; }
+      if (result.includes(safe)) continue;
+      if (result.length === LIMITS.skills) { mark('truncated'); continue; }
+      result.push(safe);
+    }
   }
-  return result.length ? result.sort() : undefined;
+  return { values: result.length ? result.sort() : undefined, status: SKILL_STATUSES[severity] };
 }
 
 function sanitizeObservation(record) {
@@ -138,8 +151,9 @@ function sanitizeObservation(record) {
       if (safe) normalized[field] = safe;
     }
     for (const field of ['skillsInvoked', 'skillsLoaded']) {
-      const safe = skillList(own(context, field));
-      if (safe) normalized[field] = safe;
+      const safe = skillList(own(context, field), own(context, `${field}Status`));
+      if (safe.values) normalized[field] = safe.values;
+      if (safe.status) normalized[`${field}Status`] = safe.status;
     }
     const contextOutcome = own(context, 'outcome');
     if (OUTCOMES.has(contextOutcome)) normalized.outcome = contextOutcome;
@@ -156,7 +170,16 @@ function sanitizeObservation(record) {
     if (Object.keys(normalized).length) result.context = normalized;
     // Ignore the caller's name entirely; descriptions cannot become span names.
     result.name = [type.toLowerCase(), normalized.persona, type === 'TOOL' ? result.toolName : undefined].filter(Boolean).join(':');
-    if (Buffer.byteLength(JSON.stringify(result)) > LIMITS.recordBytes) invalid();
+    // Skill evidence is expendable only with an explicit diagnostic. Keep the
+    // rest of the metadata and as much of both bounded lists as the record fits.
+    while (Buffer.byteLength(JSON.stringify(result)) > LIMITS.recordBytes) {
+      const fields = ['skillsInvoked', 'skillsLoaded'].filter(field => normalized[field]?.length);
+      if (!fields.length) invalid();
+      const field = fields.sort((a, b) => JSON.stringify(normalized[b]).length - JSON.stringify(normalized[a]).length)[0];
+      normalized[field].pop();
+      if (!normalized[field].length) delete normalized[field];
+      if (normalized[`${field}Status`] !== 'refused') normalized[`${field}Status`] = 'truncated';
+    }
     return result;
   } catch { invalid(); }
 }
