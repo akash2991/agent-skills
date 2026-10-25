@@ -31,6 +31,7 @@
     "scripts/lib/build-brain.js",
     "scripts/lib/pull-install.js",
     "scripts/lib/install-paths.js",
+    "scripts/lib/persona-tools.js",
     "scripts/lib/langfuse.js"
   ],
   "scripts": {

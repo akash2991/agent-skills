@@ -9,6 +9,7 @@
  *   - frontmatter with name and description ("Use when"); a persona that lists skills also lists tools
  *   - name equals the file name; file name is kebab-case
  *   - no model or effort in frontmatter: the user sets those per run
+ *   - every tool label is in scripts/lib/persona-tools.js, and one reached through the shell has shell beside it
  *   - every listed skill exists in skills/ and, for a selected persona, in manifest.json
  *   - sections Role, Guidelines, Never are present on a persona that lists skills (upstream base personas are exempt)
  *   - every persona and skill named in manifest.json exists
@@ -19,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const { parseFrontmatter } = require('./lib/skill-lint');
+const { labelErrors } = require('./lib/persona-tools');
 
 const ROOT = path.resolve(__dirname, '..');
 const AGENTS_DIR = path.join(ROOT, 'agents');
@@ -59,6 +61,7 @@ function main() {
     // An upstream base persona carries only name and description. A persona that lists skills follows the thin anatomy.
     const thin = fm.skills !== undefined;
     if (thin && !fm.tools) errors.push(`${where}: missing \`tools\``);
+    for (const e of labelErrors(fm.tools)) errors.push(`${where}: ${e}`);
     for (const key of FORBIDDEN_KEYS) if (fm[key] !== undefined) errors.push(`${where}: must not set \`${key}\`; the user sets model and effort per run`);
     for (const s of splitList(fm.skills)) {
       if (!knownSkills.has(s)) errors.push(`${where}: skill "${s}" does not exist in skills/`);
