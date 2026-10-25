@@ -231,7 +231,7 @@ echo "$DEV $H ext4 defaults,nofail 0 2" >> /etc/fstab
 # The watchdog shuts the machine down if the home is ever not mounted, after a reboot for one.
 echo "HOME_MOUNT=$H" >> /usr/local/etc/brain-watchdog.env
 # Herdr, when the developer keeps it on the home volume: a unit that starts its server at boot, so it restores the
-# saved workspaces and resumes the agents once the developer's Herdr attaches (DM10). It is enabled at the end of this
+# saved workspaces and resumes the agents in them as it starts (DM10). It is enabled at the end of this
 # setup, after Docker, so the server and its panes are in the docker group. brain-herdr does its start and stop steps:
 # a stop keeps the state to resume from (a stopping agent clears its own resume entry), the next start puts it back.
 if [ -x "$H/.local/bin/herdr" ]; then
@@ -246,7 +246,7 @@ case "$1" in
     mkdir -p /home/ec2-user/.config/herdr /home/ec2-user/.brain
     # A server a client started during setup has no docker group and runs on the state without agents: replace it.
     if running; then timeout 30 herdr server stop; fi
-    # Put back the copy the last stop kept (its time is when it was taken, just before that stop), unless Herdr has
+    # Put back the copy the last stop kept (dated when it was taken or kept, just before that stop), unless Herdr has
     # run long after it: a copy older than the state by more than ten minutes is stale.
     if [ -f "$S" ]; then
       if [ ! -f "$J" ] || [ "$(stat -c %Y "$S")" -ge $(( $(stat -c %Y "$J") - 600 )) ]; then mv -f "$S" "$J"; else rm -f "$S"; fi

@@ -28,8 +28,9 @@ echo "on-reclaim: ${LEFT}s left"
 # 1. Herdr: keep the state to resume from, then stop cleanly (it signals every pane).
 SAVED="$HOME/.brain/herdr-session.saved.json"
 if [ -x "$HERDR" ] && [ -f "$STATE" ]; then
-  # A copy from the last half hour is a reclaim's this machine has not started from yet (reclaimed during setup): keep it.
-  [ -n "$(find "$SAVED" -mmin -30 2>/dev/null)" ] || cp "$STATE" "$SAVED"
+  # A copy from the last half hour is a reclaim's this machine has not started from yet (reclaimed during setup): keep
+  # it, dated now, so the next machine's start takes it as this stop's copy.
+  if [ -n "$(find "$SAVED" -mmin -30 2>/dev/null)" ]; then touch "$SAVED"; else cp "$STATE" "$SAVED"; fi
   timeout 20 "$HERDR" server stop >/dev/null 2>&1 || echo "on-reclaim: herdr server stop did not finish"
 fi
 
