@@ -111,7 +111,7 @@ Global defaults, binding in every project. Each row states the rule and the only
 | ID | Rule | Override considered only when |
 |---|---|---|
 | S7 | **PostgreSQL** (`database`). | — |
-| S8 | **Docker for development, locally or on a shared, short-lived EC2 machine; LocalStack for AWS.** A reproducible environment, not an infrastructure project; machines launched by metrics, another type only with the user's permission, an idle one terminated (`development-setup`). | the service is a pure library |
+| S8 | **Docker for development; LocalStack for AWS.** A reproducible environment per agent, the same wherever it runs, not an infrastructure project (`development-setup`). | the service is a pure library |
 | S9 | **Terraform for AWS under `infra/`.** | a recorded decision |
 | S10 | **GitHub Actions for CI/CD**, deploy workflows per environment; what CI runs on every PR is `test-driven-development`. | a recorded decision |
 | S11 | **Prometheus (metrics), Grafana (dashboards), Loki (logs)**; what is emitted and when dashboards arrive is `observability-and-instrumentation`. | a recorded decision |
@@ -132,7 +132,7 @@ Global defaults, binding in every project. Each row states the rule and the only
 | S16 | **A linter and a static type checker on backend and frontend** (`coding-standards`). | — |
 | S17 | **Test runner, lint, and format commands: project default** (`test-driven-development`). | the service uses a different toolchain |
 | S18 | **Knowledge graph tooling: [graphify](https://github.com/Graphify-Labs/graphify).** | a recorded decision |
-| S19 | **Mobile builds on EAS Build**; AWS when the free builds or the queue run out, local only on request (`development-setup`). | the user sends a build elsewhere |
+| S19 | **Android builds in the agent's own environment; iOS on EAS Build only with explicit permission** (`development-setup`). | the user sends a build elsewhere |
 
 ### Architecture
 

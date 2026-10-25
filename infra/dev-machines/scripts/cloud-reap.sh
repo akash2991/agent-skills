@@ -1,8 +1,8 @@
 #!/bin/bash
-# cloud-reap.sh — find and kill leftover brain machines (development-setup DS12, DS13).
+# cloud-reap.sh — find and kill leftover brain machines (machine policy DM3, DM4).
 #
-# Usage: skills/development-setup/scripts/cloud-reap.sh
-# Run from the project root at the start and the end of every session that uses the cloud.
+# Usage: infra/dev-machines/scripts/cloud-reap.sh
+# Settings from CLOUD_ENV_FILE or ./.env (env.example). Run at the start and the end of every session that uses the cloud.
 #   - terminates every brain=dev machine past its brain:expires-at, and every stopped one
 #   - deletes brain-kill-* schedules whose machine is gone
 #   - releases every brain Mac host with no machine on it once its 24-hour minimum has passed
@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 NOW="$(iso_utc "$(date +%s)")Z"
 KILLED=""; LIVE=""; RELEASED=""; HELD=""
 
-while read -r id state type expires ticket ip; do
+while read -r id state type expires ticket home; do
   [ -n "$id" ] || continue
   if [ "$state" = stopped ] || [[ "$expires" < "$NOW" ]]; then
     aws ec2 terminate-instances --instance-ids "$id" >/dev/null
@@ -22,10 +22,10 @@ while read -r id state type expires ticket ip; do
     echo "terminated $id ($ticket, $state, expired $expires)" >&2
     KILLED="$KILLED${KILLED:+,}\"$id\""
   else
-    LIVE="$LIVE${LIVE:+,}{\"instance_id\":\"$id\",\"state\":\"$state\",\"type\":\"$type\",\"ticket\":\"$ticket\",\"public_ip\":\"$ip\",\"expires_at\":\"$expires\"}"
+    LIVE="$LIVE${LIVE:+,}{\"instance_id\":\"$id\",\"state\":\"$state\",\"type\":\"$type\",\"ticket\":\"$ticket\",\"home_volume\":\"${home#None}\",\"expires_at\":\"$expires\"}"
   fi
 done < <(aws ec2 describe-instances --filters Name=tag:brain,Values=dev Name=instance-state-name,Values=pending,running,stopping,stopped \
-  --query "Reservations[].Instances[].[InstanceId, State.Name, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:ticket']|[0].Value, PublicIpAddress]" \
+  --query "Reservations[].Instances[].[InstanceId, State.Name, InstanceType, Tags[?Key=='brain:expires-at']|[0].Value, Tags[?Key=='brain:ticket']|[0].Value, Tags[?Key=='brain:home-volume']|[0].Value]" \
   --output text)
 
 for name in $(aws scheduler list-schedules --name-prefix brain-kill- --query 'Schedules[].Name' --output text); do

@@ -6,10 +6,10 @@
 # come from the environment or the repository root's .env. Needs node and eas-cli (or npx).
 #
 #   exit 0  built on EAS; prints {"platform","build_id","status","artifact_url"} on stdout
-#   exit 4  the month's free iOS builds are used up: ask the user whether to wait or build on AWS
-#   exit 5  the queue wait passed EAS_MAX_QUEUE_MINUTES; the EAS build was canceled: ask the user whether to retry or build on AWS
+#   exit 4  the month's free iOS builds are used up: ask the user whether to wait or build elsewhere
+#   exit 5  the queue wait passed EAS_MAX_QUEUE_MINUTES; the EAS build was canceled: ask the user whether to retry or build elsewhere
 #   exit 1  the build failed or was canceled on EAS; prints the error code and message: read the logs, report the
-#           reason, and fix it on EAS if it is the app's; move to AWS or local only when the user decides so
+#           reason, and fix it on EAS if it is the app's; build elsewhere only when the user decides so
 # Builds counted: every iOS build started since the 1st of the month, UTC. Status goes to stderr.
 set -e
 PLATFORM="ios"
@@ -26,7 +26,7 @@ MONTH="$(date -u +%Y-%m-01T00:00:00Z)"
 USED="$("${EAS[@]}" build:list --platform "$PLATFORM" --limit 100 --json --non-interactive \
   | json "console.log(d.filter(b => b.createdAt >= '$MONTH').length)")"
 echo "$USED of $FREE free $PLATFORM builds used this month" >&2
-[ "$USED" -lt "$FREE" ] || { echo "free $PLATFORM builds used up: ask the user whether to wait or build on AWS" >&2; exit 4; }
+[ "$USED" -lt "$FREE" ] || { echo "free $PLATFORM builds used up: ask the user whether to wait or build elsewhere" >&2; exit 4; }
 
 ID="$("${EAS[@]}" build --platform "$PLATFORM" --profile "$PROFILE" --non-interactive --no-wait --json | json "console.log(d[0].id)")"
 echo "EAS build $ID queued" >&2
@@ -40,7 +40,7 @@ while sleep 60; do
       QUEUED=$(( $(date +%s) - START ))
       if [ "$QUEUED" -ge "$MAX_QUEUE" ] || [ $(( QUEUED + WAIT )) -ge "$MAX_QUEUE" ]; then
         "${EAS[@]}" build:cancel "$ID" >&2 || true
-        echo "EAS queue wait passes $(( MAX_QUEUE / 60 )) minutes; canceled $ID: ask the user whether to retry or build on AWS" >&2
+        echo "EAS queue wait passes $(( MAX_QUEUE / 60 )) minutes; canceled $ID: ask the user whether to retry or build elsewhere" >&2
         exit 5
       fi ;;
     FINISHED)

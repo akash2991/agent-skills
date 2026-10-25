@@ -27,8 +27,9 @@ function tmpDir(name) {
 
 function sourceFixture() {
   const root = tmpDir('source');
-  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'runtime', 'docs', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
-    fs.cpSync(path.join(ROOT, entry), path.join(root, entry), { recursive: true });
+  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'runtime', 'docs', 'infra', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
+    // Local dependencies and Terraform cache/variables/plans are not source.
+    fs.cpSync(path.join(ROOT, entry), path.join(root, entry), { recursive: true, filter: src => !/(^|[\\/])(node_modules|\.terraform|terraform\.tfvars|[^/\\]*\.tfplan)$/.test(src) });
   }
   return root;
 }
@@ -90,7 +91,7 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.equal(firstState.schema, 1);
   assert.ok(firstState.files.length > 50);
   assert.ok(firstState.files.every(f => /^[a-f0-9]{64}$/.test(f.sha256) && ['0644', '0755'].includes(f.mode)));
-  const executableScript = firstState.files.find(f => f.path === '.agents/skills/development-setup/scripts/cloud-up.sh');
+  const executableScript = firstState.files.find(f => f.path === '.agents/skills/development-setup/scripts/ios-eas-build.sh');
   assert.equal(executableScript && executableScript.mode, '0755');
   assert.notEqual(fs.statSync(path.join(target, executableScript.path)).mode & 0o111, 0);
 
@@ -208,9 +209,9 @@ test('all installed skill reference links resolve without harness-local shared d
   assert.ok(checked > 20, `expected real reference coverage, checked ${checked}`);
 });
 
-test('build and fresh pull exclude authoring docs and provisioning but retain runtime scripts', () => {
+test('build and fresh pull exclude authoring docs and dev-machine provisioning but retain runtime scripts', () => {
   const source = sourceFixture();
-  const dir = path.join(source, 'skills/development-setup/terraform');
+  const dir = path.join(source, 'infra/dev-machines/terraform');
   const originalTerraform = fs.readFileSync(path.join(dir, 'main.tf'));
   fs.mkdirSync(path.join(dir, '.terraform'), { recursive: true });
   for (const file of ['terraform.tfvars', 'terraform.tfstate', 'terraform.tfstate.backup', '.terraform/private']) fs.writeFileSync(path.join(dir, file), 'do not distribute');
@@ -223,11 +224,11 @@ test('build and fresh pull exclude authoring docs and provisioning but retain ru
   }
   for (const skill of [path.join(build, 'skills/development-setup'), ...['.agents', '.claude'].map(host => path.join(target, host, 'skills/development-setup'))]) {
     assert.ok(!fs.existsSync(path.join(skill, 'terraform')));
-    for (const script of ['cloud-up.sh', 'cloud-down.sh', 'android-ec2-build.sh', 'ios-eas-build.sh']) {
-      assert.deepEqual(fs.readFileSync(path.join(skill, 'scripts', script)), fs.readFileSync(path.join(source, 'skills/development-setup/scripts', script)));
-    }
-    assert.match(fs.readFileSync(path.join(skill, 'cloud.md'), 'utf8'), /https:\/\/github\.com\/akash2991\/agent-skills\/tree\/main\/skills\/development-setup\/terraform/);
+    assert.ok(!fs.existsSync(path.join(skill, 'cloud.md')));
+    for (const script of ['cloud-up.sh', 'cloud-down.sh', 'cloud-lib.sh', 'android-ec2-build.sh']) assert.ok(!fs.existsSync(path.join(skill, 'scripts', script)));
+    assert.deepEqual(fs.readFileSync(path.join(skill, 'scripts', 'ios-eas-build.sh')), fs.readFileSync(path.join(source, 'skills/development-setup/scripts', 'ios-eas-build.sh')));
   }
+  for (const output of [build, target]) assert.ok(!fs.existsSync(path.join(output, 'infra')));
   assert.deepEqual(fs.readFileSync(path.join(dir, 'main.tf')), originalTerraform);
   for (const file of ['docs/skill-anatomy.md', 'docs/persona-anatomy.md']) assert.deepEqual(fs.readFileSync(path.join(source, file)), fs.readFileSync(path.join(ROOT, file)));
 });
@@ -239,6 +240,7 @@ test('update prunes managed authoring docs and provisioning without deleting unm
   const retired = ['docs/skill-anatomy.md', 'docs/persona-anatomy.md'];
   for (const host of ['.agents', '.claude', '.pi', '.hermes', '.gemini']) {
     for (const file of ['main.tf', 'init.sh', '.terraform.lock.hcl', 'terraform.tfvars.example']) retired.push(`${host}/skills/development-setup/terraform/${file}`);
+    for (const file of ['cloud.md', 'scripts/cloud-up.sh', 'scripts/cloud-lib.sh', 'scripts/android-ec2-build.sh']) retired.push(`${host}/skills/development-setup/${file}`);
   }
   for (const rel of retired) {
     const content = Buffer.from('previously installed brain file');
@@ -255,7 +257,7 @@ test('update prunes managed authoring docs and provisioning without deleting unm
   pullInstall({ sourceRoot: ROOT, target });
   for (const rel of retired) assert.ok(!fs.existsSync(path.join(target, rel)));
   for (const rel of untouched) assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), 'project-owned');
-  assert.ok(fs.existsSync(path.join(target, '.agents/skills/development-setup/scripts/cloud-up.sh')));
+  assert.ok(fs.existsSync(path.join(target, '.agents/skills/development-setup/scripts/ios-eas-build.sh')));
   const repeat = pullInstall({ sourceRoot: ROOT, target });
   assert.equal(repeat.plan.writes.length, 0);
   assert.equal(repeat.plan.prunes.length, 0);
@@ -493,7 +495,9 @@ test('package tarball includes dot assets and CLI works from extracted package',
   assert.match(list, /package\/scripts\/agent-brain\.js/);
   assert.doesNotMatch(list, /package\/docs\/(?:skill|persona)-anatomy\.md/);
   assert.doesNotMatch(list, /package\/skills\/development-setup\/terraform\//);
-  assert.match(list, /package\/skills\/development-setup\/scripts\/cloud-up\.sh/);
+  assert.doesNotMatch(list, /package\/infra\//);
+  assert.doesNotMatch(list, /package\/skills\/development-setup\/scripts\/cloud-up\.sh/);
+  assert.match(list, /package\/skills\/development-setup\/scripts\/ios-eas-build\.sh/);
 
   const extract = tmpDir('extract');
   execFileSync('tar', ['-xzf', tarball, '-C', extract]);

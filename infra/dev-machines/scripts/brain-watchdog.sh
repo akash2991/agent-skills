@@ -1,11 +1,13 @@
 #!/bin/bash
 # brain-watchdog.sh — runs on a cloud machine as root; cloud-up.sh installs it through user data.
 # Every minute it appends "epoch load1 vcpus mem_used_pct disk_used_pct" to /var/lib/brain/metrics
-# (the last 60 lines are kept) for cloud-capacity.sh (development-setup DS11), and it shuts the
+# (the last 60 lines are kept) for cloud-capacity.sh (machine policy DM2), and it shuts the
 # machine down, which terminates it, once it has had no SSH connection and a 1-minute load under a
-# quarter of its vCPUs for IDLE_MINUTES, or at DEADLINE (epoch seconds) regardless (DS13).
+# quarter of its vCPUs for IDLE_MINUTES, or at DEADLINE (epoch seconds) regardless (DM4).
 # Its settings are re-read every minute from /usr/local/etc/brain-watchdog.env, so cloud-up.sh can
-# move the deadline when another agent joins. Its log goes to stdout.
+# move the deadline when another agent joins. With HOME_MOUNT set (DM9), it shuts the machine down
+# whenever the home volume is not mounted there, and disk use is the fuller of / and the home volume.
+# Its log goes to stdout.
 mkdir -p /var/lib/brain
 METRICS=/var/lib/brain/metrics
 idle_since="$(date +%s)"
@@ -14,6 +16,9 @@ while sleep 60; do
   . /usr/local/etc/brain-watchdog.env
   now="$(date +%s)"
   if [ "$now" -ge "$DEADLINE" ]; then echo "deadline reached, shutting down"; shutdown -h now; exit 0; fi
+  if [ -n "${HOME_MOUNT:-}" ] && ! mountpoint -q "$HOME_MOUNT"; then
+    echo "home volume not mounted on $HOME_MOUNT, shutting down"; shutdown -h now; exit 0
+  fi
 
   if [ -r /proc/loadavg ]; then load="$(cut -d' ' -f1 /proc/loadavg)"; else load="$(sysctl -n vm.loadavg | awk '{print $2}')"; fi
   if [ -r /proc/meminfo ]; then
@@ -21,7 +26,7 @@ while sleep 60; do
   else
     mem=0
   fi
-  disk="$(df -P / | awk 'NR == 2 { sub("%", "", $5); print $5 }')"
+  disk="$(df -P / ${HOME_MOUNT:+"$HOME_MOUNT"} | awk 'NR > 1 { sub("%", "", $5); if ($5 + 0 > m) m = $5 + 0 } END { print m + 0 }')"
   echo "$now $load $vcpus $mem $disk" >> "$METRICS"
   tail -n 60 "$METRICS" > "$METRICS.tmp" && mv "$METRICS.tmp" "$METRICS"
   chmod 644 "$METRICS"

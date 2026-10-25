@@ -1,5 +1,5 @@
-# The shared dev environment the cloud scripts run in (development-setup DS10–DS17, cloud.md One-time setup).
-# Applied once per AWS account by the user; every project reads its outputs into its .env.
+# The shared dev environment the dev-machine scripts run in (machine policy DM1–DM9, README.md, One-time setup).
+# Applied once per AWS account by the user; its outputs go into the scripts' settings file (env.example).
 # State is in S3 (init.sh creates the bucket), so any machine can plan and apply it.
 
 terraform {
