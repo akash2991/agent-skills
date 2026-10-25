@@ -19,8 +19,10 @@ Effort: <thinking effort>
 When first-party brain tracing is enabled, record the adopted persona and established ticket ID through its context operation:
 
 ```bash
-node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context set --persona <adopted-persona> --ticket <established-ticket-id>
+node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context --actor <current-hook-actor> set --persona <adopted-persona> --ticket <established-ticket-id>
 ```
+
+Use the exact actor supplied by this actor's tracing hook context; never copy a parent's actor into a child or guess a session. If no actor was supplied, report tracing context unavailable instead of fabricating one. Ordinary Bash commands are not rewritten. Use `brain-trace.cjs exec --actor <current-hook-actor> --harness pi|claude -- <native-args>` for traced subprocess children, or `launch --actor <current-hook-actor> ...` for an owned pane.
 
 Omit `--ticket` until it is known. Pass only non-secret identifiers, never task text or credentials. Update this structured context when persona or ticket changes; a prose declaration is not telemetry state. Skill attribution comes from observed invocations/loads, not the persona's permitted-skills list.
 

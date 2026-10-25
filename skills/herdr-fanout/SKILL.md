@@ -78,9 +78,11 @@ node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" launch \
   --persona "<adopted-persona>" --ticket "<established-ticket-id>"
 ```
 
+In Claude, also pass `--actor <current-hook-actor>` using the exact capability supplied to this actor by its hook context. Do not reuse a parent's actor. Pi may use its bound tool environment. For an explicit subprocess rather than a pane, use `brain-trace.cjs exec --actor <current-hook-actor> --harness pi|claude -- <native-args>`. Arbitrary Bash commands are not rewritten and do not automatically establish child lineage.
+
 The pane must be yours, at an idle shell, with that exact cwd. Omit persona/ticket options until they are established; never pass secrets or task bodies as context. The helper binds an exact native session ID before startup and supplies supported native adapter arguments, including for older worktree bases. Its acknowledgement is not proof of Langfuse ingestion. If startup is unconfirmed, inspect the existing pane; do not blindly launch a second agent. For stock Pi `subagent` calls, old-base worktree discovery requires the explicitly installed project-gated bootstrap. Other harness kinds remain uninstrumented; do not claim a shared tree for them.
 
-Then start an agent in that pane and **fire the brief without `--wait`**, so you
+If the traced helper already started the agent, only send its brief; do not start a second process in that pane. Otherwise start an agent in that pane and **fire the brief without `--wait`**, so you
 can launch the next slice while this one works. **Address the agent by its pane
 id**, not a custom name:
 
