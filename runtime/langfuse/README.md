@@ -45,11 +45,11 @@ JSON keys are `publicKey`, `secretKey`, `baseUrl`. Files must be owner-only regu
 
 Shared state defaults to `~/.cache/agent-brain/tracing-state`, independent of cwd and `PI_CODING_AGENT_DIR`. A custom `BRAIN_TRACE_STATE_DIR` must be identical in every participating launcher, including daemon children; setting it only in the parent breaks that contract.
 
-Use Pi's `brain_context` tool or, inside an instrumented Claude Bash call:
+Use Pi's `brain_context` tool. Claude's startup/prompt/subagent hooks supply a stable local actor capability in `additionalContext`; use that actor's value explicitly (never a parent's):
 
 ```bash
-node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context set --persona backend-engineer --ticket TEAM-123
-node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context status
+node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context --actor <current-hook-actor> set --persona backend-engineer --ticket TEAM-123
+node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context --actor <current-hook-actor> status
 ```
 
 Only register an actually adopted persona/established ticket. Unknown attribution stays unknown. An unbound native child may update its own metadata through an exact tool capability, but reports `ancestryPending` and no shared session identity until binding; this never enables premature export. Delivery diagnostics are shared-outbox accounting, not per-actor ingestion proof. Branch-inferred tickets are marked inferred. Successful `Skill` execution/known skill expansion and successful skill-file reads are separate invoked/loaded evidence; installed or persona-permitted skills are not usage evidence. `/brain` is a command, not itself an invoked skill.
@@ -66,7 +66,7 @@ Capture-order tickets and synchronized pre-send revision floors survive ACK/remo
 
 New lock claims require supported process birth identity before publication. Identity-named temporary publications recover only provably dead owners. Live legacy null-birth claims and ambiguous partial legacy temporaries remain conservative failures requiring offline operator inspection, not age-only stealing.
 
-**Known rollout blocker:** Claude Code 2.1.306 re-evaluates narrowly allowed Bash commands after `updatedInput` rewriting. The current automatic lineage prefix can cause an otherwise permitted command to be denied. No blanket permission override is installed. Replacing automatic rewriting with explicit traced launch/context helpers requires an accepted protocol change; broad rollout is blocked pending that decision and final review.
+Claude Bash input is never rewritten and hooks do not return permission decisions. Explicit subprocess tracing uses `brain-trace.cjs exec --actor <current-hook-actor> --harness pi|claude [--cwd PATH] -- <native-args>`; pane tracing uses `launch --actor <current-hook-actor> ...`. Pi callers may pass their bound `$BRAIN_TRACE_LAUNCH_ID` explicitly to exec. The helper preserves argv boundaries, stdio and exit/signal semantics without a shell or settings writes, prebinds an exact fresh native session, and refuses session/resource/permission overrides. Arbitrary Bash-spawned processes outside this protocol are not promised shared lineage. An opted-in caller can target a trusted marker-absent project explicitly; target refusal and kill switches still win. For a marker-absent caller, use the complete runtime's `brain-trace.cjs`, not the small discovery-only bootstrap cache. Never weaken native allow rules to enable tracing.
 
 Normal abort/error/shutdown hooks are best effort. SIGKILL, indefinitely lagging transcripts, provider-internal calls and unsupported native schemas cannot be promised complete capture. Unknown model labels are omitted; available usage/cost is not proof of a subscription bill. Other harnesses and application runtimes are not covered.
 

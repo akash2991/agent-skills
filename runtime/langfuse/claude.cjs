@@ -241,7 +241,7 @@ async function handleClaudeHook(payload, options = {}) {
   const nativeSessionId = childId ? childSession(flow, sessionId, childId) : sessionId;
   const pendingIdentity = childId ? namespace(sessionId, childId) : undefined;
   const knownPersona = flow.knownPersona?.(cwd, payload.agent_type) === true;
-  let run = flow.session(nativeSessionId) || flow.begin({ nativeSessionId, cwd,
+  let run = flow.session(nativeSessionId) || flow.begin({ nativeSessionId, cwd, reuseSession: true,
     ...(pendingIdentity ? { pendingIdentity } : {}), agentName: agentName(payload.agent_type, knownPersona) });
   // Only the shared flow may resolve/rebase ancestry. SubagentStart's agent_id
   // is the NEW child, never evidence of its caller or dispatch tool ID.
@@ -293,7 +293,7 @@ async function handleClaudeHook(payload, options = {}) {
   if (['SessionStart', 'UserPromptSubmit', 'SubagentStart'].includes(event)) {
     // Mint for this exact actor, even while its native ancestry is pending.
     // The capability permits own-metadata edits, never guessed export ancestry.
-    const binding = flow.createToolLaunch(run);
+    const binding = flow.actorCapability ? flow.actorCapability(run) : flow.createToolLaunch(run);
     if (/^[A-Za-z0-9_-]{32,128}$/.test(binding?.nonce || '')) {
       output = { hookSpecificOutput: { hookEventName: event, additionalContext:
         `Brain tracing actor: --actor ${binding.nonce}. This local non-secret capability identifies only this actor; do not reuse a parent's actor in a child. ` +

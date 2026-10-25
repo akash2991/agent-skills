@@ -373,6 +373,7 @@ class ContextStore {
 
   createRun(options) {
     plain(options);
+    if (options.reuseSession !== undefined && typeof options.reuseSession !== 'boolean') fail();
     const info = project(options.cwd);
     const native = nativeId(options.nativeSessionId);
     const parent = options.parent ? safeRun(options.parent) : null;
@@ -384,6 +385,9 @@ class ContextStore {
     }
     return this._transaction((state, now) => {
       const previous = state.sessions[this._sessionKey(options.harness, native)]?.run;
+      // Duplicate native Claude hooks can race before either sees a session.
+      // Selection and creation must be one transaction, not get-then-create.
+      if (options.reuseSession === true && previous) return previous;
       const linkedParent = parent ? this._current(state, parent) : null;
       return this._save(state, safeRun({ ...info, harness: options.harness, nativeSessionId: native,
         traceId: linkedParent?.traceId || randomHex(16), rootSpanId: randomHex(8), parentSpanId: linkedParent?.rootSpanId || null,

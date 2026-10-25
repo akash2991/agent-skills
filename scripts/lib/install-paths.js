@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const RUNTIME_FILES = new Set(['bootstrap-claude.cjs', 'bootstrap.js', 'brain-trace.cjs', 'claude-hook.cjs',
-  'claude.cjs', 'context-cli.cjs', 'context.cjs', 'dependencies.cjs', 'export.cjs', 'flow.cjs', 'launch.cjs', 'locks.cjs',
+  'claude.cjs', 'context-cli.cjs', 'context.cjs', 'dependencies.cjs', 'exec.cjs', 'export.cjs', 'flow.cjs', 'launch.cjs', 'locks.cjs',
   'package-lock.json', 'package.json', 'pi.js', 'privacy.cjs', 'README.md']);
 
 // Unlike existsSync, this sees dangling symlinks and does not hide access errors.

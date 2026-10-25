@@ -2,7 +2,7 @@
 
 **Remediation is still under review.** The [historical live audit](langfuse-audit-2026-10-20.md) found sensitive synthetic content persisted by the official plugins and missing Herdr child observations. This revision replaces those exporters with first-party **metadata-only** adapters. Do not treat the old official-plugin setup, a draft PR, or unit tests as verified protection.
 
-**Do not roll out this draft yet.** A native Claude 2.1.306 control/traced comparison confirmed that automatic Bash nonce rewriting can invalidate a narrow existing allow rule. The implementation does not bypass that rule. An explicit-helper protocol versus automatic-rewrite approval trade-off and final-revision reviews remain unresolved; see the [runtime reliability limits](../runtime/langfuse/README.md#reliability-limits).
+**Do not roll out before the final review gate.** The earlier automatic Bash rewrite broke narrow native allow rules. It has been replaced with explicit actor/context/launch helpers: ordinary commands are unchanged and no permission override is installed. A fresh native Claude 2.1.310 control/traced comparison passed the narrow `Bash(printf *)` rule with zero denials. See the [explicit protocol and reliability limits](../runtime/langfuse/README.md#reliability-limits).
 
 This observes Pi/Claude development sessions, not the consuming application's AI calls. Ordinary brain pulls install resources but do not enable telemetry. The complete policy/protocol lives in [the runtime README](../runtime/langfuse/README.md).
 
@@ -30,7 +30,7 @@ agent-brain pull --langfuse --worktree-bootstrap
 
 This explicitly installs the project-gated bootstrap through native `pi install` and removes a known legacy user exporter if present. It does not enable tracing in unrelated repositories, copy new files into old worktrees, or grant trust. The principal repository must be opted in. Existing sessions in both harnesses must restart.
 
-Herdr daemon panes do not automatically inherit the parent's environment. Use the supported exact launch/binding protocol; see the runtime README and `herdr-fanout`. A ready pane is not evidence that the child exported anything. Surface approval/startup blockers immediately rather than describing an unconfirmed child as running.
+Herdr daemon panes do not automatically inherit the parent's environment. Use the supported exact launch/binding protocol: Claude uses its hook-supplied `--actor` with `brain-trace.cjs launch` for panes or `exec` for subprocesses; Pi may pass its bound tool capability. Ordinary Bash does not automatically establish child lineage. See the runtime README and `herdr-fanout`. A ready pane is not evidence that the child exported anything. Surface approval/startup blockers immediately rather than describing an unconfirmed child as running.
 
 ## Credentials: once per developer, outside Git
 

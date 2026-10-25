@@ -69,6 +69,18 @@ The combined parent suite passes **215 tests**. Fresh server-retrieved reruns ag
 
 No broad rollout or Slop main registration occurred. The new fixes and any protocol change still need applicable final-revision reviews and synthesis; the earlier approvals/findings cover their pinned revision only.
 
+## Explicit-helper completion (final gate pending)
+
+The accepted replacement removes all Claude Bash `updatedInput` mutation and permission decisions. Supported hook context supplies a stable per-actor capability; context/pane/subprocess helpers accept it explicitly. `brain-trace.cjs exec` prebinds the exact fresh native session, spawns without a shell, preserves argv/stdio/exit signals and refuses conflicting resource/session/permission options. Ordinary Bash-launched processes outside that protocol are not promised unified lineage. Marker-absent per-run targets remain supported without writing project settings; refusals and kill switches still win.
+
+On native Claude Code **2.1.310**, the control/traced `Bash(printf *)` test now succeeds unchanged in both cases with zero permission denials. Native explicit-helper checks also revealed duplicate project/per-run hooks publishing multiple actor values; atomic native-session reuse and stable per-actor capability publication now have real four-process regressions. The follow-up native run uses one child actor and one capability, not a guessed choice among them.
+
+Fresh server retrieval confirms explicit Claude→Pi trace `0f94ab8b1a27453c6bfecf7fef46b549` (**12 unique nodes**) and Pi→Claude `eff60e545c4e5ed2a3cc2257a3bf7549` (**11**): two correctly parented actors, generations/tools, no input/output/canaries/configured credential literal. These replace the earlier automatic-rewrite acceptance path, not its permission semantics. The combined focused suite passes **228 tests**.
+
+Current main was merged into the isolated PR checkout, resolving the build/pull conflicts while retaining both runtime bundling and source-only infrastructure exclusions. Local repository tests/validators/build pass. GitHub Actions is an external blocker: permissions report `enabled:true` and active workflows, but dispatching either workflow returns HTTP422 “Actions has been disabled for this repository.” No account policy, billing setting or permission bypass was changed, and local tests are not described as hosted CI.
+
+The paused WIP has been completed; final-revision independent reviews and Astra synthesis are still required before merge. Slop main remains unconfigured by this task.
+
 ## Remaining acceptance and review
 
 This is not completed final-revision certification. The selected stock-worktree, automatic replay, error/abort and invoked/loaded-skill checks above now have positive server-retrieved evidence. Rerun affected paths if review changes their implementation. Native old-base discovery is a wiring test, not proof that every old branch or standalone third-party exporter is safe. Resume/persistent variants and unsupported native schemas must not be silently included in coverage claims.

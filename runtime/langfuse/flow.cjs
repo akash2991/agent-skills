@@ -375,6 +375,19 @@ function createFlow(options = {}) {
     return binding;
   }
 
+  function actorCapability(run) {
+    return transaction(() => {
+      const actor = resolve(run) || run;
+      const key = `actor-reference:${actor.runId}`;
+      const saved = readState(key);
+      if (saved?.expiresAt > clock() && actorForTool(saved.nonce)?.runId === actor.runId) return saved;
+      const binding = createToolLaunch(actor);
+      const reference = { nonce: binding.nonce, expiresAt: binding.expiresAt };
+      writeState(key, reference);
+      return reference;
+    });
+  }
+
   function actorForTool(nonce) {
     if (!/^[a-z0-9_-]{32,128}$/i.test(nonce || '')) return null;
     const capability = readState(`actor-capability:${nonce}`);
@@ -592,7 +605,7 @@ function createFlow(options = {}) {
     return update(run, { [field]: [...new Set([...(run[field] || []), skill])].slice(0, 128) });
   }
 
-  return { store, stateDir, harness, inboundIdentity, begin, acknowledgeSession, createToolLaunch, actorForTool, remember, resolve, session, update, submit, flush, id,
+  return { store, stateDir, harness, inboundIdentity, begin, acknowledgeSession, createToolLaunch, actorCapability, actorForTool, remember, resolve, session, update, submit, flush, id,
     readState, writeState, stateFile: fileFor, knownPersona, knownSkill, captureBrainCommand, captureSkill, now: clock };
 }
 
