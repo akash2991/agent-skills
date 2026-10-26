@@ -1,5 +1,16 @@
 'use strict';
 
+const { safeIdentity } = require('./privacy.cjs');
+
+// Harness display names are optional, not ownership or persona evidence. Keep
+// only the intersection of privacy-safe identities and strict context labels;
+// never normalize, parse, hash, or checkpoint unsupported display prose.
+function optionalLabel(value) {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9_.:+-]{0,127}$/i.test(value)
+    && !/(?:password|secret|bearer|api[_-]?key|sk-[a-z0-9]{12})/i.test(value)
+    ? safeIdentity(value) : undefined;
+}
+
 function usageDetails(usage = {}) {
   const finite = value => Number.isFinite(value) && value >= 0 ? value : 0;
   const output = finite(usage.output);
@@ -33,6 +44,7 @@ function createController(pi, options = {}) {
   const nativeId = ctx => ctx.sessionManager.getSessionId();
   const effort = ctx => ctx.thinkingLevel || pi.getThinkingLevel?.();
   const current = () => active && roots.get(active);
+  const optionalPersona = (value, cwd) => optionalLabel(value) && flow.knownPersona?.(cwd, value) ? value : undefined;
   const setStatus = text => { if (lastContext?.hasUI) lastContext.ui.setStatus('brain-tracing', text); };
   const observe = (event, handler) => pi.on(event, async (data, ctx) => {
     if (ctx) lastContext = ctx;
@@ -86,8 +98,8 @@ function createController(pi, options = {}) {
     }
     const previous = flow.session(nativeId(ctx));
     let run = flow.begin({ nativeSessionId: nativeId(ctx), cwd: ctx.cwd,
-      persona: process.env.PI_SUBAGENT_AGENT || previous?.persona,
-      agentName: process.env.PI_SUBAGENT_NAME,
+      persona: optionalPersona(process.env.PI_SUBAGENT_AGENT, ctx.cwd) || previous?.persona,
+      agentName: optionalLabel(process.env.PI_SUBAGENT_NAME),
       ...(previous?.ticketSource === 'explicit' ? { ticketId: previous.ticketId } : {}),
       requestedModel: ctx.model?.id, requestedEffort: effort(ctx) });
     if (rawInput) run = flow.captureBrainCommand(run, { text: rawInput, cwd: ctx.cwd });
@@ -177,10 +189,12 @@ function createController(pi, options = {}) {
       const details = event.result?.details || {};
       const file = details.sessionFile || details.sessionPath;
       if (typeof details.id === 'string' && typeof file === 'string') {
+        const persona = optionalPersona(details.agent, ctx.cwd);
+        const agentName = optionalLabel(details.name);
         flow.store.createLaunch(flow.resolve(state.run) || state.run, { launchId: details.id,
           // A resumed invocation reuses its transcript file but has a new exact
           // launch ID. Do not rebind the immutable original file capability.
-          child: { ...(details.agent ? { persona: details.agent } : {}), ...(details.name ? { agentName: details.name } : {}) } });
+          child: { ...(persona ? { persona } : {}), ...(agentName ? { agentName } : {}) } });
         flow.writeState(`pi-child-parent:${file}`, { run: state.run });
         if (details.status === 'started') state.pending.add(pendingId(file));
         saveRoot(state);
