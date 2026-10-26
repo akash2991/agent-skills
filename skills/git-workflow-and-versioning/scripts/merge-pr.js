@@ -47,11 +47,11 @@ function isPending(c) {
   return (c.status && c.status !== 'COMPLETED') || ['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS'].includes(c.state);
 }
 
-// Approved means: branch protection says so, or every reviewer's newest verdict (APPROVED or CHANGES_REQUESTED, on any
-// commit) is not a change request, and at least one such verdict is an APPROVED given on the current head. A change
-// request stays in force after a new push until its reviewer approves or dismisses it. COMMENTED reviews are replies.
+// Approved means every reviewer's newest verdict (APPROVED or CHANGES_REQUESTED, on any commit) is not a change
+// request, and at least one such verdict is an APPROVED given on the current head. A change request stays in force after
+// a new push until its reviewer approves or dismisses it. COMMENTED reviews are replies. The branch-protection
+// reviewDecision is not trusted alone: without dismissal of stale approvals it stays APPROVED after a push.
 function isApproved(view) {
-  if (view.reviewDecision === 'APPROVED') return true;
   const newest = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
@@ -77,8 +77,21 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
   const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
   if (failing.length) blockers.push(`CI is not green: ${failing.map(c => c.name || c.context).join(', ')} (P12)`);
-  if (!reviewOptional && !isApproved(view)) blockers.push(`no approval from a reviewer other than the author (review decision: ${view.reviewDecision || 'none'}) (P10)`);
+  if (!reviewOptional && !isApproved(view)) blockers.push(`no approval of the current head from a reviewer other than the author (review decision: ${view.reviewDecision || 'none'}) (P10)`);
+  if (view.unresolvedThreads) blockers.push(`${view.unresolvedThreads} review thread(s) are unresolved (P10)`);
   return { blockers, ticket: ticket && ticket[1] };
+}
+
+// Review threads still open on the PR (P10: every review comment is resolved). gh pr view does not report them.
+function unresolvedThreads(repo, pr) {
+  const [owner, name] = repo.split('/');
+  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}';
+  const out = JSON.parse(gh(['api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${pr}`]));
+  return out.data.repository.pullRequest.reviewThreads.nodes.filter(t => !t.isResolved).length;
+}
+
+function localTip(branch) {
+  try { return git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).trim(); } catch { return ''; }
 }
 
 function main(argv) {
@@ -87,7 +100,8 @@ function main(argv) {
   const flag = argv.indexOf('--repo');
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
+  view.unresolvedThreads = unresolvedThreads(repo, pr);
   const { blockers, ticket } = mergeBlockers(view, { reviewOptional: argv.includes('--review-optional') });
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
@@ -100,10 +114,23 @@ function main(argv) {
     console.error(`merge-pr: branch ${view.headRefName} lives in the fork and was not deleted; delete it in the fork (P7)`);
     process.exitCode = 1;
   }
-  // The local branch may be checked out in another worktree (P6) or hold unpushed work: report it, do not hide it.
-  try { git(['branch', '-d', view.headRefName]); } catch (err) {
-    console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete: delete it by hand from the worktree that holds it`);
-    process.exitCode = 1;
+  // The local branch is deleted once the fetched base contains its tip; `git branch -d` would compare against the
+  // local HEAD, which does not have the merge yet. Unpushed work, or a branch checked out in another worktree (P6),
+  // is reported, not hidden.
+  const local = localTip(view.headRefName);
+  if (local) {
+    try {
+      git(['fetch', '--quiet', 'origin', view.baseRefName]);
+      git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
+    } catch {
+      console.error(`merge-pr: local branch ${view.headRefName} has commits that are not on origin/${view.baseRefName}; not deleted, P7 is not complete`);
+      process.exitCode = 1;
+      return;
+    }
+    try { git(['branch', '-D', view.headRefName]); } catch (err) {
+      console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete: delete it from the worktree that holds it`);
+      process.exitCode = 1;
+    }
   }
   console.log(`merged #${pr} with a merge commit; branch ${view.headRefName} deleted on the remote`);
 }

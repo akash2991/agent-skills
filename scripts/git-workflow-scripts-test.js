@@ -44,6 +44,9 @@ test('LINEAR_TEAM narrows the ticket pattern', () => {
 test('a merge commit needs only the ticket id', () => {
   assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}), []);
   assert.strictEqual(check.checkCommitMessage('Merge pull request #4', {}).length, 1);
+  // In CI the parent count is known: a one-parent commit with a merge-like subject is held to the full anatomy.
+  assert.ok(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}, { isMerge: false }).length > 0);
+  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}, { isMerge: true }), []);
 });
 
 test('branch names are <ticket>-<slug>', () => {
@@ -82,10 +85,13 @@ test('a changelog line is required in the global file and in the service it touc
 });
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
-  const ok = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  const ok = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', headRefOid: 'h1', author: { login: 'agent' },
+    reviews: [{ author: { login: 'r' }, state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
-  assert.strictEqual(mergeBlockers({ ...ok, reviewDecision: 'REVIEW_REQUIRED' }).blockers.length, 1);
+  assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
+  assert.strictEqual(mergeBlockers({ ...ok, headRefOid: 'h2' }).blockers.length, 1, 'reviewDecision APPROVED does not cover a newer head');
+  assert.match(mergeBlockers({ ...ok, unresolvedThreads: 2 }).blockers.join(), /2 review thread\(s\) are unresolved/);
   assert.deepStrictEqual(mergeBlockers({ ...ok, reviewDecision: null }, { reviewOptional: true }).blockers, []);
   assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
   assert.strictEqual(mergeBlockers({ ...ok, title: 'x', state: 'MERGED' }).blockers.length, 2);

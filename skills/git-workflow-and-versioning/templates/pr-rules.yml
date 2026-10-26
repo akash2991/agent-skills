@@ -28,8 +28,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # The checker comes from the base branch, never from the PR: a PR cannot weaken the rules that judge it.
-          CHECK_PATH="$(git ls-tree -r --name-only "origin/$BASE_REF" | grep '/skills/git-workflow-and-versioning/scripts/brain-git-check.js$' | head -1)"
-          test -n "$CHECK_PATH" || { echo "brain-git-check.js is not on $BASE_REF; pull the brain first"; exit 1; }
+          # So the PR that first adds the brain fails here: merge the brain into the base branch before adding this workflow.
+          CHECK_PATH="$(git ls-tree -r --name-only "origin/$BASE_REF" | { grep '/skills/git-workflow-and-versioning/scripts/brain-git-check.js$' || true; } | head -1)"
+          test -n "$CHECK_PATH" || { echo "brain-git-check.js is not on $BASE_REF: merge the brain into $BASE_REF before adding this workflow"; exit 1; }
           CHECK="$RUNNER_TEMP/brain-git-check.js"
           git show "origin/$BASE_REF:$CHECK_PATH" > "$CHECK"
           node "$CHECK" branch "$HEAD_REF"

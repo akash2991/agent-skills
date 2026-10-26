@@ -108,7 +108,7 @@ main ──●──●──●──●──●──●──●──●─
 | P8 | **Always raise a PR; never merge directly. Review may be made optional on the ticket.** There is no direct-merge exception for small changes. |
 | P9 | **Never hold a PR for a security audit; the audit is a later ticket / next requirement.** |
 | P10 | **Every task ships through a pull request with the PR template; reviewed-class PRs merge only on the discipline code reviewer's approval; every review comment is resolved by a commit or an explained reply.** |
-| P11 | **A PR is never held open to grow.** Open it when the first verifiable slice is ready; at roughly **400 changed lines or 10 files, split it** — land the mechanical part, the contract, or the flagged-off skeleton first. A long-lived branch is a merge conflict accruing interest. |
+| P11 | **A PR is never held open to grow.** Open it when the first verifiable slice is ready; at roughly **400 changed lines or 10 files, split it** — land the mechanical part, the contract, or the flagged-off skeleton first. A PR stays over the limit only when the user says so, recorded as a `Size-exception: <reason>` line in its body. A long-lived branch is a merge conflict accruing interest. |
 | P12 | **Only a change that is deployable on its own merges**; `main` is always releasable. |
 | P13 | **Every merged task adds a changelog line** (global and per service), written in the same change while the impact is fresh. |
 | P14 | Reviewers create Linear issues for findings and comment on the PR while it is open. |
@@ -124,7 +124,7 @@ main ──●──●──●──●──●──●──●──●─
 
 ## Enforced by script
 
-P2, P3, P5, P10, P11, and P13 are checked by `scripts/brain-git-check.js` instead of by memory; P7, P10, P12, and P15 are carried out by `scripts/merge-pr.js`. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks. A PR over the size limit records `Size-exception: <reason>` in its body rather than growing silently. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12); that stays with the author and the reviewer.
+P2, P3, P5, P10, P11, and P13 are checked by `scripts/brain-git-check.js` instead of by memory; P7, P10, P12, and P15 are carried out by `scripts/merge-pr.js`. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks; it reads the checker from the base branch, so merge the brain into that branch before adding the workflow. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12); that stays with the author and the reviewer.
 
 ## The Save Point Pattern
 

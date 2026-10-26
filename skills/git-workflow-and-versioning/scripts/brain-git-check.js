@@ -28,7 +28,9 @@ function ticketSource(env = process.env) {
 
 // allowFixup is for the local commit-msg hook only: autosquash folds fixup!/squash! commits before a PR merges, and CI
 // (which runs without it) rejects any that are left unsquashed.
-function checkCommitMessage(raw, env = process.env, { allowFixup = false } = {}) {
+// isMerge: whether the commit has more than one parent, when the caller knows (commits mode); a one-parent commit
+// with a merge-like subject is then checked like any other. The commit-msg hook cannot know, so it goes by the subject.
+function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerge } = {}) {
   const message = raw.split(/\r?\n/).filter(l => !l.startsWith('#')).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
@@ -38,7 +40,7 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false } = {})
   const errors = [];
   if (revert && !new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('revert commit: name the ticket id it belongs to (P2)');
   if (allowFixup && /^(fixup! |squash! )/.test(subject)) return [];
-  if (GIT_MERGE.test(subject)) {
+  if (GIT_MERGE.test(subject) && isMerge !== false) {
     if (!new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
     return errors;
   }
@@ -175,7 +177,8 @@ function main(argv) {
     const head = optionValue(rest, '--head') || 'HEAD';
     const errors = [];
     for (const sha of git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean)) {
-      for (const e of checkCommitMessage(git(['log', '-1', '--format=%B', sha]))) errors.push(`${sha.slice(0, 8)}: ${e}`);
+      const isMerge = git(['log', '-1', '--format=%P', sha]).trim().split(/\s+/).length > 1;
+      for (const e of checkCommitMessage(git(['log', '-1', '--format=%B', sha]), process.env, { isMerge })) errors.push(`${sha.slice(0, 8)}: ${e}`);
     }
     return report(errors);
   }
