@@ -6,7 +6,7 @@
 //   branch [<name>]              P5       branch is <ticket>-<slug>
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
 //   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
-//   push                         P8       a push to, or deletion of, main or the default branch is refused
+//   push [<remote> <url>]        P8       a push to, or deletion of, main or the remote's default branch is refused
 //   pr --base <ref>              P2, P4, P10, P11, P13   one ticket across branch/title/commits, title "<ticket>: <goal>", size, changelog
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
 // Environment: LINEAR_TEAM narrows the ticket pattern to one team key (read from the repository's .env when unset); BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
@@ -250,7 +250,8 @@ function listChangelogs(base) {
 // .env. Never in CI, where the checkout is the PR's own.
 // The key from this worktree's .env, else from the main checkout's: .env is untracked, so a ticket worktree (P6) may
 // have none, or one without this key.
-function dotenvValue(key) {
+// skipEmpty: an empty value (LINEAR_TEAM= as .env.example ships it) does not count as defined.
+function dotenvValue(key, { skipEmpty = false } = {}) {
   try {
     const here = git(['rev-parse', '--show-toplevel']).trim();
     const main = require('path').dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
@@ -258,7 +259,7 @@ function dotenvValue(key) {
     let line;
     for (const file of [`${here}/.env`, `${main}/.env`]) {
       if (!fs.existsSync(file)) continue;
-      line = fs.readFileSync(file, 'utf8').split('\n').find(l => pattern.test(l));
+      line = fs.readFileSync(file, 'utf8').split('\n').find(l => pattern.test(l) && !(skipEmpty && /=\s*(#.*)?$/.test(l)));
       if (line) break;
     }
     if (!line) return null;
@@ -317,7 +318,19 @@ function main(argv) {
     return report(errors);
   }
   if (cmd === 'push') {
-    return report(checkPushedRefs(fs.readFileSync(0, 'utf8'), process.env, protectedBranches()));
+    // git passes the remote's name and URL to pre-push: protect that remote's own default branch, which a clone may
+    // not know (no origin/HEAD after `git remote add`). If it cannot be read, refuse rather than guess.
+    const protect = protectedBranches();
+    const url = rest[1] || rest[0];
+    if (url) {
+      let out;
+      try { out = execFileSync('git', ['ls-remote', '--symref', url, 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch {
+        return report([`could not read the default branch of ${url}; push again when the remote is reachable (P8)`]);
+      }
+      const m = /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(out);
+      if (m) protect.push(m[1]);
+    }
+    return report(checkPushedRefs(fs.readFileSync(0, 'utf8'), process.env, protect));
   }
   if (cmd === 'pr') {
     const base = optionValue(rest, '--base');
@@ -343,7 +356,7 @@ function main(argv) {
       ...checkChangelog(files, listChangelogs(base), treeFiles(head)),
     ]);
   }
-  console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');
+  console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | push [<remote> <url>] | pr --base <ref>');
   process.exit(2);
 }
 
@@ -354,7 +367,10 @@ if (require.main === module) main(process.argv.slice(2));
 // branches beyond main, the default branch, release/*, and protected ones. Never in CI.
 function loadDotenv(env = process.env) {
   if (env.CI) return;
-  for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (env[key] === undefined) { const v = dotenvValue(key); if (v !== null) env[key] = v; }
+  for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (env[key] === undefined) {
+    const v = dotenvValue(key, { skipEmpty: key === 'LINEAR_TEAM' });
+    if (v !== null) env[key] = v;
+  }
 }
 
 module.exports = { isTicketBranch, isLongLived, checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };

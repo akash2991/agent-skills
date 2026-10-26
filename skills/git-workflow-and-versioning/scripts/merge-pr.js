@@ -152,6 +152,14 @@ function isApproved(view) {
 
 // view is the parsed `gh pr view --json title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state` output.
 // An empty check rollup is not green: Actions may not have registered its checks yet.
+// A run of a pull_request workflow belongs to the PRs GitHub lists for it, at the head it ran on. A run that GitHub
+// ties to other PRs only, or to another head, says nothing about this PR: it neither passes nor supersedes.
+function forThisPr(c, view) {
+  if (!c.workflowPath || c.event !== 'pull_request') return true;
+  if (c.runHead && view.headRefOid && c.runHead !== view.headRefOid) return false;
+  return !c.runPrs || !c.runPrs.length || !view.number || c.runPrs.includes(Number(view.number));
+}
+
 function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env) {
   const blockers = [];
   if (view.state !== 'OPEN') blockers.push(`PR is ${view.state}, not OPEN`);
@@ -163,13 +171,14 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   if (view.commitMessages) blockers.push(...checkOneTicket({ branch: view.headRefName, title: view.title, messages: view.commitMessages,
     promotion: !view.isCrossRepository && (!isTicketBranch(view.headRefName, env) || isLongLived(view.headRefName, env)) }, env));
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
-  const checks = latestRuns(view.statusCheckRollup || []);
+  const checks = latestRuns((view.statusCheckRollup || []).filter(c => forThisPr(c, view)));
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
   // P3, P11, and P13 are checked only by the project's pr-rules workflow: its check must have run and passed; a
   // skipped or neutral pr-rules never checked anything.
   // Only an Actions check whose run was identified counts as pr-rules: a commit status, or a check whose run could
   // not be looked up, can be posted by anything.
-  const rules = checks.filter(c => (c.name || c.context) === 'pr-rules' && c.workflowPath);
+  // ...and only a run GitHub ties to this very PR: a fork's runs carry no PR list, so they never qualify here.
+  const rules = checks.filter(c => (c.name || c.context) === 'pr-rules' && c.workflowPath && (c.runPrs || []).includes(Number(view.number)));
   const passed = rules.filter(c => (c.conclusion || c.state) === 'SUCCESS');
   if (checks.length && !passed.length) blockers.push('no passing pr-rules Actions check (with an identified run) on this head: install the git-workflow-and-versioning skill\'s templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
   // A PR that touches any workflow can change what certifies it: a reviewer merges it by hand.
@@ -218,11 +227,11 @@ function runIdentity(repo, checks) {
     const id = runId(c);
     if (!id) continue;
     if (!runs.has(id)) {
-      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt}']))); }
+      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt, prs: [.pull_requests[].number], head: .head_sha}']))); }
       catch { runs.set(id, null); }
     }
     const run = runs.get(id);
-    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created });
+    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runPrs: run.prs || [], runHead: run.head });
     // Each job's own attempt: a re-run's jobs share the run id and its current attempt number.
     const job = jobId(c);
     if (job) { try { c.jobAttempt = Number(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/jobs/${job}`, '--jq', '.run_attempt']).trim()) || undefined; } catch { /* unknown */ } }
@@ -329,6 +338,7 @@ function main(argv) {
   let verifiedUrl = '';
   if (ownRepo) { try { verifiedUrl = git(['config', '--get', 'remote.origin.url']).trim(); } catch { ownRepo = false; } }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
+  view.number = Number(pr);
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
   // on to cleanup only if the merge commit proves P15 and P3.
   const alreadyMerged = view.state === 'MERGED';
@@ -360,7 +370,7 @@ function main(argv) {
   // A ticket-shaped name that is configured long-lived (BRAIN_LONG_LIVED from the environment, .env, or the repository
   // variable), or is the default branch, is not a ticket branch; an unreadable variable keeps the head.
   let longLivedUnknown = false;
-  if (process.env.LINEAR_TEAM === undefined) { try { process.env.LINEAR_TEAM = gh(['variable', 'get', 'LINEAR_TEAM', '--repo', repo]).trim(); } catch { /* checked below */ } }
+  if (!process.env.LINEAR_TEAM) { try { process.env.LINEAR_TEAM = gh(['variable', 'get', 'LINEAR_TEAM', '--repo', repo]).trim(); } catch { /* checked below */ } }
   if (process.env.BRAIN_LONG_LIVED === undefined) {
     try { process.env.BRAIN_LONG_LIVED = gh(['variable', 'get', 'BRAIN_LONG_LIVED', '--repo', repo]).trim(); } catch (err) {
       if (!/not found|404/i.test(String(err.stderr || err.message))) longLivedUnknown = true;
@@ -389,7 +399,8 @@ function main(argv) {
   }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
   // gh deletes no branch here: the remote deletion below is leased to the merged head.
-  const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}`;
+  // A waived review leaves its trace in the merge commit (P8: only the ticket may make review optional).
+  const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}${opts.reviewOptional ? '\nReview: optional (per the ticket)' : ''}`;
   let mergeError = '';
   if (!alreadyMerged) {
     try {
@@ -497,7 +508,7 @@ function main(argv) {
       if (checkedOut) throw new Error('it is checked out in a worktree: remove that worktree (or detach it), then delete the branch');
       git(['update-ref', '-d', `refs/heads/${view.headRefName}`, local]);
       // Its tracking config goes too, unless a branch of that name was created again meanwhile.
-      if (!localTip(view.headRefName)) { try { git(['config', '--remove-section', `branch.${view.headRefName}`]); } catch { /* no tracking config */ } }
+      if (!localTip(view.headRefName)) { try { execFileSync('git', ['config', '--remove-section', `branch.${view.headRefName}`], { stdio: 'ignore' }); } catch { /* no tracking config */ } }
     } catch (err) {
       console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete`);
       process.exitCode = CLEANUP_INCOMPLETE;

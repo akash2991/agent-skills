@@ -22,7 +22,7 @@ function shellQuote(value) {
 function hookBody(name, checkPath) {
   const run = name === 'commit-msg'
     ? `node "$CHECK" commit-msg "$1"`
-    : `node "$CHECK" push`;
+    : `node "$CHECK" push "$@"`;
   return [
     '#!/bin/sh', MARKER,
     'ROOT="$(git rev-parse --show-toplevel)"',
@@ -58,10 +58,14 @@ if (require.main === module) {
   const rel = path.relative(root, CHECK).split(path.sep).join('/');
   // An absolute core.hooksPath outside this repository (set globally, or shared by other repositories) would install
   // these hooks for every repository that uses it: refuse rather than reach beyond this one.
+  // The resolved hook directory, absolute or relative (../shared-hooks), must lie in this worktree or its git dir.
   let configured = '';
   try { configured = git(['config', '--get', 'core.hooksPath']); } catch { /* unset */ }
-  if (configured && path.isAbsolute(configured) && !path.resolve(configured).startsWith(root + path.sep) && !path.resolve(configured).startsWith(path.resolve(git(['rev-parse', '--git-common-dir'])) + path.sep)) {
-    console.error(`install-hooks: core.hooksPath is ${configured}, outside this repository, so hooks there would run for other repositories too: set a repository-local core.hooksPath (or unset it) and run again`);
+  const real = p => { let head = path.resolve(p); const tail = []; while (!fs.existsSync(head)) { tail.unshift(path.basename(head)); head = path.dirname(head); } return path.join(fs.realpathSync(head), ...tail); };
+  const within = (p, dir) => { const r = path.relative(real(dir), real(p)); return r && !r.startsWith('..') && !path.isAbsolute(r); };
+  const homes = [root, git(['rev-parse', '--git-common-dir']), git(['rev-parse', '--git-dir'])];
+  if (configured && !homes.some(d => within(hooksDir, d))) {
+    console.error(`install-hooks: core.hooksPath is ${configured} (${hooksDir}), outside this repository, so hooks there would run for other repositories too: set a repository-local core.hooksPath (or unset it) and run again`);
     process.exit(1);
   }
   const results = install(hooksDir, rel);
