@@ -47,6 +47,8 @@ To try the pack live against a local checkout:
 claude --plugin-dir /path/to/agent-skills
 ```
 
+The plugin serves the skills and commands. Its personas keep their tool labels, which Claude Code refuses; to try a persona as a subagent, install the brain into a project with `agent-brain pull` ([harness layout](harness-layout.md#persona-tools-labels-in-the-source-native-names-in-harness-copies)).
+
 ## 3. The verification loop
 
 The repo eats its own cooking: verification is non-negotiable for skills, and it's non-negotiable for contributions to the repo too. Everything CI runs, you can run locally in seconds:
