@@ -216,14 +216,14 @@ test('direct controller honors root/intermediate/cwd refusals even with explicit
       }
     }
     const file = marker(declarationRoot);
-    const read = fs.readFileSync;
-    fs.readFileSync = function (target, ...args) {
+    const open = fs.openSync;
+    fs.openSync = function (target, ...args) {
       if (target === file) throw Object.assign(new Error('synthetic unreadable marker'), { code: 'EACCES' });
-      return read.call(this, target, ...args);
+      return open.call(this, target, ...args);
     };
     try {
       for (const perRun of [false, true]) await refused(harness({ cwd: leaf, perRun }), 'unreadable declaration');
-    } finally { fs.readFileSync = read; }
+    } finally { fs.openSync = open; }
     fs.rmSync(file);
     fs.symlinkSync(path.join(root, 'missing-marker'), file);
     for (const perRun of [false, true]) await refused(harness({ cwd: leaf, perRun }), 'dangling marker link is refusal, not absence');
