@@ -186,6 +186,9 @@ function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
     const dir = p.split('/').slice(0, -1);
     while (dir.length) {
       const candidate = [...dir, 'CHANGELOG.md'].join('/');
+      // A global location (docs/CHANGELOG.md) is never a service changelog: the global requirement covers it, even
+      // after the PR moves the global changelog to the other location.
+      if (GLOBAL_CHANGELOGS.includes(candidate)) break;
       if (allChangelogs.includes(candidate)) {
         const serviceDir = `${dir.join('/')}/`;
         if (!headFiles || headFiles.some(f => f.startsWith(serviceDir))) required.add(candidate);
@@ -261,7 +264,7 @@ function dotenvValue(key) {
     if (!line) return null;
     const value = line.split('=').slice(1).join('=').trim();
     // A quoted value is taken as written; an unquoted one ends at an inline " #" comment.
-    const quoted = /^(['"])(.*)\1/.exec(value);
+    const quoted = /^(['"])(.*?)\1/.exec(value);
     return quoted ? quoted[2] : value.replace(/\s+#.*$/, '').trim();
   } catch { return null; }
 }

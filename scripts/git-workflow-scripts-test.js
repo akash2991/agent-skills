@@ -433,7 +433,8 @@ if (a[0] === 'api' && a.some(x => x.includes('/pulls/') && x.includes('/commits'
 if (a[0] === 'api' && a.some(x => x.includes('lastEditedAt'))) { process.stdout.write(process.env.FAKE_EDITED || '[]'); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('mergeQueue'))) { process.stdout.write(process.env.FAKE_QUEUE || ''); process.exit(0); }
 if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
-if (a[0] === 'repo' && a[1] === 'view') { process.stdout.write('main'); process.exit(0); }
+if (a[0] === 'repo' && a[1] === 'view') { process.stdout.write(process.env.FAKE_DEFAULT || 'main'); process.exit(0); }
+if (a[0] === 'variable' && a[1] === 'get' && a[2] === 'LINEAR_TEAM' && !process.env.FAKE_NO_TEAM) { process.stdout.write('ENG'); process.exit(0); }
 if (a[0] === 'variable' && a[1] === 'get') { if (process.env.FAKE_LONG_LIVED !== undefined) { process.stdout.write(process.env.FAKE_LONG_LIVED); process.exit(0); } process.stderr.write('variable ' + a[2] + ' was not found'); process.exit(1); }
 if (a[0] === 'pr' && a[1] === 'view') {
   const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
@@ -1168,5 +1169,111 @@ test('with a relative hooksPath, a linked worktree gets its own hooks from insta
   const out = execFileSync('node', [script], { cwd: wt, encoding: 'utf8' });
   assert.match(out, /relative, so these hooks cover this worktree only/);
   assert.ok(fs.existsSync(path.join(wt, '.githooks', 'commit-msg')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a ticket-shaped branch configured long-lived is kept, and an unreadable variable keeps it too', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, BRAIN_LONG_LIVED: '^ENG-1-x$' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /ENG-1-x is not a ticket branch and stays/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a truncated file list is caught even when a rename adds names', () => {
+  const recs = Array.from({ length: 99 }, (_, i) => ({ filename: `a/f${i}.md` }));
+  recs.push({ filename: 'b/new.md', previous_filename: 'b/old.md' });
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_FILES: JSON.stringify([recs]), FAKE_CHANGED: '101' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /could not be read in full/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('moving the global changelog to the other place, with another docs change, passes P13', () => {
+  const all = ['CHANGELOG.md', 'docs/CHANGELOG.md'];
+  const files = check.parseNumstat('0\t9\tdocs/CHANGELOG.md\n10\t0\tCHANGELOG.md\n1\t1\tdocs/README.md');
+  assert.deepStrictEqual(check.checkChangelog(files, all, ['CHANGELOG.md', 'docs/README.md']), []);
+});
+
+test('an unreadable BRAIN_LONG_LIVED variable keeps a ticket branch and exits 3', () => {
+  const f = approvedFixture();
+  patchGh(f, "if (a[0] === 'variable' && a[1] === 'get')", "if (a[0] === 'variable' && a[1] === 'get' && process.env.FAKE_VAR_FAIL) { process.stderr.write('HTTP 500'); process.exit(1); }");
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_VAR_FAIL: '1' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /BRAIN_LONG_LIVED could not be read/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('dotenv stops at the first closing quote: an apostrophe in a comment does not leak into the value', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dq-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, '.env'), "BRAIN_LONG_LIVED='^(staging|develop)$'   # don't push here directly\n");
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const env = { ...process.env }; delete env.CI; delete env.BRAIN_LONG_LIVED;
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'branch', 'develop'], { cwd: dir, encoding: 'utf8', env }).status, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('install-hooks refuses an absolute hooksPath outside the repository', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghp-'));
+  const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'core.hooksPath', path.join(dir, 'global-hooks')], { cwd: repo });
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.ok(!fs.existsSync(path.join(dir, 'global-hooks', 'commit-msg')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('merge-pr needs LINEAR_TEAM and drops the remote-tracking ref of the deleted branch', () => {
+  const f = approvedFixture();
+  const none = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_NO_TEAM: '1' }, encoding: 'utf8' });
+  assert.strictEqual(none.status, 1);
+  assert.match(none.stderr, /LINEAR_TEAM is not set/);
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/ENG-1-x', f.head], { cwd: f.work });
+  const ok = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(ok.status, 0, ok.stderr);
+  assert.throws(() => execFileSync('git', ['rev-parse', '--verify', 'refs/remotes/origin/ENG-1-x'], { cwd: f.work, stdio: 'pipe' }));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a ticket-shaped default branch is kept', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_DEFAULT: 'ENG-1-x' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /not a ticket branch and stays/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('quoted .env values with quotes in their comments, for both keys', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dq2-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, '.env'), 'LINEAR_TEAM="ENG" # the "core" team\nBRAIN_LONG_LIVED="^(staging)$" # it\'s shared\n');
+  fs.writeFileSync(path.join(dir, 'msg'), 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n');
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const env = { ...process.env }; delete env.CI; delete env.BRAIN_LONG_LIVED; delete env.LINEAR_TEAM;
+  const run = args => require('child_process').spawnSync('node', [script, ...args], { cwd: dir, encoding: 'utf8', env, input: `(delete) ${'0'.repeat(40)} refs/heads/staging ${'a'.repeat(40)}\n` });
+  assert.strictEqual(run(['commit-msg', path.join(dir, 'msg')]).status, 0, 'LINEAR_TEAM read as ENG');
+  assert.strictEqual(run(['push']).status, 1, 'deleting staging is refused');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('install-hooks refuses a global core.hooksPath (isolated global config)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gcfg-'));
+  const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const globalCfg = path.join(dir, 'gitconfig');
+  fs.writeFileSync(globalCfg, `[core]\n\thooksPath = ${path.join(dir, 'shared-hooks')}\n`);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: globalCfg } });
+  assert.strictEqual(r.status, 1, r.stdout);
+  assert.match(r.stderr, /outside this repository/);
+  assert.ok(!fs.existsSync(path.join(dir, 'shared-hooks', 'commit-msg')));
   fs.rmSync(dir, { recursive: true, force: true });
 });

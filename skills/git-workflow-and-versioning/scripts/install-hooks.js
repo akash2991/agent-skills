@@ -56,6 +56,14 @@ if (require.main === module) {
   const root = git(['rev-parse', '--show-toplevel']);
   const hooksDir = path.resolve(git(['rev-parse', '--git-path', 'hooks']));
   const rel = path.relative(root, CHECK).split(path.sep).join('/');
+  // An absolute core.hooksPath outside this repository (set globally, or shared by other repositories) would install
+  // these hooks for every repository that uses it: refuse rather than reach beyond this one.
+  let configured = '';
+  try { configured = git(['config', '--get', 'core.hooksPath']); } catch { /* unset */ }
+  if (configured && path.isAbsolute(configured) && !path.resolve(configured).startsWith(root + path.sep) && !path.resolve(configured).startsWith(path.resolve(git(['rev-parse', '--git-common-dir'])) + path.sep)) {
+    console.error(`install-hooks: core.hooksPath is ${configured}, outside this repository, so hooks there would run for other repositories too: set a repository-local core.hooksPath (or unset it) and run again`);
+    process.exit(1);
+  }
   const results = install(hooksDir, rel);
   // A relative core.hooksPath resolves inside each worktree, so these hooks guard only this one: run it in every
   // worktree (development-setup DS2 creates them).
