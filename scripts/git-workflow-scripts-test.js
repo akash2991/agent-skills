@@ -405,6 +405,7 @@ const fs = require('fs'); const { execFileSync } = require('child_process');
 const a = process.argv.slice(2); fs.appendFileSync(${JSON.stringify(log)}, a.join(' ') + '\\n');
 if (a[0] === 'api' && a.some(x => x.endsWith('/permission'))) { process.stdout.write(JSON.stringify({ permission: a.some(x => x.includes('/stranger/')) ? 'read' : 'write' })); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('/actions/runs/'))) { process.stdout.write(JSON.stringify({ path: '.github/workflows/ci.yml', event: 'pull_request' })); process.exit(0); }
+if (a[0] === 'api' && a.some(x => x.includes('mergeQueue'))) { process.stdout.write(process.env.FAKE_QUEUE || ''); process.exit(0); }
 if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
 if (a[0] === 'repo' && a[1] === 'view') { process.stdout.write('main'); process.exit(0); }
 if (a[0] === 'pr' && a[1] === 'view') {
@@ -417,6 +418,7 @@ if (a[0] === 'pr' && a[1] === 'merge') {
   g(['clone', '-q', '-b', 'main', ${JSON.stringify(path.join(root, 'origin.git'))}, '.']);
   g(['merge', '-q', '--no-ff', 'origin/ENG-1-x', '-m', 'Merge pull request #1 [ENG-1]']);
   g(['push', '-q', 'origin', 'HEAD:main']);
+  fs.rmSync(tmp, { recursive: true, force: true });
   process.exit(0);
 }
 process.exit(1);
@@ -592,7 +594,7 @@ test('optional review still respects a writer\'s change request, and a pr-rules 
   const cr = { ...base, reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'CHANGES_REQUESTED', commit: { oid: 'h' } }] };
   assert.match(mergeBlockers(cr, { reviewOptional: true }).blockers.join(), /requested changes/);
   assert.deepStrictEqual(mergeBlockers({ ...base, reviews: [] }, { reviewOptional: true }).blockers, []);
-  assert.match(mergeBlockers({ ...base, reviews: [], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] }, { reviewOptional: true }).blockers.join(), /no pr-rules check/);
+  assert.match(mergeBlockers({ ...base, reviews: [], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] }, { reviewOptional: true }).blockers.join(), /no passing pr-rules check/);
 });
 
 test('a newer SKIPPED run does not hide an older failure of the same job', () => {
@@ -658,4 +660,96 @@ test('a delayed job of an older workflow run does not outrank a newer run', () =
     { ...id, conclusion: 'FAILURE', runCreated: '2026-10-26T10:01:00Z', startedAt: '2026-10-26T10:01:30Z' },
   ]);
   assert.strictEqual(runs[0].conclusion, 'FAILURE');
+});
+
+function approvedFixture(view = mergeView) {
+  const f = mergeFixture(view);
+  const v = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  v.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(v));
+  return f;
+}
+const mergeScript = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
+function patchGh(f, before, line) {
+  const p = path.join(f.root, 'bin', 'gh');
+  const src = fs.readFileSync(p, 'utf8');
+  assert.ok(src.includes(before), 'fake gh patch point not found');
+  fs.writeFileSync(p, src.replace(before, line + '\n' + before));
+}
+
+test('a separate pushurl never receives the remote deletion', () => {
+  const f = approvedFixture();
+  const fork = path.join(f.root, 'fork.git');
+  execFileSync('git', ['clone', '-q', '--bare', path.join(f.root, 'origin.git'), fork]);
+  execFileSync('git', ['config', 'remote.origin.pushurl', fork], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: fork, stdio: 'pipe' });
+  assert.throws(() => execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' }));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('an unreadable protection state keeps the branch and reports cleanup left', () => {
+  const f = approvedFixture();
+  patchGh(f, "if (a[0] === 'api' && a.some(x => x.includes('/actions/runs/')))", "if (a[0] === 'api' && a.some(x => x.includes('/branches/'))) { process.stderr.write('HTTP 503'); process.exit(1); }");
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a skipped pr-rules check does not count as the rules having run', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SKIPPED' }, { name: 'test', conclusion: 'SUCCESS' }] };
+  assert.match(mergeBlockers(view).blockers.join(), /no passing pr-rules check/);
+});
+
+test('a remote branch GitHub already deleted after the merge is P7 done, not cleanup left', () => {
+  const f = approvedFixture();
+  patchGh(f, "  fs.rmSync(tmp, { recursive: true, force: true });\n  process.exit(0);", "  execFileSync('git', ['update-ref', '-d', 'refs/heads/ENG-1-x'], { cwd: " + JSON.stringify(path.join(f.root, 'origin.git')) + " });");
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a merge queue on the base is refused before anything changes', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_QUEUE: 'MQ_1' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /has a merge queue/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /pr merge/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('--repo github.com/o/r is origin\'s own repository, and a checked-out branch gets an accurate message', () => {
+  const f = approvedFixture();
+  execFileSync('git', ['worktree', 'add', '-q', path.join(f.root, 'ENG-1-x'), 'ENG-1-x'], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'github.com/o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /remove that worktree/);
+  assert.match(r.stdout, /cleanup of ENG-1-x is incomplete/);
+  assert.throws(() => execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' }), 'the remote branch was deleted: origin is the target');
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('pr-rules.yml passes LINEAR_TEAM and BRAIN_LONG_LIVED from repository variables, and the checker honours them', () => {
+  const yml = fs.readFileSync(path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'templates', 'pr-rules.yml'), 'utf8');
+  assert.match(yml, /^\s+LINEAR_TEAM: \$\{\{ vars\.LINEAR_TEAM \}\}$/m);
+  assert.match(yml, /^\s+BRAIN_LONG_LIVED: \$\{\{ vars\.BRAIN_LONG_LIVED \}\}$/m);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'branch', 'develop'], { encoding: 'utf8', env: { ...process.env, CI: '1', BRAIN_LONG_LIVED: '^(staging|develop)$' } });
+  assert.strictEqual(r.status, 0, r.stderr);
+});
+
+test('a pushInsteadOf rewrite of origin leaves the remote branch alone', () => {
+  const f = approvedFixture();
+  const elsewhere = path.join(f.root, 'elsewhere.git');
+  execFileSync('git', ['clone', '-q', '--bare', path.join(f.root, 'origin.git'), elsewhere]);
+  execFileSync('git', ['config', `url.${elsewhere}.pushInsteadOf`, 'https://github.com/o/'], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /pushInsteadOf/);
+  for (const bare of [elsewhere, path.join(f.root, 'origin.git')]) execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: bare, stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
 });

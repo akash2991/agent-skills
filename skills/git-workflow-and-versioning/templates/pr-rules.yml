@@ -31,6 +31,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # Set the repository variable LINEAR_TEAM (e.g. ENG) to accept only that team's ticket ids.
           LINEAR_TEAM: ${{ vars.LINEAR_TEAM }}
+          # Set BRAIN_LONG_LIVED (e.g. ^(staging|develop)$) for the long-lived branches P16 allows besides main and release/*.
+          BRAIN_LONG_LIVED: ${{ vars.BRAIN_LONG_LIVED }}
         run: |
           # The checker script and the diff attributes come from the base branch, never from the PR. This workflow file
           # itself runs from the PR, so protect .github/ with CODEOWNERS or a ruleset.

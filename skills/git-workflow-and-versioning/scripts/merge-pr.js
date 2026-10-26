@@ -8,7 +8,7 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle, extraLongLived } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, extraLongLived, loadDotenv } = require('./brain-git-check');
 
 // Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 3 merged but P7
 // cleanup left to do (reported on stderr).
@@ -128,8 +128,10 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
-  // P3, P11, and P13 are checked only by the project's pr-rules workflow: without its check they were never checked.
-  if (checks.length && !checks.some(c => (c.name || c.context) === 'pr-rules')) blockers.push('no pr-rules check on this head: install templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
+  // P3, P11, and P13 are checked only by the project's pr-rules workflow: its check must have run and passed; a
+  // skipped or neutral pr-rules never checked anything.
+  const rules = checks.filter(c => (c.name || c.context) === 'pr-rules');
+  if (checks.length && !rules.some(c => (c.conclusion || c.state) === 'SUCCESS')) blockers.push('no passing pr-rules check on this head: install templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
   const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
@@ -220,21 +222,32 @@ function hasMergeQueue(repo, base) {
 function main(argv) {
   const opts = parseArgs(argv);
   if (!opts) { console.error(USAGE); process.exit(2); }
+  loadDotenv();
   const { pr } = opts;
   const repo = opts.repo || originRepo();
   if (!/^([^/]+\/)?[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes [host/]owner/name'); process.exit(2); }
   // Branch cleanup goes through this checkout's origin, so it runs only when origin is the target repository.
   let ownRepo = !opts.repo;
-  if (!ownRepo) { try { ownRepo = originRepo() === repo; } catch { ownRepo = false; } }
+  if (!ownRepo) {
+    // Compare [host/]owner/name by parts, case-insensitively: github.com/o/r names the same repository as o/r.
+    const same = (a, b) => ['host', 'owner', 'name'].every(k => a[k].toLowerCase() === b[k].toLowerCase());
+    try { ownRepo = same(splitRepo(originRepo()), splitRepo(repo)); } catch { ownRepo = false; }
+  }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
   view.unresolvedThreads = unresolvedThreads(repo, pr);
   runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
   // A protected branch is never deleted either, whatever its name.
   const { host: h, owner: o, name: n } = splitRepo(repo);
+  // An unknown protection state keeps the branch: only "no such branch" (a fork's head) counts as unprotected.
   let isProtected = false;
-  try { isProtected = gh(['api', '--hostname', h, `repos/${o}/${n}/branches/${encodeURIComponent(view.headRefName)}`, '--jq', '.protected']).trim() === 'true'; } catch { /* fork head or gone */ }
-  const keep = longLived(view.headRefName, defaultBranch) || isProtected;
+  let protectionUnknown = false;
+  try { isProtected = gh(['api', '--hostname', h, `repos/${o}/${n}/branches/${encodeURIComponent(view.headRefName)}`, '--jq', '.protected']).trim() === 'true'; } catch (err) {
+    if (!/404|Not Found|Branch not found/i.test(String(err.stderr || err.message))) {
+      protectionUnknown = true;
+    }
+  }
+  const keep = longLived(view.headRefName, defaultBranch) || isProtected || protectionUnknown;
   const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
   view.writers = writers(repo, [...reviewers]);
   const { blockers, ticket } = mergeBlockers(view, { reviewOptional: opts.reviewOptional });
@@ -255,6 +268,11 @@ function main(argv) {
     console.error(`merge-pr: PR #${pr} is ${state}, not merged${mergeError ? `: ${mergeError}` : ' (auto-merge or a queue may have taken it)'}`);
     process.exit(1);
   }
+  if (keep && protectionUnknown && !longLived(view.headRefName, defaultBranch)) {
+    console.error(`merge-pr: merged #${pr}; could not read whether ${view.headRefName} is protected, so it was kept: delete it by hand if it is not (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
   if (keep) {
     console.log(`merged #${pr} with a merge commit; ${view.headRefName} is long-lived and stays (P7 does not apply)`);
     return;
@@ -264,12 +282,29 @@ function main(argv) {
     process.exitCode = CLEANUP_INCOMPLETE;
     return;
   }
-  // Remote: delete the branch only while it still points at the merged head; a commit pushed since survives.
-  try {
-    git(['push', '--quiet', `--force-with-lease=refs/heads/${view.headRefName}:${view.headRefOid}`, 'origin', `:refs/heads/${view.headRefName}`]);
-  } catch (err) {
-    console.error(`merge-pr: remote branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); it may have moved past the merged head (P7)`);
+  // Remote: delete the branch only while it still points at the merged head; a commit pushed since survives. The push
+  // goes to origin's configured URL, the one checked against the repository above, never to a separate pushurl.
+  const url = git(['config', '--get', 'remote.origin.url']).trim();
+  const remoteRef = `refs/heads/${view.headRefName}`;
+  // A url.*.pushInsteadOf rule would send the push somewhere other than the verified URL: leave the branch then.
+  let rewrites = [];
+  try { rewrites = git(['config', '--get-regexp', '^url\\..*\\.pushinsteadof$']).split('\n').filter(Boolean).map(l => l.split(' ').slice(1).join(' ')); } catch { /* none */ }
+  if (rewrites.some(prefix => url.startsWith(prefix))) {
+    console.error(`merge-pr: merged #${pr}; a pushInsteadOf rule rewrites ${url}, so the remote branch ${view.headRefName} was left: delete it by hand (P7)`);
     process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
+  const stillThere = () => git(['ls-remote', url, remoteRef]).trim() !== '';
+  try {
+    if (stillThere()) git(['push', '--quiet', `--force-with-lease=${remoteRef}:${view.headRefOid}`, url, `:${remoteRef}`]);
+  } catch (err) {
+    // GitHub's automatic head-branch deletion may have removed it first: that is P7 done, not left undone.
+    let gone = false;
+    try { gone = !stillThere(); } catch { /* unknown */ }
+    if (!gone) {
+      console.error(`merge-pr: remote branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); it may have moved past the merged head (P7)`);
+      process.exitCode = CLEANUP_INCOMPLETE;
+    }
   }
   // Local: a same-named branch is this PR's only when it points at the merged head; the fetched base must contain it.
   // update-ref deletes exactly that commit, so work committed meanwhile survives; a branch checked out in a worktree
@@ -283,14 +318,16 @@ function main(argv) {
       git(['fetch', '--quiet', 'origin', view.baseRefName]);
       git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
       const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
-      if (checkedOut) throw new Error('it is checked out in a worktree; run merge-pr from the main checkout');
+      if (checkedOut) throw new Error('it is checked out in a worktree: remove that worktree (or detach it), then delete the branch');
       git(['update-ref', '-d', `refs/heads/${view.headRefName}`, local]);
     } catch (err) {
       console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete`);
       process.exitCode = CLEANUP_INCOMPLETE;
     }
   }
-  console.log(`merged #${pr} with a merge commit; ${view.headRefName} deleted where it was still the merged head`);
+  console.log(process.exitCode === CLEANUP_INCOMPLETE
+    ? `merged #${pr} with a merge commit; cleanup of ${view.headRefName} is incomplete (see above)`
+    : `merged #${pr} with a merge commit; ${view.headRefName} deleted on the remote and locally`);
 }
 
 if (require.main === module) main(process.argv.slice(2));

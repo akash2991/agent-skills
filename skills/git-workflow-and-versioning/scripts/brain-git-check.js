@@ -73,8 +73,7 @@ function checkPrTitle(title, env = process.env) {
 }
 
 // numstat is the output of `git diff --numstat`: "<added>\t<deleted>\t<path>", binary files as "-\t-\t<path>".
-// `git diff -z --numstat` output (NUL-separated, paths unquoted; newline-separated is accepted for tests). Lockfiles
-// stay in the list: they count for P13, and only the size check leaves them out.
+// `git diff -z --numstat` output (NUL-separated, paths unquoted; newline-separated is accepted for tests).
 function parseNumstat(numstat) {
   return numstat.split(numstat.includes('\0') ? '\0' : '\n').filter(Boolean).map(line => {
     const [added, deleted, ...rest] = line.split('\t');
@@ -180,11 +179,12 @@ function listChangelogs(base) {
   return [...new Set([...here, ...onBase])].filter(f => f && !f.startsWith('templates/'));
 }
 
-// LINEAR_TEAM from the repository's .env when the environment lacks it: hooks do not load .env.
-function teamFromDotenv() {
+// A key from the repository's .env (LINEAR_TEAM, BRAIN_LONG_LIVED) when the environment lacks it: hooks do not load
+// .env. Never in CI, where the checkout is the PR's own.
+function dotenvValue(key) {
   try {
     const root = git(['rev-parse', '--show-toplevel']).trim();
-    const line = fs.readFileSync(`${root}/.env`, 'utf8').split('\n').find(l => /^\s*(export\s+)?LINEAR_TEAM\s*=/.test(l));
+    const line = fs.readFileSync(`${root}/.env`, 'utf8').split('\n').find(l => new RegExp(`^\\s*(export\\s+)?${key}\\s*=`).test(l));
     if (!line) return '';
     const value = line.split('=').slice(1).join('=').trim();
     // A quoted value is taken as written; an unquoted one ends at an inline " #" comment.
@@ -214,8 +214,7 @@ function report(errors) {
 }
 
 function main(argv) {
-  // In CI the checkout is the PR's own: its .env must not choose the pattern that judges it.
-  if (!process.env.LINEAR_TEAM && !process.env.CI) { const team = teamFromDotenv(); if (team) process.env.LINEAR_TEAM = team; }
+  loadDotenv();
   const [cmd, ...rest] = argv;
   if (cmd === 'commit-msg') {
     if (!rest[0]) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
@@ -264,4 +263,9 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+function loadDotenv(env = process.env) {
+  if (env.CI) return;
+  for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (!env[key]) { const v = dotenvValue(key); if (v) env[key] = v; }
+}
+
+module.exports = { loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
