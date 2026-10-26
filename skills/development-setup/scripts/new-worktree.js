@@ -63,9 +63,13 @@ function mainCheckout() {
 }
 
 // The default base is origin's default branch when it is known; `main` is only the fallback.
+// A fetched origin/<default> is the base: a local main that is days behind would start every ticket branch stale.
 function defaultBase(root) {
-  try { return git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root).replace(/^origin\//, ''); }
+  let name;
+  try { name = git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root).replace(/^origin\//, ''); }
   catch { return 'main'; }
+  try { git(['fetch', '--quiet', 'origin', name], root); return `origin/${name}`; }
+  catch { return name; }
 }
 
 // Ports this agent claims are recorded in the common git dir so agents started in parallel do not get the same ones.
@@ -88,7 +92,9 @@ async function withLock(file, fn) {
       break;
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
-      if (Date.now() - fs.statSync(lock).mtimeMs > 60000) { fs.rmSync(lock, { force: true }); continue; }
+      let age;
+      try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; } // released between the two calls
+      if (age > 60000) { fs.rmSync(lock, { force: true }); continue; }
       if (attempt > 600) throw new Error(`port claim file is locked: ${lock}`);
       await new Promise(r => setTimeout(r, 100));
     }
@@ -109,6 +115,7 @@ async function main(argv) {
   }
   const root = mainCheckout();
   const p = plan(name, root);
+  const dryRun = rest.includes('--dry-run');
   if (cmd === 'remove') {
     git(['worktree', 'remove', p.worktree], root);
     const file = claimFile(root);
@@ -121,14 +128,8 @@ async function main(argv) {
     return;
   }
   const base = optionValue(rest, '--base') || defaultBase(root);
-  const exists = git(['branch', '--list', p.branch], root) !== '';
-  const args = exists ? ['worktree', 'add', p.worktree, p.branch] : ['worktree', 'add', '-b', p.branch, p.worktree, base];
-  if (rest.includes('--dry-run')) {
-    console.error(`would run: git ${args.join(' ')}`);
-  } else {
-    git(args, root);
-  }
   const count = Number(optionValue(rest, '--ports') || 0);
+  // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
   let ports = [];
   if (count) {
     let psOutput = '';
@@ -140,9 +141,29 @@ async function main(argv) {
       const found = await freePorts(count, new Set([...usedHostPorts(psOutput), ...claimed]));
       if (found.length < count) throw new Error(`only ${found.length} of ${count} host ports are free; free some or ask for fewer`);
       claims[p.name] = found;
-      if (!rest.includes('--dry-run')) fs.writeFileSync(file, JSON.stringify(claims, null, 2));
+      if (!dryRun) fs.writeFileSync(file, JSON.stringify(claims, null, 2));
       return found;
     });
+  }
+  if (dryRun) {
+    console.error(`would run: git worktree add ${git(['branch', '--list', p.branch], root) ? '' : `-b ${p.branch} `}${p.worktree} ${base}`);
+  } else if (fs.existsSync(p.worktree)) {
+    console.error(`reusing existing worktree ${p.worktree}`);
+  } else {
+    try {
+      const exists = git(['branch', '--list', p.branch], root) !== '';
+      git(exists ? ['worktree', 'add', p.worktree, p.branch] : ['worktree', 'add', '-b', p.branch, p.worktree, base], root);
+    } catch (err) {
+      if (count) {
+        const file = claimFile(root);
+        await withLock(file, () => {
+          const claims = readClaims(file);
+          delete claims[p.name];
+          fs.writeFileSync(file, JSON.stringify(claims, null, 2));
+        });
+      }
+      throw err;
+    }
   }
   console.log(`export AGENT_NAME=${shellQuote(p.name)}`);
   console.log(`export WORKTREE=${shellQuote(p.worktree)}`);

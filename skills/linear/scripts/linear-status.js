@@ -5,7 +5,8 @@
 //   check  <from> <to> [--reason <why>] [--left <state>]    exit 0 when the move is legal, 1 when not
 //   render --persona P --model M --effort E --harness H --field F --from A --to B --reason R --evidence E --next N
 //          [--pr <url>] [--review opened|"changes requested (n)"|approved|merged] [--skip-reason S]
-//          [--blocker-type T --blocker-dependency D --blocker-requirement Q --blocker-owner O]
+//          [--left <state>] [--blocker-type T --blocker-dependency D --blocker-requirement Q --blocker-owner O]
+//          (--left is the state a Blocked issue returns to; a move out of Blocked needs it)
 // The legal moves are data in ../workflow.json; the update's shape is ../templates/status-update.md.
 
 const fs = require('fs');
@@ -82,7 +83,8 @@ function renderUpdate(f) {
   }
   if (errors.length) return { errors };
   const change = `${f.field} ${f.from} → ${f.to}`;
-  const note = f.skipReason ? ` (skipped${skipped.length ? ` ${skipped.join(', ')}` : ''}: ${f.skipReason})` : '';
+  // The skip note appears only when the move really passed over states; a reason on a clean move is not a skip.
+  const note = skipped.length ? ` (skipped ${skipped.join(', ')}${f.skipReason ? `: ${f.skipReason}` : ''})` : '';
   const lines = [
     '### Status update',
     `- By: ${f.persona} on ${f.model} / ${f.effort} / ${f.harness}`,
@@ -127,7 +129,7 @@ function main(argv) {
     console.error(`linear-status: ${err.message}`);
     process.exit(2);
   }
-  console.error('usage: linear-status.js check <from> <to> [--reason R] [--left S] | render --persona P --model M ...');
+  console.error('usage: linear-status.js check <from> <to> [--reason R] [--left S] | render --persona P --model M ... [--left S] ...');
   process.exit(2);
 }
 

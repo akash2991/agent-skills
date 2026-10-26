@@ -89,3 +89,17 @@ test('the port lock admits one holder at a time and releases after the critical 
   assert.strictEqual(fs.existsSync(`${file}.lock`), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('running create again for the same ticket reuses the worktree', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'reuse-'));
+  const repo = path.join(parent, 'app');
+  const run = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  fs.mkdirSync(repo);
+  run(['init', '-q', '-b', 'main']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+  execFileSync('node', [script, 'create', 'ENG-11-again'], { cwd: repo, encoding: 'utf8' });
+  const again = execFileSync('node', [script, 'create', 'ENG-11-again'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.match(again, /export AGENT_NAME='ENG-11-again'/);
+  fs.rmSync(parent, { recursive: true, force: true });
+});

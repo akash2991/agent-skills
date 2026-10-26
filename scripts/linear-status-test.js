@@ -108,3 +108,8 @@ test('the states a move jumps over follow the legal path, not the order of the l
   assert.deepStrictEqual(checkMove('Triage', 'In Progress', { reason: 'r' }).skipped, ['Todo']);
   assert.deepStrictEqual(checkMove('In Progress', 'Spec', { reason: 'r' }).skipped, []);
 });
+
+test('a clean move does not claim to skip states, even when a skip reason is given', () => {
+  const { text } = renderUpdate({ ...base, from: 'In Review', to: 'Merged', skipReason: 'none' });
+  assert.doesNotMatch(text, /skipped/);
+});

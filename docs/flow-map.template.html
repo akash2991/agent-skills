@@ -113,7 +113,7 @@
   <div id="list"></div>
 
   <footer>
-    "Today" counts a deterministic step as code only when a script, hook, or workflow in this repository runs it (the path is shown and checked when the page is built); otherwise a rule asks an agent to do it by hand. "After conversion" assumes every deterministic step is scripted. Which steps are deterministic, judgment, or human is a classification kept in <code>docs/flow-map.json</code>; change it there and run <code>node scripts/build-flow-map.js</code>.
+    "Today" counts a deterministic step as code only when it names a script, hook, or workflow file in this repository (the path is checked when the page is built). Whether a project has installed that script or hook is not checked, and a step with no file is a rule that asks an agent to do it by hand. "After conversion" assumes every deterministic step is scripted. Which steps are deterministic, judgment, or human is a classification kept in <code>docs/flow-map.json</code>; change it there and run <code>node scripts/build-flow-map.js</code>.
   </footer>
 </main>
 

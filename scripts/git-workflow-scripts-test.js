@@ -208,3 +208,73 @@ test('an approval counts from a reviewer other than the author; a later change r
 test('a repository with no changelog fails P13 rather than passing silently', () => {
   assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tsrc/a.ts'), []).length, 1);
 });
+
+const { isPending } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+const { requiredChangelogs: reqChangelogs } = require('../skills/git-workflow-and-versioning/scripts/brain-git-check');
+
+test('a run still in progress blocks the merge, even when an older run of the same check passed', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'ci', name: 'pr-rules', conclusion: '', status: 'IN_PROGRESS', startedAt: '2026-10-26T10:05:00Z', completedAt: '0001-01-01T00:00:00Z' },
+  ] };
+  assert.match(mergeBlockers(view).blockers.join(), /still running: pr-rules/);
+  assert.ok(isPending({ status: 'QUEUED' }));
+});
+
+test('two workflows with a job of the same name are separate checks: a failing test is not hidden', () => {
+  const runs = latestRuns([
+    { workflowName: 'ci', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'e2e', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
+  ]);
+  assert.strictEqual(runs.length, 2);
+  const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: runs };
+  assert.match(mergeBlockers(view).blockers.join(), /CI is not green: test/);
+});
+
+test('a COMMENTED review is a reply, not a verdict: it neither approves nor overrides a request for changes', () => {
+  const author = { login: 'agent' };
+  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [
+    { author: { login: 'r1' }, state: 'APPROVED' }, { author: { login: 'r1' }, state: 'COMMENTED' }] }), true);
+  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [
+    { author: { login: 'r1' }, state: 'APPROVED' }, { author: { login: 'r2' }, state: 'CHANGES_REQUESTED' }, { author: { login: 'r2' }, state: 'COMMENTED' }] }), false);
+});
+
+test('an SSH host alias is read as GitHub; a non-GitHub host is refused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alias-'));
+  const cwd = process.cwd();
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  process.chdir(dir);
+  try {
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github-work:org/app.git']);
+    assert.strictEqual(originRepo(), 'org/app');
+    execFileSync('git', ['remote', 'set-url', 'origin', 'ssh://git@ssh.github.com:443/org/app.git']);
+    assert.strictEqual(originRepo(), 'org/app');
+    execFileSync('git', ['remote', 'set-url', 'origin', 'git@gitlab.com:org/app.git']);
+    assert.throws(() => originRepo(), /not a GitHub remote/);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the hook accepts a local fixup or squash commit; CI does not, and an unsquashed one must not land', () => {
+  assert.deepStrictEqual(checkCommitMessage('fixup! feat(x): y [ENG-1]', {}, { allowFixup: true }), []);
+  assert.ok(checkCommitMessage('fixup! feat(x): y [ENG-1]', {}).length > 0);
+});
+
+test('a comma-separated scope is accepted, and git merge subjects need no trailers but a ticket', () => {
+  assert.deepStrictEqual(checkCommitMessage('fix(git-workflow,dev-setup,linear): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c', {}), []);
+  assert.deepStrictEqual(checkCommitMessage('Merge pull request #4 from o/ENG-1 [ENG-1]', {}), []);
+  assert.strictEqual(checkCommitMessage('Merge sort for reports [ENG-1]', {}).length, 4);
+});
+
+test('a direct push to the default branch is refused whatever it is called', () => {
+  const line = 'refs/heads/ENG-1-ok aaaa refs/heads/master 0000000';
+  assert.match(checkPushedRefs(line, {}, ['main', 'master'])[0], /direct push to master/);
+});
+
+test('the global changelog is docs/CHANGELOG.md when that is where the project keeps it; the template is not a changelog', () => {
+  assert.deepStrictEqual(reqChangelogs(['backend/src/a.ts'], ['docs/CHANGELOG.md']), ['docs/CHANGELOG.md']);
+  assert.deepStrictEqual(reqChangelogs(['templates/PRD.md'], ['templates/CHANGELOG.md']), []);
+});
+
+test('the commit-msg hook is exempt for fixup only, not for a merge subject without trailers', () => {
+  assert.strictEqual(checkCommitMessage('Merge sort for reports [ENG-1]', {}, { allowFixup: true }).length, 4);
+});

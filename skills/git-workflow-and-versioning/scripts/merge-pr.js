@@ -3,7 +3,7 @@
 
 // Merges a pull request the one way the organisation allows (git-workflow-and-versioning P7, P10, P12, P15):
 // a merge commit that carries the ticket id, remote and local branch deleted, only when CI is green and the
-// PR is approved. Usage: merge-pr.js <pr-number> [--review-optional]
+// PR is approved. Usage: merge-pr.js <pr-number> [--review-optional] [--repo owner/name]
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
@@ -13,39 +13,47 @@ function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
 }
 
-// owner/name of the repository whose origin this is: gh would otherwise act on the default (often upstream) repository.
-function originRepo() {
-  const url = git(['remote', 'get-url', 'origin']).trim();
-  const m = url.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) throw new Error(`origin is not a GitHub remote: ${url}`);
-  return `${m[1]}/${m[2]}`;
-}
-
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8' });
 }
 
-// GitHub keeps every run of a check on the head: a failed run followed by a passing re-run is still listed.
-// Only the newest run of each check name counts.
-function latestRuns(checks) {
-  const byName = new Map();
-  for (const c of checks) {
-    const name = c.name || c.context;
-    const when = Date.parse(c.completedAt || c.startedAt || c.createdAt || 0) || 0;
-    const prev = byName.get(name);
-    if (!prev || when >= prev.when) byName.set(name, { when, run: c });
-  }
-  return [...byName.values()].map(v => v.run);
+// owner/name of the GitHub repository behind origin. Works for SSH host aliases (git@github-work:org/app.git) and
+// ssh:// URLs; a host that is not GitHub is refused, and --repo overrides it (a fork's PR lives on upstream).
+function originRepo() {
+  const url = git(['remote', 'get-url', 'origin']).trim();
+  const host = (url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '';
+  const repo = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (!repo || !/github/i.test(host)) throw new Error(`origin is not a GitHub remote (${url}); pass --repo <owner/name>`);
+  return `${repo[1]}/${repo[2]}`;
 }
 
-// Approved means: branch protection says so, or the newest review by someone other than the author is APPROVE
-// and no reviewer's newest review requests changes. Without protection GitHub leaves reviewDecision empty.
+// GitHub keeps every run of a check on the head: a failed run followed by a passing re-run is still listed.
+// Runs are keyed by workflow and check name (two workflows may both have a job called "test"), and the newest by
+// start time counts. A run that has not completed is pending, and pending blocks the merge.
+function latestRuns(checks) {
+  const byKey = new Map();
+  for (const c of checks) {
+    const key = `${c.workflowName || ''}/${c.name || c.context}`;
+    const when = Date.parse(c.startedAt || c.createdAt || '') || 0;
+    const prev = byKey.get(key);
+    if (!prev || when >= prev.when) byKey.set(key, { when, run: c });
+  }
+  return [...byKey.values()].map(v => v.run);
+}
+
+function isPending(c) {
+  return (c.status && c.status !== 'COMPLETED') || ['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS'].includes(c.state);
+}
+
+// Approved means: branch protection says so, or the newest APPROVED / CHANGES_REQUESTED review of each reviewer other
+// than the author is APPROVED and none is CHANGES_REQUESTED. COMMENTED and other reviews are replies, not verdicts.
 function isApproved(view) {
   if (view.reviewDecision === 'APPROVED') return true;
   const newest = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
     if (!login || (view.author && login === view.author.login)) continue;
+    if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
     newest.set(login, r.state);
   }
   const states = [...newest.values()];
@@ -61,7 +69,9 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   if (!ticket) blockers.push('PR title does not start with the ticket id (P10)');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
-  const failing = checks.filter(c => !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
+  const pending = checks.filter(isPending);
+  if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
+  const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
   if (failing.length) blockers.push(`CI is not green: ${failing.map(c => c.name || c.context).join(', ')} (P12)`);
   if (!reviewOptional && !isApproved(view)) blockers.push(`no approval from a reviewer other than the author (review decision: ${view.reviewDecision || 'none'}) (P10)`);
   return { blockers, ticket: ticket && ticket[1] };
@@ -70,7 +80,9 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
 function main(argv) {
   const pr = argv.find(a => /^\d+$/.test(a));
   if (!pr) { console.error('usage: merge-pr.js <pr-number> [--review-optional]'); process.exit(2); }
-  const repo = originRepo();
+  const flag = argv.indexOf('--repo');
+  const repo = flag === -1 ? originRepo() : argv[flag + 1];
+  if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state']));
   const { blockers, ticket } = mergeBlockers(view, { reviewOptional: argv.includes('--review-optional') });
   if (blockers.length) {
@@ -89,4 +101,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { mergeBlockers, originRepo, latestRuns, isApproved };
+module.exports = { mergeBlockers, originRepo, latestRuns, isApproved, isPending };

@@ -200,7 +200,7 @@
         ],
         [
           "Move the ticket to Merged with a status update",
-          "det",
+          "judgment",
           null,
           "M5"
         ]
@@ -220,7 +220,7 @@
         ],
         [
           "Write the changelog entry from the merged tickets",
-          "det",
+          "judgment",
           null,
           "L1"
         ],
