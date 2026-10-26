@@ -83,6 +83,7 @@ Every rule you will meet is an application of one of these:
 4. **Colocation**: feature-first folders, never type-first (Architecture, below).
 5. **Validation happens in the backend**; the frontend does none, and typed clients keep it from calling with an invalid structure (`coding-standards`).
 6. **A changelog and semver for every release** (`continuous-delivery`).
+7. **Deterministic over agentic**: a workflow is code, scripts, and checks; a model decides only the step that cannot be written down (`deterministic-workflows`).
 
 ### Stack
 
