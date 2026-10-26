@@ -36,7 +36,7 @@ docs/            anatomies and per-tool setup guides
 This gate applies to the brain repository itself, not automatically to projects consuming it. Changes here can propagate to every repository that installs or updates from the brain, so every change—including documentation and instruction changes—must follow this workflow:
 
 1. **Raise the PR.** The authoring agent opens a PR with the changes and verification evidence.
-2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one using **GPT-6.1 Soul**, the other using **Opus 5.5**. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
+2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one using **GPT-6.1 Sol**, the other using **Opus 5.5**. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
 3. **Third-agent synthesis.** A separate agent using **GPT-6 Astra** examines the original PR and both submitted reviews, reconciles conflicting findings, and posts a combined assessment and required fixes on the PR. It does not substitute for either independent pass.
 4. **Resolve before merge.** Address the required fixes and record their disposition and verification on the PR. Reviews and synthesis must cover the final revision; changed content must receive the applicable review passes and synthesis before merge.
 
