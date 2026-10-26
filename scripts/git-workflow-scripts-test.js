@@ -1044,11 +1044,14 @@ test('merge-pr reads full commit messages: a long subject keeps its trailing tic
 });
 
 test('.env.example parses in a shell and through dotenv', () => {
-  const ex = fs.readFileSync(path.join(__dirname, '..', 'project', '.env.example'), 'utf8').replace(/^# (BRAIN_LONG_LIVED=)/m, '$1');
+  const ex = fs.readFileSync(path.join(__dirname, '..', 'project', '.env.example'), 'utf8');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'envex-'));
+  // As shipped: BRAIN_LONG_LIVED is unset, so the repository variable applies.
   fs.writeFileSync(path.join(dir, '.env'), ex);
-  const out = execFileSync('bash', ['-ec', 'set -a; . ./.env; printf %s "$BRAIN_LONG_LIVED"'], { cwd: dir, encoding: 'utf8' });
-  assert.strictEqual(out, '^(staging|develop)$');
+  assert.strictEqual(execFileSync('bash', ['-ec', 'set -a; . ./.env; printf %s "${BRAIN_LONG_LIVED-unset}"'], { cwd: dir, encoding: 'utf8' }), 'unset');
+  // Uncommented as its example shows, the pattern parses in a shell.
+  fs.writeFileSync(path.join(dir, '.env'), ex.replace(/^# (BRAIN_LONG_LIVED=)/m, '$1'));
+  assert.strictEqual(execFileSync('bash', ['-ec', 'set -a; . ./.env; printf %s "$BRAIN_LONG_LIVED"'], { cwd: dir, encoding: 'utf8' }), 'staging|develop');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -2043,7 +2046,8 @@ test('two PRs from one branch: the other PR\'s pr-rules run neither passes nor h
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
     statusCheckRollup: [run(4, 'pr-rules #1', 'FAILURE', '2026-10-26T10:00:00Z'), run(5, 'pr-rules #2', 'SUCCESS', '2026-10-26T10:05:00Z')] };
   assert.match(mergeBlockers(view).blockers.join(), /pr-rules/);
-  assert.deepStrictEqual(mergeBlockers({ ...view, number: 2, statusCheckRollup: view.statusCheckRollup }).blockers.filter(b => /pr-rules/.test(b)), []);
+  assert.match(mergeBlockers(view).blockers.join(), /another open PR \(#2\) shares this head branch/);
+  assert.deepStrictEqual(mergeBlockers({ ...view, number: 2, statusCheckRollup: view.statusCheckRollup }).blockers.filter(b => /pr-rules/.test(b) && !/shares/.test(b)), []);
 });
 
 test('the pr-rules template names each run after its PR', () => {
@@ -2063,4 +2067,50 @@ test('pr mode refuses to guess the branch for a detached or explicit head', () =
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /pass --branch/);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('two PRs from one branch: another PR\'s ordinary CI pass does not hide this PR\'s failure', () => {
+  const run = (id, title, conclusion, created) => ({ name: 'test', conclusion, status: 'COMPLETED', detailsUrl: `https://github.com/o/r/actions/runs/${id}/job/1`,
+    workflowPath: '.github/workflows/ci.yml', event: 'pull_request', runPrs: [1, 2], runTitle: title, runHead: 'h', runBranch: 'ENG-1-x', runCreated: created });
+  const rules = { name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1, 2], runTitle: 'pr-rules #1', jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' };
+  const view = { state: 'OPEN', number: 1, title: 'ENG-1: into main', headRefOid: 'h', author: { login: 'a' },
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
+    statusCheckRollup: [rules, run(4, 'ENG-1: into main', 'FAILURE', '2026-10-26T10:00:00Z'), run(5, 'ENG-1: into release', 'SUCCESS', '2026-10-26T10:05:00Z')] };
+  assert.match(mergeBlockers(view).blockers.join(), /another open PR \(#2\) shares this head branch/);
+});
+
+test('a pr-rules run created in the same second as the last edit does not count', () => {
+  const view = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runTitle: 'pr-rules #1', runCreated: '2026-10-26T10:00:00Z', jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }],
+    metadataChangedAt: '2026-10-26T10:00:00Z' };
+  assert.match(mergeBlockers(view).blockers.join(), /pr-rules last passed before/);
+});
+
+test('P11 counts a UTF-16 file with a byte-order mark, ASCII or not', () => {
+  for (const [name, bom, enc] of [['le.ps1', [0xff, 0xfe], 'utf16le'], ['be.ps1', [0xfe, 0xff], 'be']]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bom-'));
+    const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+    g(['init', '-q', '-b', 'main']); fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# c\n'); g(['add', '-A']); g(['commit', '-q', '-m', 'init']);
+    g(['switch', '-q', '-c', 'ENG-1-x']);
+    const text = Array.from({ length: 1000 }, (_, i) => `Write-Host "zeile ${i} \u00e4\u00f6\u00fc"`).join('\n') + '\n';
+    let body = Buffer.from(text, 'utf16le');
+    if (enc === 'be') body = Buffer.from(body).swap16();
+    fs.writeFileSync(path.join(dir, name), Buffer.concat([Buffer.from(bom), body]));
+    fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '- x\n');
+    g(['add', '-A']); g(['commit', '-q', '-m', 'feat(a): add script [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+    const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+    const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: add script', '--branch', 'ENG-1-x'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+    assert.strictEqual(r.status, 1, name);
+    assert.match(r.stderr, /P11/);
+    // Once on the base, a one-line edit counts as two changed lines.
+    g(['switch', '-q', 'main']); g(['merge', '-q', '--ff-only', 'ENG-1-x']); g(['switch', '-q', '-c', 'ENG-1-y']);
+    let edited = Buffer.from(text.replace('zeile 10 ', 'Zeile 10 '), 'utf16le');
+    if (enc === 'be') edited = Buffer.from(edited).swap16();
+    fs.writeFileSync(path.join(dir, name), Buffer.concat([Buffer.from(bom), edited])); fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '- y\n');
+    g(['commit', '-q', '-am', 'fix(a): edit [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+    const small = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: edit', '--branch', 'ENG-1-y'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '', BRAIN_PR_MAX_LINES: '5' } });
+    assert.strictEqual(small.status, 0, small.stderr);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

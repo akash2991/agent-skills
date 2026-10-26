@@ -197,6 +197,10 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns((view.statusCheckRollup || []).filter(c => forThisPr(c, view)));
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
+  // Two open PRs from one head branch share their runs' PR lists, so one PR's newer pass would replace the other's
+  // failure: merge-pr does not judge such a PR.
+  const others = [...new Set((view.statusCheckRollup || []).filter(c => c.event === 'pull_request').flatMap(c => c.runPrs || []).filter(n => n !== Number(view.number)))];
+  if (others.length) blockers.push(`another open PR (#${others.join(', #')}) shares this head branch, so its CI runs cannot be told from this PR's: a reviewer merges it by hand (P12)`);
   // P3, P11, and P13 are checked only by the project's pr-rules workflow: its check must have run and passed; a
   // skipped or neutral pr-rules never checked anything.
   // Only an Actions check whose run was identified counts as pr-rules: a commit status, or a check whose run could
@@ -218,7 +222,9 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // created (a re-run keeps that snapshot), so only a pass from a run created after the last such change counts; a
   // pass whose run time is unknown does not.
   const changed = Date.parse(view.metadataChangedAt || '') || 0;
-  if (passed.length && changed && !passed.some(c => (Date.parse(c.runCreated || '') || 0) >= changed)) {
+  // Strictly after: times have one-second precision, so a run created in the same second as the edit may have
+  // checked the PR as it was before it.
+  if (passed.length && changed && !passed.some(c => (Date.parse(c.runCreated || '') || 0) > changed)) {
     blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers. A re-run checks the old snapshot: if no run starts (an edit by a workflow token), make a fresh edit or close and reopen the PR (P10, P11)`);
   }
   const pending = checks.filter(isPending);

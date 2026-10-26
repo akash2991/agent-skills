@@ -187,10 +187,12 @@ function parseNumstatRenames(numstat) {
 
 // A blob's content without NUL bytes when the rest is UTF-8 text; '' for a blob that does not exist; null for a real
 // binary.
+// A UTF-16 file with a byte-order mark is decoded as UTF-16; anything else has its NULs removed and must be UTF-8.
 function nulText(spec) {
   let buf;
   try { buf = execFileSync('git', ['cat-file', 'blob', spec], { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 30 }); } catch { return ''; }
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf.filter(b => b !== 0)); } catch { return null; }
+  const bom = buf[0] === 0xff && buf[1] === 0xfe ? 'utf-16le' : buf[0] === 0xfe && buf[1] === 0xff ? 'utf-16be' : null;
+  try { return bom ? new TextDecoder(bom, { fatal: true }).decode(buf) : new TextDecoder('utf-8', { fatal: true }).decode(buf.filter(b => b !== 0)); } catch { return null; }
 }
 
 // Changed lines between two blobs git calls binary, diffed as text with the NULs removed; 0 when either is a real

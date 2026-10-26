@@ -138,7 +138,7 @@ Paths are as installed by `agent-brain pull` (`.agents/skills/…`; Claude's cop
 **Set up, once per project.**
 - Run `scripts/install-hooks.js` once per clone, and once per worktree when `core.hooksPath` is relative (it says so). It refuses a hook directory outside the repository, never writes through a symlinked hook file, and makes the hooks executable. With husky, which owns `core.hooksPath`, call the checker from husky's hooks instead: `.husky/commit-msg` runs `node .agents/skills/git-workflow-and-versioning/scripts/brain-git-check.js commit-msg "$1"` and `.husky/pre-push` runs `… brain-git-check.js push "$@"`.
 - Copy `.agents/skills/git-workflow-and-versioning/templates/pr-rules.yml` to `.github/workflows/` so CI runs the same checks. It reads the checker from the base branch, so merge the brain into that branch first.
-- Set `LINEAR_TEAM` (one Linear team key, or several separated by commas) and `BRAIN_LONG_LIVED` (empty when there are none, so merge-pr need not read the repository variable) as repository variables for CI and in `.env` for the hooks. The hooks look in the environment, the worktree's `.env`, then the main checkout's `.env`; the first that defines a key wins (an empty `LINEAR_TEAM` counts as unset, an empty `BRAIN_LONG_LIVED` as no extra branches). merge-pr reads the same places and then the repository variable. Without `LINEAR_TEAM`, CI and merge-pr refuse, since the generic ticket pattern also matches tokens such as `UTF-8`.
+- Set `LINEAR_TEAM` (one Linear team key, or several separated by commas) and `BRAIN_LONG_LIVED` (left unset in `.env`, merge-pr reads the repository variable; set empty, it means none and overrides that variable) as repository variables for CI and in `.env` for the hooks. The hooks look in the environment, the worktree's `.env`, then the main checkout's `.env`; the first that defines a key wins (an empty `LINEAR_TEAM` counts as unset, an empty `BRAIN_LONG_LIVED` as no extra branches). merge-pr reads the same places and then the repository variable. Without `LINEAR_TEAM`, CI and merge-pr refuse, since the generic ticket pattern also matches tokens such as `UTF-8`.
 - Protect the default branch on GitHub with a ruleset that blocks direct pushes and deletion and requires status checks (at least `pr-rules` and the CI jobs, so a check that reports late still gates the merge): the pre-push hook is local and `--no-verify` skips it, so it is a guard against mistakes, not the enforcement of P8.
 - Approval must come from a GitHub identity other than the PR author's, with write access: GitHub refuses a self-approval, so a reviewer agent signs in as its own account.
 
@@ -151,6 +151,7 @@ Paths are as installed by `agent-brain pull` (`.agents/skills/…`; Claude's cop
 **Merged by hand, not by merge-pr.**
 - A base with a merge queue.
 - A fork's PR: its runs carry no PR link.
+- A PR whose head branch has another open PR (a backport from the same branch): their CI runs cannot be told apart.
 - A PR that changes `.github/workflows/`, which could change its own checks.
 - A PR that changes the git-workflow scripts (merge-pr, brain-git-check), which could change its own checks.
 - A promotion whose history holds commits merged by hand without the P3 anatomy (a dependency bot's): `pr-rules` cannot pass on history, so a reviewer checks it and merges it by hand.
