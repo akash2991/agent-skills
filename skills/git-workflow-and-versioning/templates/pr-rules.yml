@@ -37,7 +37,7 @@ jobs:
           # Set BRAIN_LONG_LIVED (e.g. ^(staging|develop)$) for the long-lived branches P16 allows besides main and release/*.
           BRAIN_LONG_LIVED: ${{ vars.BRAIN_LONG_LIVED }}
         run: |
-          # The checker script and the diff attributes come from the base branch, never from the PR. This workflow file
+          # The checker script comes from the base branch, never from the PR; it counts lines with no .gitattributes applied. This workflow file
           # itself runs from the PR, so protect .github/ with CODEOWNERS or a ruleset.
           # So the PR that first adds the brain fails here: merge the brain into the base branch before adding this workflow.
           CHECK_PATH="$(git ls-tree -r --name-only "origin/$BASE_REF" | { grep '/skills/git-workflow-and-versioning/scripts/brain-git-check.js$' || true; } | head -1)"

@@ -1282,7 +1282,7 @@ test('install-hooks refuses a global core.hooksPath (isolated global config)', (
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: globalCfg } });
   assert.strictEqual(r.status, 1, r.stdout);
-  assert.match(r.stderr, /outside this repository/);
+  assert.match(r.stderr, /outside this repository|global git config/);
   assert.ok(!fs.existsSync(path.join(dir, 'shared-hooks', 'commit-msg')));
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -1742,4 +1742,70 @@ test('an origin path with extra components is not inferred', () => {
     }
   } finally { process.chdir(cwd); }
   fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a global core.hooksPath inside this repository is still refused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghin-'));
+  const repo = path.join(dir, 'a'); fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const globalCfg = path.join(dir, 'gitconfig');
+  fs.writeFileSync(globalCfg, `[core]\n\thooksPath = ${path.join(repo, '.githooks')}\n`);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: globalCfg } });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /global git config/);
+  assert.ok(!fs.existsSync(path.join(repo, '.githooks', 'commit-msg')));
+  execFileSync('git', ['config', '--local', 'core.hooksPath', '.githooks'], { cwd: repo });
+  fs.writeFileSync(globalCfg, '');
+  assert.strictEqual(require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: globalCfg } }).status, 0, 'a local one is fine');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a service changelog touched without an added line fails P13', () => {
+  const files = [{ path: 'CHANGELOG.md', added: 1 }, { path: 'services/api/CHANGELOG.md', added: 0 }];
+  const all = ['CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const head = ['CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/a.js'];
+  assert.match(check.checkChangelog(files, all, head).join(), /services\/api\/CHANGELOG\.md/);
+  assert.deepStrictEqual(check.checkChangelog([{ path: 'CHANGELOG.md', added: 1 }, { path: 'services/api/CHANGELOG.md', added: 1 }], all, head), []);
+});
+
+test('merge-pr refuses a PR that changes its own scripts', () => {
+  const v = { ...mergeView, changedFiles: ['.agents/skills/git-workflow-and-versioning/scripts/merge-pr.js'] };
+  assert.match(mergeBlockers(v).blockers.join(), /changes the git-workflow scripts/);
+});
+
+test('P11 fails closed when git cannot read attributes from the empty tree', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oldgit-'));
+  const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\nfor a in "$@"; do [ "$a" = "--attr-source" ] && { echo "unknown option: --attr-source" >&2; exit 129; }; done\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+  const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
+  const g = args => execFileSync(realGit, ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), '# c\n'); g(['add', '-A']); g(['commit', '-q', '-m', 'init']);
+  g(['switch', '-q', '-c', 'ENG-1-x']);
+  fs.writeFileSync(path.join(repo, '.gitattributes'), '*.js -diff\n');
+  fs.writeFileSync(path.join(repo, 'a.js'), 'x\n'.repeat(500)); fs.appendFileSync(path.join(repo, 'CHANGELOG.md'), '- x\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: x', '--branch', 'ENG-1-x'], { cwd: repo, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /needs --attr-source, git 2\.40/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a reworded merge subject fails the hook (documented) but passes the stored-commit check CI runs', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rw-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'a']); g(['branch', 'base']);
+  g(['switch', '-q', '-c', 'ENG-1-x']); g(['commit', '-q', '--allow-empty', '-m', 'feat(a): b [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  g(['switch', '-q', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'feat(a): c [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  g(['merge', '-q', '--no-ff', 'ENG-1-x', '-m', "Merge branch 'ENG-1-x' [ENG-1]", '-m', 'Model: m\nThinking-effort: h\nHarness: c']);
+  const msg = "Merge branch 'ENG-1-x' after review [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n";
+  fs.writeFileSync(path.join(dir, 'msg'), msg);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const env = { ...process.env, LINEAR_TEAM: 'ENG' };
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, env, encoding: 'utf8' }).status, 1);
+  g(['commit', '-q', '--amend', '--no-verify', '-F', path.join(dir, 'msg')]);
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'commits', '--base', 'base'], { cwd: dir, env, encoding: 'utf8' }).status, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

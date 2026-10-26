@@ -9,7 +9,7 @@
 //                                         a push to, or deletion of, main or the remote's default branch is refused
 //   pr --base <ref>              P2, P4, P11, P13   one ticket across branch/title/commits, title "<ticket>: <goal>", size, changelog
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
-// Environment: LINEAR_TEAM narrows the ticket pattern to one team key (read from the repository's .env when unset); BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
+// Environment: LINEAR_TEAM narrows the ticket pattern to the team's key (or comma-separated keys) (read from the repository's .env when unset); BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
 // override 400 and 10; PR_TITLE and PR_BODY supply the title and body (CI passes them without shell quoting).
 // The protected branches are main plus the repository's default branch (origin/HEAD), when one is known.
 
@@ -202,9 +202,10 @@ function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
   for (const p of changedPaths) {
     if (p.startsWith('templates/')) continue;
     if (CHANGELOG.test(p)) {
-      // A service changelog that the PR deletes while its service stays is still required (and so fails).
+      // A service changelog the PR touches is a change to that service: it needs an added line, and one the PR deletes
+      // while its service stays is still required (and so fails). Only a service removed with it is exempt.
       const dir = p.split('/').slice(0, -1).join('/');
-      if (dir && !GLOBAL_CHANGELOGS.includes(p) && headFiles && !headFiles.includes(p) && headFiles.some(f => f.startsWith(`${dir}/`))) required.add(p);
+      if (dir && !GLOBAL_CHANGELOGS.includes(p) && (!headFiles || headFiles.includes(p) || headFiles.some(f => f.startsWith(`${dir}/`)))) required.add(p);
       continue;
     }
     const dir = p.split('/').slice(0, -1);
@@ -379,13 +380,14 @@ function main(argv) {
     // Every line counts for P11, whatever any .gitattributes says (`package-lock.json -diff` has no exemption, and a PR's
     // own .gitattributes cannot hide its lines): attributes are read from the empty tree, so none apply.
     const noAttrs = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
+    // Without --attr-source (git before 2.40) the PR's own .gitattributes would apply: refuse rather than count wrong.
     let numstat;
     try { numstat = git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
-    catch { numstat = git(['diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
+    catch (err) { return report([`git ${git(['--version']).trim().replace(/^git version /, '')} cannot count lines independently of .gitattributes (needs --attr-source, git 2.40 or later): ${String(err.stderr || err.message).trim().split('\n')[0]}`]); }
     const files = parseNumstat(numstat);
     // P11 counts a rename as one file with its own line changes; P13 keeps the rename-free list above.
-    let sized = files;
-    try { sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '-M', '--text', `${base}...${head}`])); } catch { /* old git: count without renames */ }
+    let sized;
+    sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '-M', '--text', `${base}...${head}`]));
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),

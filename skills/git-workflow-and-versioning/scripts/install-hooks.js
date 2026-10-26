@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Installs the git hooks that run brain-git-check.js: commit-msg (P3, P4) and pre-push (P5).
+// Installs the git hooks that run brain-git-check.js: commit-msg (P3, P4) and pre-push (P5, P8, P16).
 // Run from inside the project's checkout or any of its worktrees; hooks are shared by all of them.
 // An existing hook that this script did not write is left alone and reported, never overwritten.
 
@@ -71,6 +71,14 @@ if (require.main === module) {
   const real = p => { let head = path.resolve(p); const tail = []; while (!fs.existsSync(head)) { tail.unshift(path.basename(head)); head = path.dirname(head); } return path.join(fs.realpathSync(head), ...tail); };
   const within = (p, dir) => { const r = path.relative(real(dir), real(p)); return r && !r.startsWith('..') && !path.isAbsolute(r); };
   const homes = [root, git(['rev-parse', '--git-common-dir']), git(['rev-parse', '--git-dir'])];
+  // Where it is set matters as much as where it points: a global or system core.hooksPath applies to every repository,
+  // even when it names a directory inside this one.
+  let scope = '';
+  try { scope = git(['config', '--show-scope', '--get', 'core.hooksPath']).split('\t')[0].trim(); } catch { /* unset */ }
+  if (configured && !['local', 'worktree'].includes(scope)) {
+    console.error(`install-hooks: core.hooksPath (${configured}) is set in the ${scope || 'unknown'} git config, so it applies to other repositories too: set it in this repository's config (git config --local) or unset it, and run again`);
+    process.exit(1);
+  }
   if (!homes.some(d => within(hooksDir, d))) {
     console.error(`install-hooks: the hook directory ${configured ? `(core.hooksPath ${configured}) ` : ''}resolves to ${real(hooksDir)}, outside this repository, so hooks there would run for other repositories too: set a repository-local core.hooksPath (or unset it) and run again`);
     process.exit(1);

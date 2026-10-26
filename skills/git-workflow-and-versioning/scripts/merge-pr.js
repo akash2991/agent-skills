@@ -197,6 +197,8 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   if (checks.length && !passed.length) blockers.push('no passing pr-rules Actions check (with an identified run) on this head: install the git-workflow-and-versioning skill\'s templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
   // A PR that touches any workflow can change what certifies it: a reviewer merges it by hand.
   if ((view.changedFiles || []).some(f => f.startsWith('.github/workflows/'))) blockers.push('this PR changes .github/workflows/, which could change its own checks: a reviewer merges it by hand (P10)');
+  // The same for merge-pr and its checker: run from the PR's worktree, a changed copy would judge its own merge.
+  if ((view.changedFiles || []).some(f => /(^|\/)skills\/git-workflow-and-versioning\/scripts\//.test(f))) blockers.push('this PR changes the git-workflow scripts (merge-pr, brain-git-check), which could change its own checks: a reviewer merges it by hand (P10)');
   if (view.changedFilesIncomplete) blockers.push('the PR\'s changed-file list could not be read in full, so a workflow change cannot be ruled out: a reviewer merges it by hand (P10)');
   if (view.commitMessages && view.commitMessages.length >= 250) blockers.push('the PR has 250 or more commits, more than the API lists, so the ticket check cannot see them all: split it (P11)');
   // The head SHA does not change when the title, body, or base does. A run checks the PR as it was when the run was

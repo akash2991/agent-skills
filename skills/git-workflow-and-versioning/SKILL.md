@@ -142,7 +142,7 @@ Paths are as installed by `agent-brain pull` (`.agents/skills/…`; Claude's cop
 - Protect the default branch on GitHub with a ruleset that blocks direct pushes and deletion: the pre-push hook is local and `--no-verify` skips it, so it is a guard against mistakes, not the enforcement of P8.
 - Approval must come from a GitHub identity other than the PR author's, with write access: GitHub refuses a self-approval, so a reviewer agent signs in as its own account.
 
-**Merge.** Run `scripts/merge-pr.js <n> --model <m> --effort <e> --harness <h>`, adding `--review-optional` only when the ticket made review optional (P8); the merge commit then carries `Review: optional`. It puts the P3 trailers on the merge commit and exits 0 when merged and cleaned up, 1 when it did not merge, 3 when it merged but left P7 cleanup to do, and 4 when it cannot tell whether the merge happened (nothing is deleted; run it again: on a merged PR it verifies the merge commit, then cleans up).
+**Merge.** Run merge-pr from an up-to-date checkout of the base branch (the main checkout), never from the ticket's worktree, so the PR's own copy of the scripts never judges it: `scripts/merge-pr.js <n> --model <m> --effort <e> --harness <h>`, adding `--review-optional` only when the ticket made review optional (P8); the merge commit then carries `Review: optional`. It puts the P3 trailers on the merge commit and exits 0 when merged and cleaned up, 1 when it did not merge, 3 when it merged but left P7 cleanup to do, and 4 when it cannot tell whether the merge happened (nothing is deleted; run it again: on a merged PR it verifies the merge commit, then cleans up).
 - The merge is pinned to the inspected head, and every gate input (base, title, body, reviews, threads, CI) is read and judged again just before merging: a PR retargeted, edited, reviewed, or with new CI results since its checks is refused. GitHub cannot pin them, so a retarget or edit in the moment between that read and the merge is caught after it: the merge is reported (exit 3) and both branches are kept.
 - It requires a green `pr-rules` run that GitHub ties to this PR at its head, run after the PR's last title, body, or base change, and checks the one-ticket rule again itself. A run of another PR or ref neither passes nor supersedes.
 - Branches are deleted only after the merge commit is verified as a merge of the inspected head with the ticket and trailers: the remote branch only while it still points at that head, the local one only when no worktree has it checked out (remove the ticket's worktree first) and it is not a symbolic ref.
@@ -152,12 +152,16 @@ Paths are as installed by `agent-brain pull` (`.agents/skills/…`; Claude's cop
 - A base with a merge queue.
 - A fork's PR: its runs carry no PR link.
 - A PR that changes `.github/workflows/`, which could change its own checks.
+- A PR that changes the git-workflow scripts (merge-pr, brain-git-check), which could change its own checks.
+- A promotion whose history holds commits merged by hand without the P3 anatomy (a dependency bot's): `pr-rules` cannot pass on history, so a reviewer checks it and merges it by hand.
 - Dependency-bot PRs, which skip `pr-rules` and merge through their own tooling.
 
 **Limits to know.**
 - `BRAIN_LONG_LIVED` must match a whole branch name (`staging|develop` matches `staging` but not `ENG-12-develop-login`); an invalid pattern stops every check except `commit-msg`, and merge-pr.
+- A promotion PR (a long-lived head into the default branch) is checked like any other: every commit it brings must meet P3, and a promotion over the P11 limits needs the user's `Size-exception:`. The size check needs git 2.40 or later and fails, rather than counting wrong, on older git.
 - `release/*` and branches matching `BRAIN_LONG_LIVED` are trusted by name: pushes to them are not refused, and as a PR head they promote several tickets under one title. Creating one, or widening the pattern, is a reviewer-visible decision (P16).
 - The pre-push hook refuses a push to `main` or the remote's default branch on every remote, a deploy remote (Heroku, Dokku) included: push a deploy with `--no-verify`, or deploy from CI.
+- The `commit-msg` hook recognises an amended merge only while its subject is unchanged. To reword a merge's subject, amend with `--no-verify`, then run `brain-git-check.js commits --base origin/<base>` to check the stored merge as CI will (by its parents).
 - Commits GitHub's web UI writes ("Update branch" merges, committed review suggestions) carry no trailers and fail `pr-rules`: update the branch locally or with the rebase variant of Update branch, and edit a suggestion's commit message before committing it.
 
 ## The Save Point Pattern
