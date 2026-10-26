@@ -56,7 +56,10 @@ if (require.main === module) {
   const root = git(['rev-parse', '--show-toplevel']);
   const hooksDir = path.resolve(git(['rev-parse', '--git-path', 'hooks']));
   const rel = path.relative(root, CHECK).split(path.sep).join('/');
-  for (const line of install(hooksDir, rel)) console.log(line);
+  const results = install(hooksDir, rel);
+  for (const line of results) console.log(line);
+  // A skipped hook means the rules are not enforced here: say so through the exit code too.
+  if (results.some(r => r.includes('skipped'))) process.exitCode = 1;
 }
 
 module.exports = { hookBody, install, MARKER, shellQuote };

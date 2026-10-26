@@ -19,7 +19,6 @@ const fs = require('fs');
 const TYPES = 'feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert';
 // git's own merge subjects: "Merge pull request #n ..." and "Merge branch ...". Anything else starting "Merge " is a commit.
 const GIT_MERGE = /^Merge (pull request #\d+|branch |remote-tracking branch )/;
-const LOCKFILES = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|go\.sum|composer\.lock|Gemfile\.lock)$/;
 const CHANGELOG = /(^|\/)CHANGELOG\.md$/;
 const SIZE_EXCEPTION = /^Size-exception:[ \t]*\S/m;
 
@@ -37,15 +36,13 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerg
   const subject = message.split('\n')[0] || '';
   // A git revert keeps the subject shape of git's own "Revert \"…\"", but still needs its ticket and trailers (P2, P3).
   // fixup!/squash! are not exempt: they must be autosquashed before the PR is merged, so the commit that lands is checked.
-  const revert = /^Revert ".*"/.test(subject);
+  const revert = /^(Revert|Reapply) ".*"/.test(subject);
   const errors = [];
   if (revert && !new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('revert commit: name the ticket id it belongs to (P2)');
-  if (allowFixup && /^(fixup! |squash! )/.test(subject)) return [];
-  if (GIT_MERGE.test(subject) && isMerge !== false) {
-    if (!new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
-    return errors;
-  }
-  if (!revert && !new RegExp(`^(${TYPES})(\\([a-z0-9._/,-]+\\))?!?: \\S.* \\[${ticket}\\]$`).test(subject)) {
+  if (allowFixup && /^(fixup! |squash! |amend! )/.test(subject)) return [];
+  const merge = GIT_MERGE.test(subject) && isMerge !== false;
+  if (merge && !new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
+  if (!revert && !merge && !new RegExp(`^(${TYPES})(\\([a-z0-9._/,-]+\\))?!?: \\S.* \\[${ticket}\\]$`).test(subject)) {
     errors.push(`subject must be "<type>(<scope>): <what changed> [<TICKET-ID>]", type one of ${TYPES.split('|').join(', ')} (P2, P3): got "${subject}"`);
   }
   for (const trailer of ['Model', 'Thinking-effort', 'Harness']) {
@@ -54,8 +51,14 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerg
   return errors;
 }
 
+// BRAIN_LONG_LIVED: a regular expression for further long-lived branches P16 allows (e.g. ^(staging|develop)$).
+function extraLongLived(name, env = process.env) {
+  if (!env.BRAIN_LONG_LIVED) return false;
+  try { return new RegExp(env.BRAIN_LONG_LIVED).test(name); } catch { return false; }
+}
+
 function checkBranchName(name, env = process.env) {
-  if (name === 'main' || name.startsWith('release/')) return [];
+  if (name === 'main' || name.startsWith('release/') || extraLongLived(name, env)) return [];
   if (!new RegExp(`^${ticketSource(env)}-[a-z0-9]+(-[a-z0-9]+)*$`).test(name)) {
     return [`branch "${name}" is not <ticket>-<slug>, for example ENG-123-login-form (P5)`];
   }
@@ -79,6 +82,19 @@ function parseNumstat(numstat) {
   });
 }
 
+// `git diff -z --numstat -M`: a rename is "added\tdeleted\t\0old\0new\0"; it counts once, under its new path.
+function parseNumstatRenames(numstat) {
+  const parts = numstat.split('\0');
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue;
+    const [added, deleted, path] = parts[i].split('\t');
+    const name = path === '' ? parts[(i += 2)] : path;
+    out.push({ path: name, added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) });
+  }
+  return out;
+}
+
 // Every path in a tree, unquoted (git quotes non-ASCII names without -z).
 function treeFiles(ref) {
   return git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', ref]).split('\0').filter(Boolean);
@@ -87,7 +103,6 @@ function treeFiles(ref) {
 function checkSize(files, body = '', env = process.env) {
   const maxLines = Number(env.BRAIN_PR_MAX_LINES) || 400;
   const maxFiles = Number(env.BRAIN_PR_MAX_FILES) || 10;
-  files = files.filter(f => !LOCKFILES.test(f.path));
   const lines = files.reduce((n, f) => n + f.lines, 0);
   if ((lines <= maxLines && files.length <= maxFiles) || SIZE_EXCEPTION.test(body)) return [];
   return [`PR changes ${lines} lines in ${files.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
@@ -170,7 +185,11 @@ function teamFromDotenv() {
   try {
     const root = git(['rev-parse', '--show-toplevel']).trim();
     const line = fs.readFileSync(`${root}/.env`, 'utf8').split('\n').find(l => /^\s*(export\s+)?LINEAR_TEAM\s*=/.test(l));
-    return line ? line.split('=').slice(1).join('=').trim().replace(/^['"]|['"]$/g, '') : '';
+    if (!line) return '';
+    const value = line.split('=').slice(1).join('=').trim();
+    // A quoted value is taken as written; an unquoted one ends at an inline " #" comment.
+    const quoted = /^(['"])(.*)\1/.exec(value);
+    return quoted ? quoted[2] : value.replace(/\s+#.*$/, '').trim();
   } catch { return ''; }
 }
 
@@ -229,10 +248,13 @@ function main(argv) {
     try { numstat = git(['--attr-source', base, 'diff', '-z', '--numstat', '--no-renames', `${base}...${head}`]); }
     catch { numstat = git(['diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
     const files = parseNumstat(numstat);
+    // P11 counts a rename as one file with its own line changes; P13 keeps the rename-free list above.
+    let sized = files;
+    try { sized = parseNumstatRenames(git(['--attr-source', base, 'diff', '-z', '--numstat', '-M', `${base}...${head}`])); } catch { /* old git: count without renames */ }
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
-      ...checkSize(files, body),
+      ...checkSize(sized, body),
       ...checkChangelog(files, listChangelogs(base), treeFiles(head)),
     ]);
   }
@@ -242,4 +264,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+module.exports = { parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };

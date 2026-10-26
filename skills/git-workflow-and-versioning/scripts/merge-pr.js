@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-// Merges a pull request the one way the organisation allows (git-workflow-and-versioning P7, P10, P12, P15):
-// a merge commit that carries the ticket id, remote and local branch deleted, only when CI is green and the
-// PR is approved. Usage: merge-pr.js <pr-number> [--review-optional] [--repo owner/name]
+// Merges a pull request the one way the organisation allows (git-workflow-and-versioning P3, P7, P10, P12, P15):
+// a merge commit that carries the ticket id and the Model / Thinking-effort / Harness trailers, remote and local
+// branch deleted, only when CI is green and the PR is approved.
+// Usage: merge-pr.js <pr-number> --model <m> --effort <e> --harness <h> [--review-optional] [--repo [host/]owner/name]
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, extraLongLived } = require('./brain-git-check');
+
+// Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 3 merged but P7
+// cleanup left to do (reported on stderr).
+const CLEANUP_INCOMPLETE = 3;
 
 function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -65,11 +70,15 @@ function latestRuns(checks) {
   for (const [i, c] of checks.entries()) {
     const producer = c.workflowPath ? `${c.workflowPath}|${c.event}` : runId(c) || (c.workflowName ? `workflow:${c.workflowName}` : `external:${i}`);
     const key = `${producer}/${c.name || c.context}`;
-    // A run that has not started carries the zero time: it is newer than anything that finished.
-    const raw = c.startedAt || c.createdAt || '';
-    const when = !raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0;
+    // Order by when the workflow run was created (then its attempt), not when this job started: a delayed job of an
+    // older run must not outrank a newer run. Without run metadata the job's start time stands in; a run that has not
+    // started carries the zero time and is newer than anything that finished.
+    const raw = c.runCreated || c.startedAt || c.createdAt || '';
+    const when = (!raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0) + (Number(c.runAttempt) || 0) / 1000;
     const prev = byKey.get(key);
-    if (!prev || when >= prev.when) byKey.set(key, { when, run: c });
+    // A newer SKIPPED or NEUTRAL run (a job whose `if:` excluded this event) does not supersede a run that executed.
+    const passive = r => ['SKIPPED', 'NEUTRAL'].includes(r.conclusion);
+    if (!prev || (when >= prev.when && !(passive(c) && !passive(prev.run))) || (passive(prev.run) && !passive(c))) byKey.set(key, { when, run: c });
   }
   return [...byKey.values()].map(v => v.run);
 }
@@ -86,7 +95,8 @@ function isPending(c) {
 // reviewDecision is not trusted alone: without dismissal of stale approvals it stays APPROVED after a push.
 const WRITE_ACCESS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
 
-function isApproved(view) {
+// The newest APPROVED or CHANGES_REQUESTED verdict of each eligible reviewer.
+function verdicts(view) {
   const newest = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
@@ -95,9 +105,17 @@ function isApproved(view) {
     if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
     newest.set(login, { state: r.state, oid: r.commit && r.commit.oid });
   }
-  const verdicts = [...newest.values()];
-  if (verdicts.some(v => v.state === 'CHANGES_REQUESTED')) return false;
-  return verdicts.some(v => v.state === 'APPROVED' && v.oid === view.headRefOid);
+  return [...newest.values()];
+}
+
+// A writer's outstanding change request blocks even when review is optional: optional means no approval is needed,
+// not that a request for changes may be merged over.
+function changesRequested(view) {
+  return verdicts(view).some(v => v.state === 'CHANGES_REQUESTED');
+}
+
+function isApproved(view) {
+  return !changesRequested(view) && verdicts(view).some(v => v.state === 'APPROVED' && v.oid === view.headRefOid);
 }
 
 // view is the parsed `gh pr view --json title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state` output.
@@ -110,11 +128,14 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
+  // P3, P11, and P13 are checked only by the project's pr-rules workflow: without its check they were never checked.
+  if (checks.length && !checks.some(c => (c.name || c.context) === 'pr-rules')) blockers.push('no pr-rules check on this head: install templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
   const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
   if (failing.length) blockers.push(`CI is not green: ${failing.map(c => c.name || c.context).join(', ')} (P12)`);
-  if (!reviewOptional && !isApproved(view)) blockers.push(`no approval of the current head from a reviewer other than the author (review decision: ${view.reviewDecision || 'none'}) (P10)`);
+  if (changesRequested(view)) blockers.push('a reviewer with write access requested changes; their newest verdict still stands (P10)');
+  else if (!reviewOptional && !isApproved(view)) blockers.push(`no approval of the current head from a reviewer other than the author (review decision: ${view.reviewDecision || 'none'}) (P10)`);
   if (view.unresolvedThreads) blockers.push(`${view.unresolvedThreads} review thread(s) are unresolved (P10)`);
   return { blockers, ticket: ticket && ticket[1] };
 }
@@ -144,18 +165,19 @@ function runIdentity(repo, checks) {
     const id = runId(c);
     if (!id) continue;
     if (!runs.has(id)) {
-      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event}']))); }
+      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt}']))); }
       catch { runs.set(id, null); }
     }
     const run = runs.get(id);
-    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event });
+    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runAttempt: run.attempt });
   }
   return checks;
 }
 
 // main, the default branch, and release/* are long-lived (P16): merging from them never deletes them.
-function longLived(branch, defaultBranch) {
-  return branch === 'main' || branch === defaultBranch || branch.startsWith('release/');
+// BRAIN_LONG_LIVED adds a pattern for other long-lived branches P16 allows (e.g. ^(staging|develop)$), as in brain-git-check.
+function longLived(branch, defaultBranch, env = process.env) {
+  return branch === 'main' || branch === defaultBranch || branch.startsWith('release/') || extraLongLived(branch, env);
 }
 
 // Review threads still open on the PR (P10: every review comment is resolved), across every page. gh pr view does
@@ -164,7 +186,7 @@ function unresolvedThreads(repo, pr) {
   const { host, owner, name } = splitRepo(repo);
   const query = 'query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}';
   const out = gh(['api', 'graphql', '--hostname', host, '--paginate', '--jq', '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | 1',
-    '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${pr}`]);
+    '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr}`]);
   return out.split('\n').filter(Boolean).length;
 }
 
@@ -172,79 +194,103 @@ function localTip(branch) {
   try { return git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).trim(); } catch { return ''; }
 }
 
+const USAGE = 'usage: merge-pr.js <pr-number> --model <m> --effort <e> --harness <h> [--review-optional] [--repo [host/]owner/name]';
+
+function parseArgs(argv) {
+  const opts = { reviewOptional: false };
+  const valued = { '--repo': 'repo', '--model': 'model', '--effort': 'effort', '--harness': 'harness' };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (/^\d+$/.test(a) && !opts.pr) opts.pr = a;
+    else if (a === '--review-optional') opts.reviewOptional = true;
+    else if (valued[a] && argv[i + 1] && !argv[i + 1].startsWith('--')) opts[valued[a]] = argv[++i];
+    else return null; // an unknown or incomplete option is refused, never ignored
+  }
+  return opts.pr && opts.model && opts.effort && opts.harness ? opts : null;
+}
+
+// Whether the base branch has a merge queue: a queue takes over the merge (and its method), so merge-pr refuses.
+function hasMergeQueue(repo, base) {
+  const { host, owner, name } = splitRepo(repo);
+  const query = 'query($owner:String!,$name:String!,$branch:String!){repository(owner:$owner,name:$name){mergeQueue(branch:$branch){id}}}';
+  return gh(['api', 'graphql', '--hostname', host, '--jq', '.data.repository.mergeQueue.id // empty',
+    '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `branch=${base}`]).trim() !== '';
+}
+
 function main(argv) {
-  const pr = argv.find(a => /^\d+$/.test(a));
-  if (!pr) { console.error('usage: merge-pr.js <pr-number> [--review-optional] [--repo [host/]owner/name]'); process.exit(2); }
-  const flag = argv.indexOf('--repo');
-  const repo = flag === -1 ? originRepo() : argv[flag + 1];
-  // Local cleanup is safe only for the repository this checkout's origin points at.
-  let ownRepo = flag === -1;
+  const opts = parseArgs(argv);
+  if (!opts) { console.error(USAGE); process.exit(2); }
+  const { pr } = opts;
+  const repo = opts.repo || originRepo();
+  if (!/^([^/]+\/)?[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes [host/]owner/name'); process.exit(2); }
+  // Branch cleanup goes through this checkout's origin, so it runs only when origin is the target repository.
+  let ownRepo = !opts.repo;
   if (!ownRepo) { try { ownRepo = originRepo() === repo; } catch { ownRepo = false; } }
-  if (!repo || !/^([^/]+\/)?[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes [host/]owner/name'); process.exit(2); }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
   view.unresolvedThreads = unresolvedThreads(repo, pr);
   runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
-  const keep = longLived(view.headRefName, defaultBranch);
+  // A protected branch is never deleted either, whatever its name.
+  const { host: h, owner: o, name: n } = splitRepo(repo);
+  let isProtected = false;
+  try { isProtected = gh(['api', '--hostname', h, `repos/${o}/${n}/branches/${encodeURIComponent(view.headRefName)}`, '--jq', '.protected']).trim() === 'true'; } catch { /* fork head or gone */ }
+  const keep = longLived(view.headRefName, defaultBranch) || isProtected;
   const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
   view.writers = writers(repo, [...reviewers]);
-  const { blockers, ticket } = mergeBlockers(view, { reviewOptional: argv.includes('--review-optional') });
+  const { blockers, ticket } = mergeBlockers(view, { reviewOptional: opts.reviewOptional });
+  if (hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
     process.exit(1);
   }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
-  // A repository with a merge queue refuses --delete-branch; merge-pr does not support merge queues.
-  let remoteDeleted = !view.isCrossRepository && !keep;
+  // gh deletes no branch here: the remote deletion below is leased to the merged head.
+  const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}`;
+  let mergeError = '';
   try {
-    gh(['pr', 'merge', pr, '--repo', repo, '--merge', ...(keep ? [] : ['--delete-branch']), '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
-  } catch (err) {
-    // gh can fail after the merge itself, for example when deleting the remote branch: go on only if the PR merged.
-    const state = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state'])).state;
-    if (state !== 'MERGED') { console.error(`merge-pr: gh pr merge failed: ${String(err.stderr || err.message).trim()}`); process.exit(1); }
-    console.error(`merge-pr: merged, but gh reported: ${String(err.stderr || err.message).trim()}; check the remote branch (P7)`);
-    remoteDeleted = false;
-    process.exitCode = 1;
+    gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`, '--body', body]);
+  } catch (err) { mergeError = String(err.stderr || err.message).trim(); }
+  const state = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state'])).state;
+  if (state !== 'MERGED') {
+    console.error(`merge-pr: PR #${pr} is ${state}, not merged${mergeError ? `: ${mergeError}` : ' (auto-merge or a queue may have taken it)'}`);
+    process.exit(1);
   }
-  // gh deletes the head branch only when it lives in the repository merged into; a fork's branch stays and P7 is not complete.
-  if (view.isCrossRepository) {
-    console.error(`merge-pr: branch ${view.headRefName} lives in the fork and was not deleted; delete it in the fork (P7)`);
-    process.exitCode = 1;
-  }
-  // The local branch is deleted once the fetched base contains its tip; `git branch -d` would compare against the
-  // local HEAD, which does not have the merge yet. Unpushed work, or a branch checked out in another worktree (P6),
-  // is reported, not hidden.
-  // A same-named local branch is this PR's only when it points at the merged head and the PR is not from a fork:
-  // a fork's head named main must not delete this checkout's main.
   if (keep) {
     console.log(`merged #${pr} with a merge commit; ${view.headRefName} is long-lived and stays (P7 does not apply)`);
     return;
   }
+  if (view.isCrossRepository || !ownRepo) {
+    console.error(`merge-pr: merged #${pr}; ${view.headRefName} is ${view.isCrossRepository ? "in the fork" : "not in origin's repository"} and was not deleted: delete it there (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
+  // Remote: delete the branch only while it still points at the merged head; a commit pushed since survives.
+  try {
+    git(['push', '--quiet', `--force-with-lease=refs/heads/${view.headRefName}:${view.headRefOid}`, 'origin', `:refs/heads/${view.headRefName}`]);
+  } catch (err) {
+    console.error(`merge-pr: remote branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); it may have moved past the merged head (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+  }
+  // Local: a same-named branch is this PR's only when it points at the merged head; the fetched base must contain it.
+  // update-ref deletes exactly that commit, so work committed meanwhile survives; a branch checked out in a worktree
+  // (P6) is left to that worktree.
   const local = localTip(view.headRefName);
-  if (local && (!ownRepo || view.isCrossRepository || local !== view.headRefOid)) {
+  if (local && local !== view.headRefOid) {
     console.error(`merge-pr: local branch ${view.headRefName} is not the merged head ${view.headRefOid.slice(0, 8)}; left alone (P7: delete it by hand if it is this PR's)`);
-    process.exitCode = 1;
+    process.exitCode = CLEANUP_INCOMPLETE;
   } else if (local) {
     try {
       git(['fetch', '--quiet', 'origin', view.baseRefName]);
       git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
-    } catch {
-      console.error(`merge-pr: local branch ${view.headRefName} has commits that are not on origin/${view.baseRefName}; not deleted, P7 is not complete`);
-      process.exitCode = 1;
-      return;
-    }
-    // Delete exactly the verified commit: update-ref refuses if the branch moved since it was read, so work committed
-    // meanwhile survives. A branch checked out in a worktree (P6) is left to that worktree.
-    const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
-    try {
-      if (checkedOut) throw new Error('it is checked out in a worktree');
+      const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
+      if (checkedOut) throw new Error('it is checked out in a worktree; run merge-pr from the main checkout');
       git(['update-ref', '-d', `refs/heads/${view.headRefName}`, local]);
     } catch (err) {
-      console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete: delete it from the worktree that holds it`);
-      process.exitCode = 1;
+      console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete`);
+      process.exitCode = CLEANUP_INCOMPLETE;
     }
   }
-  console.log(`merged #${pr} with a merge commit${remoteDeleted ? `; branch ${view.headRefName} deleted on the remote` : ''}`);
+  console.log(`merged #${pr} with a merge commit; ${view.headRefName} deleted where it was still the merged head`);
 }
 
 if (require.main === module) main(process.argv.slice(2));

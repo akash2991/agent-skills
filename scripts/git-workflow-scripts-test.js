@@ -41,12 +41,13 @@ test('LINEAR_TEAM narrows the ticket pattern', () => {
   assert.strictEqual(check.checkCommitMessage(GOOD, { LINEAR_TEAM: 'OPS' }).length, 1);
 });
 
-test('a merge commit needs only the ticket id', () => {
-  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}), []);
-  assert.strictEqual(check.checkCommitMessage('Merge pull request #4', {}).length, 1);
+test('a merge commit keeps the git subject but needs the ticket id and the P3 trailers', () => {
+  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]\n\nModel: m\nThinking-effort: high\nHarness: h', {}), []);
+  assert.strictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}).length, 3, 'no trailers');
+  assert.strictEqual(check.checkCommitMessage('Merge pull request #4\n\nModel: m\nThinking-effort: high\nHarness: h', {}).length, 1, 'no ticket');
   // In CI the parent count is known: a one-parent commit with a merge-like subject is held to the full anatomy.
   assert.ok(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}, { isMerge: false }).length > 0);
-  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}, { isMerge: true }), []);
+  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]\n\nModel: m\nThinking-effort: high\nHarness: h', {}, { isMerge: true }), []);
 });
 
 test('branch names are <ticket>-<slug>', () => {
@@ -62,11 +63,11 @@ test('PR titles start with the ticket id', () => {
   assert.strictEqual(check.checkPrTitle(undefined, {}).length, 1);
 });
 
-test('size counts changed lines and files, skipping lockfiles', () => {
+test('size counts every changed line and file, lockfiles included (P11 has no lockfile exemption)', () => {
   const files = check.parseNumstat('300\t50\tsrc/a.ts\n900\t5\tpackage-lock.json\n-\t-\tlogo.png');
-  // the lockfile stays in the list (P13 sees it) but does not count toward the size (P11)
   assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'package-lock.json', 'logo.png']);
-  assert.deepStrictEqual(check.checkSize(files, '', {}), []);
+  assert.strictEqual(check.checkSize(files, '', {}).length, 1);
+  assert.deepStrictEqual(check.checkSize(files, 'Size-exception: lockfile refresh', {}), []);
   // -z output: NUL-separated records, paths unquoted
   assert.deepStrictEqual(check.parseNumstat('1\t0\tservices/api/café.ts\0').map(f => f.path), ['services/api/café.ts']);
 });
@@ -89,14 +90,14 @@ test('a changelog line is required in the global file and in the service it touc
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
   const ok = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', headRefOid: 'h1', author: { login: 'agent' },
-    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }, { name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
   assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
   assert.strictEqual(mergeBlockers({ ...ok, headRefOid: 'h2' }).blockers.length, 1, 'reviewDecision APPROVED does not cover a newer head');
   assert.match(mergeBlockers({ ...ok, unresolvedThreads: 2 }).blockers.join(), /2 review thread\(s\) are unresolved/);
   assert.deepStrictEqual(mergeBlockers({ ...ok, reviewDecision: null }, { reviewOptional: true }).blockers, []);
-  assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
+  assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }, { name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
   assert.strictEqual(mergeBlockers({ ...ok, title: 'x', state: 'MERGED' }).blockers.length, 2);
 });
 
@@ -275,9 +276,9 @@ test('the hook accepts a local fixup or squash commit; CI does not, and an unsqu
   assert.ok(checkCommitMessage('fixup! feat(x): y [ENG-1]', {}).length > 0);
 });
 
-test('a comma-separated scope is accepted, and git merge subjects need no trailers but a ticket', () => {
+test('a comma-separated scope is accepted, and git merge subjects need the ticket and trailers', () => {
   assert.deepStrictEqual(checkCommitMessage('fix(git-workflow,dev-setup,linear): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c', {}), []);
-  assert.deepStrictEqual(checkCommitMessage('Merge pull request #4 from o/ENG-1 [ENG-1]', {}), []);
+  assert.deepStrictEqual(checkCommitMessage('Merge pull request #4 from o/ENG-1 [ENG-1]\n\nModel: m\nThinking-effort: high\nHarness: h', {}), []);
   assert.strictEqual(checkCommitMessage('Merge sort for reports [ENG-1]', {}).length, 4);
 });
 
@@ -303,8 +304,8 @@ test('a queued run is newer than any finished one, so the finished pass cannot h
   assert.match(mergeBlockers(view).blockers.join(), /still running: pr-rules/);
 });
 
-test('a merge into the branch from the remote default branch needs no trailers, only the ticket', () => {
-  assert.deepStrictEqual(checkCommitMessage("Merge remote-tracking branch 'origin/main' into ENG-1-login", {}), []);
+test('a merge into the branch from the remote default branch needs the ticket and the trailers', () => {
+  assert.deepStrictEqual(checkCommitMessage("Merge remote-tracking branch 'origin/main' into ENG-1-login\n\nModel: m\nThinking-effort: high\nHarness: h", {}), []);
   assert.ok(checkCommitMessage("Merge remote-tracking branch 'origin/main'", {}).length > 0);
 });
 
@@ -423,9 +424,11 @@ process.exit(1);
   return { root, work, log, head, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } };
 }
 
+const PROV = ['--model', 'm', '--effort', 'high', '--harness', 'h'];
+
 const mergeView = {
   state: 'OPEN', title: 'ENG-1: x', headRefName: 'ENG-1-x', baseRefName: 'main', isCrossRepository: false, author: { login: 'a' },
-  statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
+  statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }],
 };
 
 test('merge-pr merges the inspected head and deletes the local branch once the base contains it', () => {
@@ -434,8 +437,8 @@ test('merge-pr merges the inspected head and deletes the local branch once the b
   view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
   fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  execFileSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8', stdio: 'pipe' });
-  assert.match(fs.readFileSync(f.log, 'utf8'), new RegExp(`pr merge 1 --repo o/r --merge --delete-branch --match-head-commit ${f.head}`));
+  execFileSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8', stdio: 'pipe' });
+  assert.match(fs.readFileSync(f.log, 'utf8'), new RegExp(`pr merge 1 --repo o/r --merge --match-head-commit ${f.head}`));
   assert.throws(() => execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' }));
   fs.rmSync(f.root, { recursive: true, force: true });
 });
@@ -446,9 +449,9 @@ test('merge-pr leaves a same-named local branch alone when it is not the merged 
   view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
   fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
-  assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /left alone/);
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, 'merged, cleanup left: exit 3, not 1');
+  assert.match(r.stderr, /in the fork and was not deleted/);
   execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
   fs.rmSync(f.root, { recursive: true, force: true });
 });
@@ -460,7 +463,7 @@ test('merge-pr checks each reviewer\'s real permission: a read-only approver doe
   view.reviews = [{ author: { login: 'stranger' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
   fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /no approval of the current head/);
   assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /pr merge/);
@@ -480,11 +483,11 @@ test('merge-pr does not touch local branches for a --repo that is not origin, an
   view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
   fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  const blocked = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: { ...f.env, FAKE_UNRESOLVED: '1\n1\n' }, encoding: 'utf8' });
+  const blocked = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_UNRESOLVED: '1\n1\n' }, encoding: 'utf8' });
   assert.strictEqual(blocked.status, 1);
   assert.match(blocked.stderr, /2 review thread\(s\) are unresolved/);
-  const other = require('child_process').spawnSync('node', [script, '1', '--repo', 'upstream/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
-  assert.match(other.stderr, /left alone/);
+  const other = require('child_process').spawnSync('node', [script, '1', '--repo', 'upstream/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.match(other.stderr, /not in origin's repository and was not deleted/);
   execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
   fs.rmSync(f.root, { recursive: true, force: true });
 });
@@ -512,7 +515,7 @@ test('merge-pr from a long-lived head merges without --delete-branch and keeps t
   view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
   fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  const out = execFileSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8', stdio: 'pipe' });
+  const out = execFileSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8', stdio: 'pipe' });
   assert.match(out, /long-lived and stays/);
   const merge = fs.readFileSync(f.log, 'utf8').split('\n').find(l => l.startsWith('pr merge'));
   assert.doesNotMatch(merge, /--delete-branch/);
@@ -530,7 +533,7 @@ test('a reviewer login the permission API rejects is not a writer, and merge-pr 
   fs.writeFileSync(ghPath, fs.readFileSync(ghPath, 'utf8').replace("if (a[0] === 'api' && a.some(x => x.endsWith('/permission')))",
     "if (a[0] === 'api' && a.some(x => x.includes('/gone-bot/'))) { process.stderr.write('HTTP 404'); process.exit(1); }\nif (a[0] === 'api' && a.some(x => x.endsWith('/permission')))"));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
   assert.strictEqual(r.status, 0, r.stderr);
   fs.rmSync(f.root, { recursive: true, force: true });
 });
@@ -577,9 +580,82 @@ if [ "$1" = fetch ]; then "${realGit}" "$@" || exit $?; t=$("${realGit}" commit-
 exec "${realGit}" "$@"
 `, { mode: 0o755 });
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
-  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: { ...f.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }, encoding: 'utf8' });
-  assert.strictEqual(r.status, 1, r.stderr);
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
   assert.match(r.stderr, /not deleted/);
   execFileSync(realGit, ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
   fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('optional review still respects a writer\'s change request, and a pr-rules check must be present', () => {
+  const base = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }] };
+  const cr = { ...base, reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'CHANGES_REQUESTED', commit: { oid: 'h' } }] };
+  assert.match(mergeBlockers(cr, { reviewOptional: true }).blockers.join(), /requested changes/);
+  assert.deepStrictEqual(mergeBlockers({ ...base, reviews: [] }, { reviewOptional: true }).blockers, []);
+  assert.match(mergeBlockers({ ...base, reviews: [], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] }, { reviewOptional: true }).blockers.join(), /no pr-rules check/);
+});
+
+test('a newer SKIPPED run does not hide an older failure of the same job', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'test', status: 'COMPLETED' };
+  const runs = latestRuns([{ ...id, conclusion: 'FAILURE', startedAt: '2026-10-26T10:00:00Z' }, { ...id, conclusion: 'SKIPPED', startedAt: '2026-10-26T10:05:00Z' }]);
+  assert.strictEqual(runs[0].conclusion, 'FAILURE');
+});
+
+test('P11 counts a rename once; BRAIN_LONG_LIVED and amend!/Reapply are honoured; .env comments are stripped', () => {
+  const renamed = check.parseNumstatRenames('0\t0\t\0old.js\0new.js\0' + '1\t0\tCHANGELOG.md\0');
+  assert.deepStrictEqual(renamed.map(f => [f.path, f.lines]), [['new.js', 0], ['CHANGELOG.md', 1]]);
+  assert.deepStrictEqual(check.checkBranchName('staging', { BRAIN_LONG_LIVED: '^(staging|develop)$' }), []);
+  assert.strictEqual(check.checkBranchName('staging', {}).length, 1);
+  assert.deepStrictEqual(check.checkCommitMessage('amend! feat: x [ENG-1]', {}, { allowFixup: true }), []);
+  const reapply = 'Reapply "feat: x [ENG-1]"\n\nENG-1\n\nModel: m\nThinking-effort: high\nHarness: h';
+  assert.deepStrictEqual(check.checkCommitMessage(reapply, {}), []);
+});
+
+test('the commits and push CLI paths read real git: parent counts, origin/HEAD, stdin', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-'));
+  const g = (args, cwd = dir) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'trunk']); g(['commit', '-q', '--allow-empty', '-m', 'init']);
+  g(['switch', '-q', '-c', 'ENG-1-x']);
+  g(['commit', '-q', '--allow-empty', '-m', 'Merge pull request #9 [ENG-1]']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const commits = require('child_process').spawnSync('node', [script, 'commits', '--base', 'trunk'], { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  assert.strictEqual(commits.status, 1, 'a one-parent "Merge pull request" commit is held to the anatomy');
+  g(['update-ref', 'refs/remotes/origin/trunk', 'trunk']); g(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk']);
+  const sha = g(['rev-parse', 'HEAD']).trim();
+  const push = require('child_process').spawnSync('node', [script, 'push'], { cwd: dir, encoding: 'utf8', input: `refs/heads/ENG-1-x ${sha} refs/heads/trunk ${'0'.repeat(40)}\n` });
+  assert.strictEqual(push.status, 1);
+  assert.match(push.stderr, /direct push to trunk is refused/);
+  assert.doesNotMatch(push.stderr, /fatal/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('merge-pr refuses unknown options and missing provenance, puts the trailers in the merge commit, and deletes the remote branch only at the merged head', () => {
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
+  for (const args of [['1', '--dry-run', ...PROV], ['1'], ['1', '--model', 'm']]) {
+    assert.strictEqual(require('child_process').spawnSync('node', [script, ...args], { encoding: 'utf8' }).status, 2, args.join(' '));
+  }
+  const f = mergeFixture(mergeView);
+  const view = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
+  // Another agent pushes to the branch after the review: the remote branch must survive the cleanup.
+  const other = path.join(f.root, 'other');
+  execFileSync('git', ['clone', '-q', '-b', 'ENG-1-x', path.join(f.root, 'origin.git'), other]);
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'late'], { cwd: other });
+  execFileSync('git', ['push', '-q', 'origin', 'ENG-1-x'], { cwd: other });
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /remote branch ENG-1-x not deleted/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  assert.match(fs.readFileSync(f.log, 'utf8'), /--body Model: m\nThinking-effort: high\nHarness: h/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a delayed job of an older workflow run does not outrank a newer run', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'test', status: 'COMPLETED' };
+  const runs = latestRuns([
+    { ...id, conclusion: 'SUCCESS', runCreated: '2026-10-26T10:00:00Z', startedAt: '2026-10-26T10:05:00Z' },
+    { ...id, conclusion: 'FAILURE', runCreated: '2026-10-26T10:01:00Z', startedAt: '2026-10-26T10:01:30Z' },
+  ]);
+  assert.strictEqual(runs[0].conclusion, 'FAILURE');
 });
