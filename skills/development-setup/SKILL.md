@@ -91,7 +91,8 @@ What is in place before development starts: an environment that belongs to this 
 
 Before starting work:
 
-- [ ] Each main agent and subagent has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is that worktree's basename followed by its persona, `<ticket>-<slug> (<persona>)` (DS2).
+- [ ] Each agent that writes, runs, tests, or builds code has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is `<ticket>-<slug> (<persona>)` (DS2).
+- [ ] Each agent without a worktree, such as a read-only reviewer, is named `<ticket> <scope> (<persona>)` (DS2).
 - [ ] Docker containers and LocalStack are running for the services you touch, as this agent's own Compose project on its own ports (DS3, DS4).
 - [ ] The database is snapshotted or seeded for this agent (DS5).
 - [ ] The API contract, DB model, and dependency shapes for this slice exist (DS7–DS9).

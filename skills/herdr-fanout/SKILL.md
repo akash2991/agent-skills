@@ -63,31 +63,29 @@ pane=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdi
 - **`--no-focus`** always, so the user's focus stays in your pane. The tab bar
   still shows the new tab.
 - **`--label`** every tab with the agent's visible runtime name
-  (`development-setup` DS2): `<ticket> <scope> (<persona>)` on a shared
-  checkout, `<ticket>-<slug> (<persona>)` in a worktree. The labels are your
-  at-a-glance dashboard.
-- **`--cwd "$PWD"`** shares this checkout. For agents that will *write* in
-  parallel and could collide, give each its own git worktree instead and use
-  that worktree's basename in the name — `development-setup` DS2 gives the
-  worktree procedure; read-only reviewers can safely share.
+  (`development-setup` DS2). The labels are your at-a-glance dashboard.
+- **`--cwd "$PWD"`** shares this checkout, for read-only slices only. Every
+  agent that writes gets its own worktree, `--cwd` set to it, and a name built
+  from its basename (`development-setup` DS1, DS2).
 
 Then start an agent in that pane and **fire the brief without `--wait`**, so you
 can launch the next slice while this one works. **Address the agent by its pane
 id**, not a custom name:
 
 ```bash
-herdr agent start "proj-42-1" --kind claude --pane "$pane"   # returns when ready
+herdr agent start "proj-42-auth" --kind claude --pane "$pane"   # returns when ready
 herdr agent prompt "$pane" "<the self-contained brief for this slice>"
 ```
 
 - **Target by pane id.** A name set at `agent start` is cleared when the agent
   re-registers during init (Claude does this), so a later `agent prompt <name>`
-  fails with `agent_not_found`. The pane id is the stable handle. The name arg is
-  required and must be a legal Herdr agent name, `[a-z][a-z0-9_-]{0,31}` (a pane
-  id such as `w1:p2` is not) and unique among live agents on the Herdr server,
-  across workspaces, so derive it from the ticket and the slice: `proj-42-1`,
-  `proj-42-2`. The tab label, not the agent name, carries the visible runtime
-  name.
+  fails with `agent_not_found`. The pane id is the stable handle. The name arg
+  is required and must be a legal Herdr agent name, `[a-z][a-z0-9_-]{0,31}` (a
+  pane id such as `w1:p2` is not) and unique among live agents on the Herdr
+  server, across workspaces, so derive it from the ticket and the slice
+  (`proj-42-auth`), add a round number for a second fan-out on the same ticket
+  (`proj-42-auth-2`), and check `herdr agent list` first. The tab label, not the
+  agent name, carries the visible runtime name.
 - `agent start` returns once Herdr detects the agent ready for input. Omitting
   `--wait` on `agent prompt` submits the task and returns; you collect later. Use
   the `--kind` matching the requested agent (`claude`, `codex`, `pi`, `gemini`,
@@ -97,20 +95,21 @@ herdr agent prompt "$pane" "<the self-contained brief for this slice>"
   the agent quits and its tab vanishes before you can read it.
 
 Keep a table as you go — `{label, tab_id, pane_id}` — parsed from each response,
-never guessed, and check the labels with `herdr tab list`: they are the agents'
-visible names.
+never guessed, and check each label with `herdr tab get <tab_id>`: they are the
+agents' visible names.
 
 ## Dispatch briefs that survive cold context
 
 Each sub-agent has none of your conversation. A one-line instruction gets
-one-line-quality work. Every brief starts with the persona to adopt
-(`/brain <persona>`), the same one the tab label shows, then states: the exact
-files/paths and how to see them; what the slice is and the properties that must
-hold; what it may **not** do (e.g. "do not modify files"); and the exact
-**return shape** you'll collect
-(ranked findings with file:line, or a decision with rationale). Tell each agent
-to end with a clear, self-contained summary — that final message is what you
-read back.
+one-line-quality work. Every brief starts with the persona to adopt, the same
+one the tab label shows: `/brain <persona>` where the harness has the brain
+command (Codex: `/prompts:brain <persona>`), otherwise "Read
+`.agents/agents/<persona>.md`, adopt it, and declare before working". It then
+states: the exact files/paths and how to see them; what the slice is and the
+properties that must hold; what it may **not** do (e.g. "do not modify files");
+and the exact **return shape** you'll collect (ranked findings with file:line,
+or a decision with rationale). Tell each agent to end with a clear,
+self-contained summary — that final message is what you read back.
 
 ## Wait, collect, synthesize
 
