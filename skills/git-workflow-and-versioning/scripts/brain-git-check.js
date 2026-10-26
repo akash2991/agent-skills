@@ -6,9 +6,10 @@
 //   branch [<name>]              P5       branch is <ticket>-<slug>
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
 //   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
-//   pr --base <ref>              P10, P11, P13   title starts with the ticket id, size within limits, changelog touched
+//   push                         P8       a push to, or deletion of, main or the default branch is refused
+//   pr --base <ref>              P10, P11, P13   title is "<ticket>: <goal>", size within limits, changelog touched
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
-// Environment: LINEAR_TEAM narrows the ticket pattern to one team key; BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
+// Environment: LINEAR_TEAM narrows the ticket pattern to one team key (read from the repository's .env when unset); BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
 // override 400 and 10; PR_TITLE and PR_BODY supply the title and body (CI passes them without shell quoting).
 // The protected branches are main plus the repository's default branch (origin/HEAD), when one is known.
 
@@ -89,7 +90,9 @@ function checkSize(files, body = '', env = process.env) {
 // changelog is the nearest CHANGELOG.md above a changed file. `allChangelogs` is the repository's list of them.
 const GLOBAL_CHANGELOGS = ['CHANGELOG.md', 'docs/CHANGELOG.md'];
 
-function requiredChangelogs(changedPaths, allChangelogs) {
+// headFiles, when given, is every path at the PR head: a service changelog is then not required when its service is
+// gone from the head entirely (removed or moved, and the move's new changelog is required where it lands).
+function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
   const required = new Set();
   const global = GLOBAL_CHANGELOGS.find(c => allChangelogs.includes(c));
   if (global) required.add(global);
@@ -98,20 +101,24 @@ function requiredChangelogs(changedPaths, allChangelogs) {
     const dir = p.split('/').slice(0, -1);
     while (dir.length) {
       const candidate = [...dir, 'CHANGELOG.md'].join('/');
-      if (allChangelogs.includes(candidate)) { required.add(candidate); break; }
+      if (allChangelogs.includes(candidate)) {
+        const serviceDir = `${dir.join('/')}/`;
+        if (!headFiles || headFiles.some(f => f.startsWith(serviceDir))) required.add(candidate);
+        break;
+      }
       dir.pop();
     }
   }
   return [...required];
 }
 
-function checkChangelog(files, allChangelogs = ['CHANGELOG.md']) {
+function checkChangelog(files, allChangelogs = ['CHANGELOG.md'], headFiles) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
   if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
   }
   const changed = files.map(f => f.path);
-  const missing = requiredChangelogs(changed, allChangelogs).filter(c => {
+  const missing = requiredChangelogs(changed, allChangelogs, headFiles).filter(c => {
     const entry = files.find(f => f.path === c);
     return !entry || entry.added < 1;
   });
@@ -125,9 +132,11 @@ function checkPushedRefs(stdin, env = process.env, protectedBranches = ['main'])
   const errors = [];
   for (const line of stdin.split('\n').filter(Boolean)) {
     const [, localSha, remoteRef] = line.split(' ');
-    if (/^0+$/.test(localSha) || !remoteRef || !remoteRef.startsWith('refs/heads/')) continue;
+    if (!remoteRef || !remoteRef.startsWith('refs/heads/')) continue;
     const branch = remoteRef.slice('refs/heads/'.length);
-    if (protectedBranches.includes(branch)) { errors.push(`direct push to ${branch} is refused: open a PR (P8)`); continue; }
+    const deletion = /^0+$/.test(localSha);
+    if (protectedBranches.includes(branch)) { errors.push(`${deletion ? 'deleting' : 'direct push to'} ${branch} is refused${deletion ? '' : ': open a PR'} (P8)`); continue; }
+    if (deletion) continue;
     if (branch.startsWith('release/')) continue;
     errors.push(...checkBranchName(branch, env));
   }
@@ -138,16 +147,31 @@ function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
-// Every CHANGELOG.md tracked in the repository; the PR's own checkout is the source of truth.
-function listChangelogs() {
+// Every CHANGELOG.md tracked in the repository, plus every one on the base: deleting a service's changelog does not
+// drop its P13 requirement.
+function listChangelogs(base) {
   // ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
-  return git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n').filter(f => f && !f.startsWith('templates/'));
+  const here = git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n');
+  const onBase = base ? git(['ls-tree', '-r', '--name-only', base]).split('\n').filter(f => CHANGELOG.test(f)) : [];
+  return [...new Set([...here, ...onBase])].filter(f => f && !f.startsWith('templates/'));
+}
+
+// LINEAR_TEAM from the repository's .env when the environment lacks it: hooks do not load .env.
+function teamFromDotenv() {
+  try {
+    const root = git(['rev-parse', '--show-toplevel']).trim();
+    const line = fs.readFileSync(`${root}/.env`, 'utf8').split('\n').find(l => /^\s*(export\s+)?LINEAR_TEAM\s*=/.test(l));
+    return line ? line.split('=').slice(1).join('=').trim().replace(/^['"]|['"]$/g, '') : '';
+  } catch { return ''; }
 }
 
 // The repository's default branch, as far as this checkout knows it. Pushes to it are refused like pushes to main.
 function protectedBranches() {
   const names = new Set(['main']);
-  try { names.add(git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim().replace(/^origin\//, '')); } catch { /* no origin/HEAD */ }
+  try {
+    const ref = execFileSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    names.add(ref.trim().replace(/^origin\//, ''));
+  } catch { /* no origin/HEAD */ }
   return [...names];
 }
 
@@ -162,6 +186,8 @@ function report(errors) {
 }
 
 function main(argv) {
+  // In CI the checkout is the PR's own: its .env must not choose the pattern that judges it.
+  if (!process.env.LINEAR_TEAM && !process.env.CI) { const team = teamFromDotenv(); if (team) process.env.LINEAR_TEAM = team; }
   const [cmd, ...rest] = argv;
   if (cmd === 'commit-msg') {
     if (!rest[0]) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
@@ -194,7 +220,7 @@ function main(argv) {
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, listChangelogs()),
+      ...checkChangelog(files, listChangelogs(base), git(['ls-tree', '-r', '--name-only', head]).split('\n').filter(Boolean)),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');

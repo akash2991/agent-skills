@@ -58,11 +58,12 @@ Don't combine formatting changes with behavior changes. Don't combine refactors 
 
 ```
 # Good: Separate concerns
-git commit -m "refactor: extract validation logic to shared utility"
-git commit -m "feat: add phone number validation to registration"
+git commit -m "refactor(validation): extract validation logic to shared utility [PROJ-123]"
+git commit -m "feat(registration): add phone number validation [PROJ-124]"
 
 # Bad: Mixed concerns
 git commit -m "refactor validation and add phone number field"
+# (each real commit also carries the Model, Thinking-effort, and Harness trailers, P3)
 ```
 
 **Separate refactoring from feature work.** A refactoring change and a feature change are two different changes — submit them separately. This makes each change easier to review, revert, and understand in history. Small cleanups (renaming a variable) can be included in a feature commit at reviewer discretion.
@@ -113,7 +114,7 @@ main ──●──●──●──●──●──●──●──●─
 | P13 | **Every merged task adds a changelog line** (global and per service), written in the same change while the impact is fresh. |
 | P14 | Reviewers create Linear issues for findings and comment on the PR while it is open. |
 
-- One ticket per PR; the title starts with the ticket id; the PR links the ticket and the ticket links the PR (P2, P4).
+- One ticket per PR; the title is `<ticket>: <goal>`; the PR links the ticket and the ticket links the PR (P2, P4).
 
 ## Merge
 
@@ -124,7 +125,7 @@ main ──●──●──●──●──●──●──●──●─
 
 ## Enforced by script
 
-P2, P3, P5, P10, P11, and P13 are checked by `scripts/brain-git-check.js` instead of by memory; P7, P10, P12, and P15 are carried out by `scripts/merge-pr.js`. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks; it reads the checker from the base branch, so merge the brain into that branch before adding the workflow. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12); that stays with the author and the reviewer.
+P2–P5, P8 (no direct push to the default branch), the PR title (P10), P11, and P13 are checked by `scripts/brain-git-check.js` instead of by memory; the merge conditions of P10 (approval of the current head by someone with write access, no unresolved review thread), P7, P12, and P15 are carried out by `scripts/merge-pr.js`, which does not support repositories with a merge queue. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks; it reads the checker from the base branch, so merge the brain into that branch before adding the workflow. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12); that stays with the author and the reviewer.
 
 ## The Save Point Pattern
 

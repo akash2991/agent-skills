@@ -86,7 +86,7 @@ test('a changelog line is required in the global file and in the service it touc
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
   const ok = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', headRefOid: 'h1', author: { login: 'agent' },
-    reviews: [{ author: { login: 'r' }, state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
   assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
@@ -207,7 +207,7 @@ test('only the newest run of each check counts: a re-run after a fix clears the 
 test('an approval counts from a reviewer other than the author, on the current head only', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid = head) => ({ author: { login }, authorAssociation: 'MEMBER', state, commit: { oid } });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('agent', 'APPROVED')] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED', 'h1')] }), false, 'approval of an older commit');
@@ -243,23 +243,24 @@ test('two workflows with a job of the same name are separate checks: a failing t
 test('a COMMENTED review is a reply, not a verdict: it neither approves nor overrides a request for changes', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head } });
+  const rev = (login, state) => ({ author: { login }, authorAssociation: 'MEMBER', state, commit: { oid: head } });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r1', 'COMMENTED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r2', 'CHANGES_REQUESTED'), rev('r2', 'COMMENTED')] }), false);
 });
 
-test('an SSH host alias is read as GitHub; a non-GitHub host is refused', () => {
+test('only github.com is inferred from origin; an unresolved alias or another host is refused', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alias-'));
   const cwd = process.cwd();
   execFileSync('git', ['init', '-q'], { cwd: dir });
   process.chdir(dir);
   try {
-    execFileSync('git', ['remote', 'add', 'origin', 'git@github-work:org/app.git']);
-    assert.strictEqual(originRepo(), 'org/app');
+    // An alias counts only when ssh resolves it to github.com; an unknown alias is refused, not guessed.
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github-no-such-alias-7f3:org/app.git']);
+    assert.throws(() => originRepo(), /not a github\.com remote; pass --repo/);
     execFileSync('git', ['remote', 'set-url', 'origin', 'ssh://git@ssh.github.com:443/org/app.git']);
     assert.strictEqual(originRepo(), 'org/app');
     execFileSync('git', ['remote', 'set-url', 'origin', 'git@gitlab.com:org/app.git']);
-    assert.throws(() => originRepo(), /not a GitHub remote/);
+    assert.throws(() => originRepo(), /not a github\.com remote/);
   } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -312,9 +313,170 @@ test('a branch default with a trailing newline from git is still protected', () 
 test('a change request stays in force after a new push until its reviewer approves or dismisses it', () => {
   const author = { login: 'agent' };
   const h2 = 'h2';
-  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid) => ({ author: { login }, authorAssociation: 'MEMBER', state, commit: { oid } });
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r2', 'APPROVED', h2)] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r1', 'APPROVED', h2), rev('r2', 'APPROVED', h2)] }), true);
+});
+
+test('only reviewers with write access count; a stranger neither approves nor blocks', () => {
+  const author = { login: 'agent' };
+  const rev = (login, state, authorAssociation) => ({ author: { login }, authorAssociation, state, commit: { oid: 'h' } });
+  assert.strictEqual(isApproved({ author, headRefOid: 'h', reviews: [rev('x', 'APPROVED', 'NONE')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: 'h', reviews: [rev('x', 'APPROVED', 'CONTRIBUTOR')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: 'h', reviews: [rev('m', 'APPROVED', 'COLLABORATOR'), rev('x', 'CHANGES_REQUESTED', 'NONE')] }), true);
+});
+
+test('checks are keyed by workflow run: same-named workflows and push vs pull_request runs are judged separately', () => {
+  const url = id => `https://github.com/o/r/actions/runs/${id}/job/1`;
+  const runs = latestRuns([
+    { workflowName: 'CI', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z', detailsUrl: url(1) },
+    { workflowName: 'CI', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z', detailsUrl: url(2) },
+  ]);
+  assert.strictEqual(runs.length, 2);
+  // A re-run keeps its run id, so the newest attempt replaces the failure.
+  assert.strictEqual(latestRuns([
+    { workflowName: 'CI', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z', detailsUrl: url(3) },
+    { workflowName: 'CI', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:05:00Z', detailsUrl: url(3) },
+  ]).length, 1);
+});
+
+test('the merge title rule is the CI one: "<ticket>: <goal>"', () => {
+  const view = { state: 'OPEN', title: 'ENG-2 add y', headRefOid: 'h', author: { login: 'a' },
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  assert.match(mergeBlockers(view).blockers.join(), /PR title must be "<ticket>: <goal>"/);
+});
+
+test('a GitHub Enterprise origin is refused rather than retargeted to github.com', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghe-'));
+  const cwd = process.cwd();
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  process.chdir(dir);
+  try {
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.enterprise.example/org/app.git']);
+    assert.throws(() => originRepo(), /pass --repo <host>\/<owner>\/<name>/);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('pushing a deletion of main is refused; deleting a feature branch is not', () => {
+  const z = '0'.repeat(40);
+  assert.match(check.checkPushedRefs(`(delete) ${z} refs/heads/main ${'a'.repeat(40)}\n`).join(), /deleting main is refused/);
+  assert.deepStrictEqual(check.checkPushedRefs(`(delete) ${z} refs/heads/ENG-1-x ${'a'.repeat(40)}\n`), []);
+});
+
+test('a service changelog deleted by the PR is still required (P13)', () => {
+  const all = ['CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const files = check.parseNumstat('1\t0\tCHANGELOG.md\n0\t5\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
+  assert.match(check.checkChangelog(files, all).join(), /services\/api\/CHANGELOG\.md/);
+});
+
+// merge-pr end to end against a fake gh: a bare repository stands in for GitHub, and `gh pr merge` performs the merge.
+function mergeFixture(view) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-pr-'));
+  const run = (args, cwd) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  run(['init', '-q', '--bare', '-b', 'main', 'origin.git'], root);
+  const work = path.join(root, 'work');
+  run(['clone', '-q', path.join(root, 'origin.git'), work], root);
+  run(['commit', '-q', '--allow-empty', '-m', 'init'], work);
+  run(['push', '-q', 'origin', 'HEAD:main'], work);
+  run(['switch', '-q', '-c', 'ENG-1-x'], work);
+  run(['commit', '-q', '--allow-empty', '-m', 'work'], work);
+  run(['push', '-q', 'origin', 'ENG-1-x'], work);
+  run(['switch', '-q', '--detach', 'main'], work);
+  // origin names github.com/o/r; insteadOf sends its fetches to the bare repository.
+  run(['remote', 'set-url', 'origin', 'https://github.com/o/r.git'], work);
+  run(['config', `url.${path.join(root, 'origin.git')}.insteadOf`, 'https://github.com/o/r.git'], work);
+  const head = run(['rev-parse', 'ENG-1-x'], work).trim();
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  const log = path.join(root, 'gh.log');
+  const viewFile = path.join(root, 'view.json');
+  fs.writeFileSync(viewFile, JSON.stringify({ headRefOid: head, ...view }));
+  fs.writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env node
+const fs = require('fs'); const { execFileSync } = require('child_process');
+const a = process.argv.slice(2); fs.appendFileSync(${JSON.stringify(log)}, a.join(' ') + '\\n');
+if (a[0] === 'api' && a.some(x => x.endsWith('/permission'))) { process.stdout.write(JSON.stringify({ permission: a.some(x => x.includes('/stranger/')) ? 'read' : 'write' })); process.exit(0); }
+if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
+if (a[0] === 'pr' && a[1] === 'view') {
+  const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
+  process.stdout.write(JSON.stringify(a.includes('state') && a[a.length - 1] === 'state' ? { state: 'MERGED' } : v)); process.exit(0);
+}
+if (a[0] === 'pr' && a[1] === 'merge') {
+  const tmp = fs.mkdtempSync(require('os').tmpdir() + '/m-');
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: tmp });
+  g(['clone', '-q', '-b', 'main', ${JSON.stringify(path.join(root, 'origin.git'))}, '.']);
+  g(['merge', '-q', '--no-ff', 'origin/ENG-1-x', '-m', 'Merge pull request #1 [ENG-1]']);
+  g(['push', '-q', 'origin', 'HEAD:main']);
+  process.exit(0);
+}
+process.exit(1);
+`, { mode: 0o755 });
+  return { root, work, log, head, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } };
+}
+
+const mergeView = {
+  state: 'OPEN', title: 'ENG-1: x', headRefName: 'ENG-1-x', baseRefName: 'main', isCrossRepository: false, author: { login: 'a' },
+  statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
+};
+
+test('merge-pr merges the inspected head and deletes the local branch once the base contains it', () => {
+  const f = mergeFixture(mergeView);
+  const view = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
+  execFileSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8', stdio: 'pipe' });
+  assert.match(fs.readFileSync(f.log, 'utf8'), new RegExp(`pr merge 1 --repo o/r --merge --delete-branch --match-head-commit ${f.head}`));
+  assert.throws(() => execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' }));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('merge-pr leaves a same-named local branch alone when it is not the merged head', () => {
+  const f = mergeFixture({ ...mergeView, isCrossRepository: true });
+  const view = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /left alone/);
+  execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('merge-pr checks each reviewer\'s real permission: a read-only approver does not count', () => {
+  const f = mergeFixture(mergeView);
+  const view = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  // authorAssociation says MEMBER, but the permission API says read: the API wins.
+  view.reviews = [{ author: { login: 'stranger' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
+  const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /no approval of the current head/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /pr merge/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a service removed from the head no longer needs its changelog; one still present does', () => {
+  const all = ['CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const files = check.parseNumstat('1\t0\tCHANGELOG.md\n0\t5\tservices/api/CHANGELOG.md\n0\t9\tservices/api/src/a.ts');
+  assert.deepStrictEqual(check.checkChangelog(files, all, ['CHANGELOG.md', 'README.md']), []);
+  assert.match(check.checkChangelog(files, all, ['CHANGELOG.md', 'services/api/src/b.ts']).join(), /services\/api\/CHANGELOG\.md/);
+});
+
+test('merge-pr does not touch local branches for a --repo that is not origin, and blocks on unresolved threads', () => {
+  const f = mergeFixture(mergeView);
+  const view = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  view.reviews = [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: f.head } }];
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
+  const blocked = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r'], { cwd: f.work, env: { ...f.env, FAKE_UNRESOLVED: '1\n1\n' }, encoding: 'utf8' });
+  assert.strictEqual(blocked.status, 1);
+  assert.match(blocked.stderr, /2 review thread\(s\) are unresolved/);
+  const other = require('child_process').spawnSync('node', [script, '1', '--repo', 'upstream/r'], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.match(other.stderr, /left alone/);
+  execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
 });

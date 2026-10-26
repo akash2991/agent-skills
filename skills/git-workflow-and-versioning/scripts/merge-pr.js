@@ -7,7 +7,7 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource } = require('./brain-git-check');
+const { ticketSource, checkPrTitle } = require('./brain-git-check');
 
 function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -17,23 +17,46 @@ function git(args) {
   return execFileSync('git', args, { encoding: 'utf8' });
 }
 
-// owner/name of the GitHub repository behind origin. Works for SSH host aliases (git@github-work:org/app.git) and
-// ssh:// URLs; a host that is not GitHub is refused, and --repo overrides it (a fork's PR lives on upstream).
+// The github.com repository behind origin, as owner/name. Only github.com is inferred: ssh.github.com, and an SSH host
+// alias (git@github-work:org/app.git) whose `ssh -G` HostName is github.com. Any other host, GitHub Enterprise
+// included, is refused rather than guessed, so gh never acts on a same-named repository elsewhere: pass
+// --repo <host>/<owner>/<name> for it (and for a fork's PR, which lives on upstream).
 function originRepo() {
-  const url = git(['remote', 'get-url', 'origin']).trim();
-  const host = (url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '';
+  // The URL as configured, before any url.*.insteadOf rewrite: that is the repository the user named.
+  const url = git(['config', '--get', 'remote.origin.url']).trim();
+  const host = ((url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '').toLowerCase();
   const repo = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
-  if (!repo || !/github/i.test(host)) throw new Error(`origin is not a GitHub remote (${url}); pass --repo <owner/name>`);
+  if (!repo || resolvedHost(host, url) !== 'github.com') {
+    throw new Error(`origin (${url}) is not a github.com remote; pass --repo <host>/<owner>/<name>`);
+  }
   return `${repo[1]}/${repo[2]}`;
 }
 
+function resolvedHost(host, url) {
+  if (host === 'ssh.github.com') return 'github.com';
+  if (host.includes('.') || /^[a-z+]+:\/\//.test(url) && !url.startsWith('ssh://')) return host;
+  try {
+    const out = execFileSync('ssh', ['-G', host], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const name = ((out.match(/^hostname (\S+)$/m) || [])[1] || host).toLowerCase();
+    return name === 'ssh.github.com' ? 'github.com' : name;
+  } catch { return host; }
+}
+
+// [host/]owner/name split into its parts; host is github.com when absent.
+function splitRepo(repo) {
+  const parts = repo.split('/');
+  return parts.length === 3 ? { host: parts[0], owner: parts[1], name: parts[2] } : { host: 'github.com', owner: parts[0], name: parts[1] };
+}
+
 // GitHub keeps every run of a check on the head: a failed run followed by a passing re-run is still listed.
-// Runs are keyed by workflow and check name (two workflows may both have a job called "test"), and the newest by
-// start time counts. A run that has not completed is pending, and pending blocks the merge.
+// A re-run keeps its workflow run id (…/actions/runs/<id>/…), so runs are keyed by run id and check name, and the
+// newest attempt counts. Two workflows sharing a display name, or the push and pull_request runs of one workflow,
+// have different run ids and are judged separately. A run that has not completed is pending, and pending blocks.
 function latestRuns(checks) {
   const byKey = new Map();
   for (const c of checks) {
-    const key = `${c.workflowName || ''}/${c.name || c.context}`;
+    const runId = ((c.detailsUrl || '').match(/\/actions\/runs\/(\d+)/) || [])[1] || c.workflowName || '';
+    const key = `${runId}/${c.name || c.context}`;
     // A run that has not started carries the zero time: it is newer than anything that finished.
     const raw = c.startedAt || c.createdAt || '';
     const when = !raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0;
@@ -47,15 +70,20 @@ function isPending(c) {
   return (c.status && c.status !== 'COMPLETED') || ['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS'].includes(c.state);
 }
 
-// Approved means every reviewer's newest verdict (APPROVED or CHANGES_REQUESTED, on any commit) is not a change
+// Only reviewers with write permission count, approving or requesting changes: on a public repository anyone can
+// leave a review. view.writers is the set main() verified through the collaborators permission API; without it
+// (unit tests) authorAssociation stands in. Approved means every such reviewer's newest verdict (APPROVED or CHANGES_REQUESTED, on any commit) is not a change
 // request, and at least one such verdict is an APPROVED given on the current head. A change request stays in force after
 // a new push until its reviewer approves or dismisses it. COMMENTED reviews are replies. The branch-protection
 // reviewDecision is not trusted alone: without dismissal of stale approvals it stays APPROVED after a push.
+const WRITE_ACCESS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
 function isApproved(view) {
   const newest = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
     if (!login || (view.author && login === view.author.login)) continue;
+    if (view.writers ? !view.writers.has(login) : !WRITE_ACCESS.includes(r.authorAssociation)) continue;
     if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
     newest.set(login, { state: r.state, oid: r.commit && r.commit.oid });
   }
@@ -69,8 +97,9 @@ function isApproved(view) {
 function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env) {
   const blockers = [];
   if (view.state !== 'OPEN') blockers.push(`PR is ${view.state}, not OPEN`);
-  const ticket = new RegExp(`^(${ticketSource(env)})(:|\\s)`).exec(view.title || '');
-  if (!ticket) blockers.push('PR title does not start with the ticket id (P10)');
+  // The same title rule CI checks: "<ticket>: <goal>".
+  blockers.push(...checkPrTitle(view.title, env));
+  const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
   const pending = checks.filter(isPending);
@@ -82,12 +111,25 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   return { blockers, ticket: ticket && ticket[1] };
 }
 
-// Review threads still open on the PR (P10: every review comment is resolved). gh pr view does not report them.
+// Review threads still open on the PR (P10: every review comment is resolved), across every page. gh pr view does
+// not report them.
+// The reviewers among `logins` whose permission on the repository is write or higher.
+function writers(repo, logins) {
+  const { host, owner, name } = splitRepo(repo);
+  const set = new Set();
+  for (const login of logins) {
+    const out = JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/collaborators/${login}/permission`]));
+    if (['admin', 'maintain', 'write'].includes(out.permission) || ['admin', 'write'].includes(out.role_name)) set.add(login);
+  }
+  return set;
+}
+
 function unresolvedThreads(repo, pr) {
-  const [owner, name] = repo.split('/');
-  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}';
-  const out = JSON.parse(gh(['api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${pr}`]));
-  return out.data.repository.pullRequest.reviewThreads.nodes.filter(t => !t.isResolved).length;
+  const { host, owner, name } = splitRepo(repo);
+  const query = 'query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}';
+  const out = gh(['api', 'graphql', '--hostname', host, '--paginate', '--jq', '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | 1',
+    '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${pr}`]);
+  return out.split('\n').filter(Boolean).length;
 }
 
 function localTip(branch) {
@@ -99,16 +141,32 @@ function main(argv) {
   if (!pr) { console.error('usage: merge-pr.js <pr-number> [--review-optional]'); process.exit(2); }
   const flag = argv.indexOf('--repo');
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
-  if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
+  // Local cleanup is safe only for the repository this checkout's origin points at.
+  let ownRepo = flag === -1;
+  if (!ownRepo) { try { ownRepo = originRepo() === repo; } catch { ownRepo = false; } }
+  if (!repo || !/^([^/]+\/)?[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes [host/]owner/name'); process.exit(2); }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
   view.unresolvedThreads = unresolvedThreads(repo, pr);
+  const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
+  view.writers = writers(repo, [...reviewers]);
   const { blockers, ticket } = mergeBlockers(view, { reviewOptional: argv.includes('--review-optional') });
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
     process.exit(1);
   }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
-  gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--delete-branch', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
+  // A repository with a merge queue refuses --delete-branch; merge-pr does not support merge queues.
+  let remoteDeleted = !view.isCrossRepository;
+  try {
+    gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--delete-branch', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
+  } catch (err) {
+    // gh can fail after the merge itself, for example when deleting the remote branch: go on only if the PR merged.
+    const state = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state'])).state;
+    if (state !== 'MERGED') { console.error(`merge-pr: gh pr merge failed: ${String(err.stderr || err.message).trim()}`); process.exit(1); }
+    console.error(`merge-pr: merged, but gh reported: ${String(err.stderr || err.message).trim()}; check the remote branch (P7)`);
+    remoteDeleted = false;
+    process.exitCode = 1;
+  }
   // gh deletes the head branch only when it lives in the repository merged into; a fork's branch stays and P7 is not complete.
   if (view.isCrossRepository) {
     console.error(`merge-pr: branch ${view.headRefName} lives in the fork and was not deleted; delete it in the fork (P7)`);
@@ -117,8 +175,13 @@ function main(argv) {
   // The local branch is deleted once the fetched base contains its tip; `git branch -d` would compare against the
   // local HEAD, which does not have the merge yet. Unpushed work, or a branch checked out in another worktree (P6),
   // is reported, not hidden.
+  // A same-named local branch is this PR's only when it points at the merged head and the PR is not from a fork:
+  // a fork's head named main must not delete this checkout's main.
   const local = localTip(view.headRefName);
-  if (local) {
+  if (local && (!ownRepo || view.isCrossRepository || local !== view.headRefOid)) {
+    console.error(`merge-pr: local branch ${view.headRefName} is not the merged head ${view.headRefOid.slice(0, 8)}; left alone (P7: delete it by hand if it is this PR's)`);
+    process.exitCode = 1;
+  } else if (local) {
     try {
       git(['fetch', '--quiet', 'origin', view.baseRefName]);
       git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
@@ -132,9 +195,9 @@ function main(argv) {
       process.exitCode = 1;
     }
   }
-  console.log(`merged #${pr} with a merge commit; branch ${view.headRefName} deleted on the remote`);
+  console.log(`merged #${pr} with a merge commit${remoteDeleted ? `; branch ${view.headRefName} deleted on the remote` : ''}`);
 }
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { mergeBlockers, originRepo, latestRuns, isApproved, isPending };
+module.exports = { mergeBlockers, originRepo, splitRepo, latestRuns, isApproved, isPending };
