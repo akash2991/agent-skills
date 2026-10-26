@@ -381,7 +381,7 @@ function main(argv) {
     let isMerge = false;
     try {
       if (fs.existsSync(git(['rev-parse', '--git-path', 'MERGE_HEAD']).trim())) isMerge = true;
-      else if (git(['rev-list', '--parents', '-n', '1', 'HEAD']).trim().split(' ').length > 2) {
+      else if (execFileSync('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split(' ').length > 2) {
         const subject = raw.split(/\r?\n/).find(l => !l.startsWith('#') && l.trim()) || '';
         if (subject.trim() === git(['log', '-1', '--format=%s', 'HEAD']).trim()) isMerge = true;
       }
@@ -430,11 +430,11 @@ function main(argv) {
     const noAttrs = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
     // Without --attr-source (git before 2.41) the PR's own .gitattributes would apply: refuse rather than count wrong.
     let numstat;
-    try { numstat = git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
+    try { numstat = git(['--attr-source', noAttrs, 'diff', '--ignore-submodules=none', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
     catch (err) { return report([`git ${git(['--version']).trim().replace(/^git version /, '')} cannot count lines independently of .gitattributes (needs --attr-source, git 2.41 or later): ${String(err.stderr || err.message).trim().split('\n')[0]}`]); }
     const files = parseNumstat(numstat);
     // P11 counts a rename as one file with its own line changes; P13 keeps the rename-free list above.
-    const sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '-M', '--text', `${base}...${head}`]));
+    const sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '--ignore-submodules=none', '-z', '--numstat', '-M', '--text', `${base}...${head}`]));
     // git reports a file with a NUL in its first 8000 bytes as binary, with no line counts, --text notwithstanding:
     // count such a file's lines from its blobs when it is text apart from NULs (generated or minified output). A real
     // binary (an image) is not valid UTF-8 and stays one file with no lines.

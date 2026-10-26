@@ -133,7 +133,7 @@ Paths are as installed by `agent-brain pull` (`.agents/skills/…`; Claude's cop
 **What checks what.**
 - `scripts/brain-git-check.js` checks P2–P5, P8 (no direct push to, or deletion of, `main` or the remote's default branch; no deletion of a long-lived branch), one ticket across the branch, the title `<ticket>: <goal>`, and the commits (P2, P4), P11, and P13. It runs as the `commit-msg` and `pre-push` hooks and in CI.
 - `scripts/merge-pr.js` carries out the merge conditions of P10 (approval of the current head by someone with write access, no unresolved review thread), P7, P12's green-CI condition, and P15.
-- Neither can judge whether a commit is one coherent capability (P2), whether a PR is deployable on its own (P12), or whether the approving writer is the discipline's code reviewer (P10); that stays with the author and the reviewer.
+- Neither can judge whether a commit is one coherent capability (P2), whether a PR is deployable on its own (P12), whether the approving writer is the discipline's code reviewer (P10), whether the PR follows the PR template (P10), or whether the PR and the ticket link each other (P2, P4); that stays with the author and the reviewer.
 
 **Set up, once per project.**
 - Run `scripts/install-hooks.js` once per clone, and once per worktree when `core.hooksPath` is relative (it says so). It refuses a hook directory outside the repository, never writes through a symlinked hook file, and makes the hooks executable. With husky, which owns `core.hooksPath`, call the checker from husky's hooks instead: `.husky/commit-msg` runs `node .agents/skills/git-workflow-and-versioning/scripts/brain-git-check.js commit-msg "$1"` and `.husky/pre-push` runs `… brain-git-check.js push "$@"`.

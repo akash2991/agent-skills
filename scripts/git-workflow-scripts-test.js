@@ -845,7 +845,8 @@ test('an insteadOf rule that rewrites origin leaves the remote branch alone', ()
   execFileSync('git', ['config', `url.${wrong}.insteadOf`, 'https://github.com/o/r.git'], { cwd: f.work });
   const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
   assert.strictEqual(r.status, 3, r.stderr);
-  assert.match(r.stderr, /insteadOf rule rewrites/);
+  // A rewritten origin is not origin's repository, so nothing is deleted through it.
+  assert.match(r.stderr, /insteadOf rule rewrites|not in origin's repository/);
   execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: wrong, stdio: 'pipe' });
   fs.rmSync(f.root, { recursive: true, force: true });
 });
@@ -2084,7 +2085,7 @@ test('a pr-rules run created in the same second as the last edit does not count'
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
     statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runTitle: 'pr-rules #1', runCreated: '2026-10-26T10:00:00Z', jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }],
     metadataChangedAt: '2026-10-26T10:00:00Z' };
-  assert.match(mergeBlockers(view).blockers.join(), /pr-rules last passed before/);
+  assert.match(mergeBlockers(view).blockers.join(), /same second .*close and reopen the PR/);
 });
 
 test('P11 counts a UTF-16 file with a byte-order mark, ASCII or not', () => {
@@ -2113,4 +2114,44 @@ test('P11 counts a UTF-16 file with a byte-order mark, ASCII or not', () => {
     assert.strictEqual(small.status, 0, small.stderr);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an insteadOf rewrite of origin stops repository inference before any merge', () => {
+  const f = approvedFixture();
+  execFileSync('git', ['config', 'url.https://github.com/elsewhere/.insteadOf', 'https://github.com/o/'], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /rewritten to https:\/\/github\.com\/elsewhere\/r\.git by url\.\*\.insteadOf/);
+  assert.ok(!fs.existsSync(f.log) || !/^pr merge/m.test(fs.readFileSync(f.log, 'utf8')));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('P11 counts submodule updates even when .gitmodules says ignore = all', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subm-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']);
+  const sha = n => require('crypto').createHash('sha1').update(String(n)).digest('hex');
+  let gm = '';
+  for (let i = 0; i < 11; i++) { g(['update-index', '--add', '--cacheinfo', `160000,${sha(i)},m${i}`]); gm += `[submodule "m${i}"]\n\tpath = m${i}\n\turl = ./m${i}\n\tignore = all\n`; }
+  fs.writeFileSync(path.join(dir, '.gitmodules'), gm); fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# c\n');
+  g(['add', '.gitmodules', 'CHANGELOG.md']); g(['commit', '-q', '-m', 'init']); g(['switch', '-q', '-c', 'ENG-1-x']);
+  for (let i = 0; i < 11; i++) g(['update-index', '--cacheinfo', `160000,${sha(i + 100)},m${i}`]);
+  fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '- x\n'); g(['add', 'CHANGELOG.md']);
+  g(['commit', '-q', '-m', 'chore(deps): bump [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: bump', '--branch', 'ENG-1-x'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /in 12 files/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the commit-msg hook prints no git error on a repository\'s first commit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, 'msg'), 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n');
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG' } });
+  assert.strictEqual(r.status, 0);
+  assert.doesNotMatch(r.stderr, /fatal:/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -45,6 +45,10 @@ function originParts() {
   const urls = git(['config', '--get-all', 'remote.origin.url']).split('\n').filter(Boolean);
   if (urls.length !== 1) throw new Error(`origin has ${urls.length} URLs; pass --repo <host>/<owner>/<name>`);
   const url = urls[0].trim();
+  // A url.*.insteadOf rule makes git talk to another URL than the one configured: then the repository is not known
+  // from the URL, so refuse rather than act on the configured one.
+  const effective = git(['ls-remote', '--get-url', 'origin']).trim();
+  if (effective !== url) throw new Error(`origin (${url}) is rewritten to ${effective} by url.*.insteadOf; pass --repo <host>/<owner>/<name>`);
   // Only GitHub's transports: a file:// URL (file://github.com/tmp/o/r.git is a local path) names no GitHub repository.
   const scheme = (url.match(/^([a-z][a-z0-9+.-]*):\/\//i) || [])[1];
   if (scheme && !['https', 'http', 'ssh', 'git', 'git+ssh', 'ssh+git'].includes(scheme.toLowerCase())) {
@@ -225,7 +229,10 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // Strictly after: times have one-second precision, so a run created in the same second as the edit may have
   // checked the PR as it was before it.
   if (passed.length && changed && !passed.some(c => (Date.parse(c.runCreated || '') || 0) > changed)) {
-    blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers. A re-run checks the old snapshot: if no run starts (an edit by a workflow token), make a fresh edit or close and reopen the PR (P10, P11)`);
+    const sameSecond = passed.some(c => (Date.parse(c.runCreated || '') || 0) === changed);
+    blockers.push(sameSecond
+      ? `pr-rules last passed in a run created in the same second as the PR's last title, body, or base change (${view.metadataChangedAt}), so it may have checked the older PR: close and reopen the PR as a user (a workflow token starts no run) for a fresh run (P10, P11)`
+      : `pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers. A re-run checks the old snapshot: if no run starts (an edit by a workflow token), close and reopen the PR as a user (P10, P11)`);
   }
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
