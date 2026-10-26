@@ -6,7 +6,7 @@ Print the current state of the agents in this session, the main agent (you) firs
 
 ```
 Agent: main | subagent <id>
-Runtime Name: <exact worktree basename or ->
+Runtime Name: <ticket>-<slug> (<persona>), or <ticket> <scope> (<persona>) without a worktree
 Worktree: <path or ->
 Persona: <name>
 Skills: <loaded, in load order>
