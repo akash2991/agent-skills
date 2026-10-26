@@ -96,9 +96,14 @@ function latestRuns(checks) {
       runs.set(id, run);
     }
     const ordered = [...runs.values()].sort((a, b) => b.created - a.created);
+    // The newest attempt stands in for the run only when it re-ran every job of that name: a partial re-run of one of
+    // two same-named jobs cannot say which earlier job it replaces, so then every job of the run counts.
     const latestAttempt = jobs => {
       if (!jobs.every(j => Number(j.jobAttempt))) return jobs;
-      const top = Math.max(...jobs.map(j => Number(j.jobAttempt)));
+      const byAttempt = new Map();
+      for (const j of jobs) byAttempt.set(Number(j.jobAttempt), (byAttempt.get(Number(j.jobAttempt)) || 0) + 1);
+      const top = Math.max(...byAttempt.keys());
+      if ([...byAttempt.values()].some(n => n > byAttempt.get(top))) return jobs;
       return jobs.filter(j => Number(j.jobAttempt) === top);
     };
     const executed = ordered.map(r => latestAttempt(r.jobs)).find(jobs => jobs.some(j => !passive(j)));
@@ -126,6 +131,8 @@ function verdicts(view) {
     const login = r.author && r.author.login;
     if (!login || (view.author && login === view.author.login)) continue;
     if (view.writers ? !view.writers.has(login) : !WRITE_ACCESS.includes(r.authorAssociation)) continue;
+    // A dismissed review withdraws that reviewer's verdict; it does not bring back an earlier one.
+    if (r.state === 'DISMISSED') { newest.delete(login); continue; }
     if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
     newest.set(login, { state: r.state, oid: r.commit && r.commit.oid });
   }
@@ -150,7 +157,7 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // The same title rule CI checks: "<ticket>: <goal>". The title, branch, and commits are checked again here, because a
   // pr-rules success on this head may predate a retitle (the head SHA does not change).
   blockers.push(...checkPrTitle(view.title, env));
-  if (view.commits) blockers.push(...checkOneTicket({ branch: view.headRefName, title: view.title, messages: view.commits.map(c => `${c.messageHeadline}\n\n${c.messageBody || ''}`) }, env));
+  if (view.commitMessages) blockers.push(...checkOneTicket({ branch: view.headRefName, title: view.title, messages: view.commitMessages }, env));
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
@@ -163,7 +170,7 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // checked other metadata (a removed Size-exception, a retitle, a new base). Wait for the run the edit triggers.
   const changed = Date.parse(view.metadataChangedAt || '') || 0;
   if (passed.length && changed && !passed.some(c => (Date.parse(c.startedAt || '') || 0) >= changed)) {
-    blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers (P10, P11)`);
+    blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers, or re-run pr-rules if the change came from a workflow token, which starts none (P10, P11)`);
   }
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
@@ -229,6 +236,13 @@ function metadataChangedAt(repo, pr) {
   return out.sort().pop() || '';
 }
 
+// The PR's commit messages in full (GraphQL's messageHeadline is cut at about 70 characters).
+function prCommitMessages(repo, pr) {
+  const { host, owner, name } = splitRepo(repo);
+  const pages = JSON.parse(gh(['api', '--hostname', host, '--paginate', '--slurp', `repos/${owner}/${name}/pulls/${pr}/commits?per_page=100`]) || '[]');
+  return pages.flat().map(c => c.commit.message);
+}
+
 function unresolvedThreads(repo, pr) {
   const { host, owner, name } = splitRepo(repo);
   const query = 'query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}';
@@ -281,8 +295,11 @@ function main(argv) {
   if (!opts) { console.error(USAGE); process.exit(2); }
   loadDotenv();
   const { pr } = opts;
-  const repo = opts.repo || originRepo();
-  if (!/^([^/]+\/)?[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes [host/]owner/name'); process.exit(2); }
+  const given = opts.repo || originRepo();
+  if (!/^([^/]+\/)?[^/]+\/[^/]+$/.test(given)) { console.error('merge-pr: --repo takes [host/]owner/name'); process.exit(2); }
+  // Every gh command gets host/owner/name: a bare owner/name would follow GH_HOST to another host.
+  const { host: rh, owner: ro, name: rn } = splitRepo(given);
+  const repo = `${rh}/${ro}/${rn}`;
   // Branch cleanup goes through this checkout's origin, so it runs only when origin is the target repository.
   let ownRepo = !opts.repo;
   if (!ownRepo) {
@@ -290,11 +307,15 @@ function main(argv) {
     const same = (a, b) => ['host', 'owner', 'name'].every(k => a[k].toLowerCase() === b[k].toLowerCase());
     try { ownRepo = same(splitRepo(originRepo()), splitRepo(repo)); } catch { ownRepo = false; }
   }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit,commits']));
+  // The origin URL as verified now; cleanup uses this one and stops if origin is changed meanwhile.
+  let verifiedUrl = '';
+  if (ownRepo) { try { verifiedUrl = git(['config', '--get', 'remote.origin.url']).trim(); } catch { ownRepo = false; } }
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
   // on to cleanup only if the merge commit proves P15 and P3.
   const alreadyMerged = view.state === 'MERGED';
   view.unresolvedThreads = unresolvedThreads(repo, pr);
+  if (!alreadyMerged) view.commitMessages = prCommitMessages(repo, pr);
   view.metadataChangedAt = alreadyMerged ? '' : metadataChangedAt(repo, pr);
   runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
@@ -321,6 +342,12 @@ function main(argv) {
   const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
   view.writers = writers(repo, [...reviewers]);
   const { blockers, ticket } = alreadyMerged ? { blockers: [], ticket: '' } : mergeBlockers(view, { reviewOptional: opts.reviewOptional });
+  // GitHub's "Automatically delete head branches" deletes any unprotected head on merge, long-lived or not.
+  if (!alreadyMerged && longLived(view.headRefName, defaultBranch) && !isProtected) {
+    let autoDelete = true;
+    try { autoDelete = gh(['api', '--hostname', h, `repos/${o}/${n}`, '--jq', '.delete_branch_on_merge']).trim() !== 'false'; } catch { /* unknown: assume it deletes */ }
+    if (autoDelete) blockers.push(`${view.headRefName} is long-lived but unprotected, and the repository deletes head branches on merge (or that could not be read): protect it first (P16)`);
+  }
   if (!alreadyMerged && hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
@@ -383,8 +410,15 @@ function main(argv) {
   }
   // Remote: delete the branch only while it still points at the merged head; a commit pushed since survives. The push
   // goes to origin's configured URL, the one checked against the repository above, never to a separate pushurl.
-  const url = git(['config', '--get', 'remote.origin.url']).trim();
+  const url = verifiedUrl;
   const remoteRef = `refs/heads/${view.headRefName}`;
+  let nowUrl = '';
+  try { nowUrl = git(['config', '--get', 'remote.origin.url']).trim(); } catch { /* removed */ }
+  if (nowUrl !== url) {
+    console.error(`merge-pr: merged #${pr}; origin changed during the run (${url} -> ${nowUrl || 'none'}), so ${view.headRefName} was left: delete it by hand (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
   // A url.*.insteadOf or pushInsteadOf rule would send the push somewhere other than the verified URL: leave the
   // branch then.
   if (git(['ls-remote', '--get-url', url]).trim() !== url) {
@@ -420,7 +454,8 @@ function main(argv) {
     process.exitCode = CLEANUP_INCOMPLETE;
   } else if (local) {
     try {
-      git(['fetch', '--quiet', 'origin', view.baseRefName]);
+      // From the verified URL, not the origin remote, which may have changed.
+      git(['fetch', '--quiet', url, `+refs/heads/${view.baseRefName}:refs/remotes/origin/${view.baseRefName}`]);
       git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
       const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
       if (checkedOut) throw new Error('it is checked out in a worktree: remove that worktree (or detach it), then delete the branch');

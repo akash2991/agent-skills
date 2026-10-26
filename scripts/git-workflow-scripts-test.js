@@ -11,6 +11,9 @@ const { mergeBlockers } = require('../skills/git-workflow-and-versioning/scripts
 const { install, MARKER } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
 const { checkCommitMessage } = check;
 
+// The suite is independent of the caller's shell: a project's .env loaded there must not change the results.
+for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED', 'CI', 'GH_HOST']) delete process.env[key];
+
 const GOOD = [
   'feat(login): add the login form [ENG-123]',
   '',
@@ -423,6 +426,8 @@ if (a[0] === 'api' && a.some(x => x.includes('/commits/'))) {
   process.stdout.write(JSON.stringify({ parents: g(['rev-list', '--parents', '-n', '1', 'main']).trim().split(' ').slice(1), message: g(['log', '-1', '--format=%B', 'main']) }));
   process.exit(0);
 }
+if (a[0] === 'api' && a.some(x => x.startsWith('repos/') && x.split('/').length === 3)) { process.stdout.write(process.env.FAKE_AUTODELETE || 'false'); process.exit(0); }
+if (a[0] === 'api' && a.some(x => x.includes('/pulls/') && x.includes('/commits'))) { process.stdout.write(process.env.FAKE_COMMITS || '[[]]'); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('lastEditedAt'))) { process.stdout.write(process.env.FAKE_EDITED || '[]'); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('mergeQueue'))) { process.stdout.write(process.env.FAKE_QUEUE || ''); process.exit(0); }
 if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
@@ -462,7 +467,7 @@ test('merge-pr merges the inspected head and deletes the local branch once the b
   fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify(view));
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
   execFileSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8', stdio: 'pipe' });
-  assert.match(fs.readFileSync(f.log, 'utf8'), new RegExp(`pr merge 1 --repo o/r --merge --match-head-commit ${f.head}`));
+  assert.match(fs.readFileSync(f.log, 'utf8'), new RegExp(`pr merge 1 --repo github.com/o/r --merge --match-head-commit ${f.head}`));
   assert.throws(() => execFileSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' }));
   fs.rmSync(f.root, { recursive: true, force: true });
 });
@@ -881,7 +886,7 @@ test('deleting a service changelog while the service stays fails P13', () => {
 
 test('merge-pr re-checks one ticket at merge time: a retitle after a green pr-rules run is caught', () => {
   const view = { state: 'OPEN', title: 'ENG-2: x', headRefName: 'ENG-1-x', headRefOid: 'h', author: { login: 'a' },
-    commits: [{ messageHeadline: 'feat: x [ENG-1]', messageBody: '' }],
+    commitMessages: ['feat: x [ENG-1]'],
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }] };
   assert.match(mergeBlockers(view).blockers.join(), /one ticket per PR/);
 });
@@ -960,4 +965,86 @@ test('a release promotion passes pr mode end to end, while a mixed-ticket featur
 test('reapply is attributed like revert', () => {
   const msg = 'Reapply "feat(b): add b [ENG-2]"\n\nBack for [ENG-6]';
   assert.deepStrictEqual(check.checkOneTicket({ branch: 'ENG-6-b', title: 'ENG-6: b again', messages: [msg] }, {}), []);
+});
+
+test('every gh command names the host, so GH_HOST cannot redirect it', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', ...PROV], { cwd: f.work, env: { ...f.env, GH_HOST: 'enterprise.example' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  for (const line of fs.readFileSync(f.log, 'utf8').split('\n').filter(l => /^(pr|repo|variable) /.test(l))) assert.match(line, /--repo github\.com\/o\/r|repo view github\.com\/o\/r/, line);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a change of origin during the run stops cleanup', () => {
+  const f = approvedFixture();
+  const other = path.join(f.root, 'other.git');
+  execFileSync('git', ['clone', '-q', '--bare', path.join(f.root, 'origin.git'), other]);
+  patchGh(f, "  fs.rmSync(tmp, { recursive: true, force: true });\n  process.exit(0);", "  execFileSync('git', ['remote', 'set-url', 'origin', " + JSON.stringify(other) + "], { cwd: " + JSON.stringify(f.work) + " });");
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /origin changed during the run/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: other, stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a partial re-run of one of two same-named jobs keeps the other job\'s failure', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'test', status: 'COMPLETED', runCreated: '2026-10-26T10:00:00Z' };
+  const url = j => `https://github.com/o/r/actions/runs/9/job/${j}`;
+  const runs = latestRuns([
+    { ...id, conclusion: 'FAILURE', jobAttempt: 1, detailsUrl: url(1) },
+    { ...id, conclusion: 'SUCCESS', jobAttempt: 1, detailsUrl: url(2) },
+    { ...id, conclusion: 'SUCCESS', jobAttempt: 2, detailsUrl: url(3) },
+  ]);
+  assert.ok(runs.some(c => c.conclusion === 'FAILURE'));
+});
+
+test('an unprotected long-lived head is refused when the repository deletes head branches on merge', () => {
+  const f = approvedFixture({ ...mergeView, headRefName: 'release/1.4' });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_AUTODELETE: 'true' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /deletes head branches on merge/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /^pr merge/m);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a dismissed review withdraws its reviewer\'s verdict rather than reviving an older change request', () => {
+  const rev = (state, oid) => ({ author: { login: 'w' }, authorAssociation: 'MEMBER', state, commit: { oid } });
+  const view = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'a' }, reviews: [rev('CHANGES_REQUESTED', 'h0'), rev('DISMISSED', 'h1')],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }] };
+  assert.deepStrictEqual(mergeBlockers(view, { reviewOptional: true }).blockers, []);
+});
+
+test('merge-pr reads full commit messages: a long subject keeps its trailing ticket', () => {
+  const f = approvedFixture();
+  const long = 'fix(api): stop retrying ENG-7 webhooks forever when the upstream returns 410 for good [ENG-1]';
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_COMMITS: JSON.stringify([[{ commit: { message: long } }]]) }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('.env.example parses in a shell and through dotenv', () => {
+  const ex = fs.readFileSync(path.join(__dirname, '..', 'project', '.env.example'), 'utf8').replace(/^# (BRAIN_LONG_LIVED=)/m, '$1');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'envex-'));
+  fs.writeFileSync(path.join(dir, '.env'), ex);
+  const out = execFileSync('bash', ['-ec', 'set -a; . ./.env; printf %s "$BRAIN_LONG_LIVED"'], { cwd: dir, encoding: 'utf8' });
+  assert.strictEqual(out, '^(staging|develop)$');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a partial re-run of either sibling keeps every job of the run: a fixed failure still needs a full re-run', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'test', status: 'COMPLETED', runCreated: '2026-10-26T10:00:00Z' };
+  const url = j => `https://github.com/o/r/actions/runs/9/job/${j}`;
+  const runs = latestRuns([
+    { ...id, conclusion: 'FAILURE', jobAttempt: 1, detailsUrl: url(1) },
+    { ...id, conclusion: 'SUCCESS', jobAttempt: 1, detailsUrl: url(2) },
+    { ...id, conclusion: 'SUCCESS', jobAttempt: 2, detailsUrl: url(3) },
+  ]);
+  assert.strictEqual(runs.length, 3, 'the re-run cannot say which sibling it replaced');
+});
+
+test('a change request after a dismissed approval still blocks; a dismissed approval never counts', () => {
+  const rev = (state, oid) => ({ author: { login: 'w' }, authorAssociation: 'MEMBER', state, commit: { oid } });
+  const base = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }] };
+  assert.match(mergeBlockers({ ...base, reviews: [rev('DISMISSED', 'h1'), rev('CHANGES_REQUESTED', 'h2')] }, { reviewOptional: true }).blockers.join(), /requested changes/);
+  assert.match(mergeBlockers({ ...base, reviews: [rev('APPROVED', 'h2'), rev('DISMISSED', 'h2')] }).blockers.join(), /no approval of the current head/);
 });
