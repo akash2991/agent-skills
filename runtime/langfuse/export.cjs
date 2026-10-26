@@ -14,6 +14,7 @@ const { claimLock } = require('./locks.cjs');
 const OUTBOX_LIMITS = Object.freeze({ records: 256, bytes: 4 * 1024 * 1024, flush: 32, scan: 512 });
 const FILE_PATTERN = /^[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{32}\.json$/;
 const MAX_FILE_BYTES = LIMITS.recordBytes + 512;
+const OUTBOX_SLOT = '.outbox-v1.tmp';
 // Lifetime floors deliberately have no TTL: pending/checkpoint references can
 // outlive any wall-clock retention interval. Exhaustion is explicit refusal,
 // never eviction that could authorize an obsolete replay.
@@ -45,23 +46,118 @@ function filesIn(directory) {
   } finally { handle.closeSync(); }
   return result.sort();
 }
-function privateRead(file, maximum) {
+function publicationError(reason = 'outbox_inspection_required') {
+  const error = new Error('Tracing publication preserved; stop controllers and inspect state offline');
+  error.reason = reason;
+  return error;
+}
+const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+function safeFile(stat, maximum) {
+  if (!stat.isFile() || !privateOwner(stat) || (stat.mode & 0o077) || stat.size > maximum || stat.nlink !== 1) throw publicationError();
+}
+function inspectPrivate(file, maximum) {
+  const before = fs.lstatSync(file);
+  safeFile(before, maximum);
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || !privateOwner(stat) || (stat.mode & 0o077) || stat.size > maximum || stat.nlink !== 1) throw new Error('Unsafe tracing file');
-    const bytes = Buffer.alloc(stat.size + 1);
-    const size = fs.readSync(fd, bytes, 0, bytes.length, 0);
-    if (size > stat.size || size > maximum) throw new Error('Tracing file changed or exceeds budget');
-    return bytes.subarray(0, size);
+    safeFile(stat, maximum);
+    if (!sameFile(before, stat) || before.size !== stat.size) throw publicationError();
+    const buffer = Buffer.alloc(stat.size + 1);
+    const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const after = fs.fstatSync(fd);
+    safeFile(after, maximum);
+    if (size !== stat.size || after.size !== stat.size || !sameFile(stat, after)) throw publicationError();
+    return { stat, bytes: buffer.subarray(0, size) };
   } finally { fs.closeSync(fd); }
+}
+function privateRead(file, maximum) { return inspectPrivate(file, maximum).bytes; }
+function discardPrivate(file, maximum, expected) {
+  const current = inspectPrivate(file, maximum);
+  if (!sameFile(current.stat, expected.stat) || (expected.bytes && !current.bytes.equals(expected.bytes))) throw publicationError();
+  const final = fs.lstatSync(file);
+  safeFile(final, maximum);
+  if (!sameFile(final, current.stat) || final.size !== current.stat.size) throw publicationError();
+  fs.unlinkSync(file);
+}
+function recoverSlot(file, maximum) {
+  try { discardPrivate(file, maximum, inspectPrivate(file, maximum)); return 1; }
+  catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
+}
+function publishPrivate(directory, slot, file, data, maximum) {
+  const temporary = path.join(directory, slot), bytes = Buffer.from(data);
+  let stat;
+  try {
+    const fd = fs.openSync(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    try {
+      stat = fs.fstatSync(fd); safeFile(stat, maximum);
+      fs.writeFileSync(fd, bytes); fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    const current = inspectPrivate(temporary, maximum);
+    if (!sameFile(current.stat, stat) || !current.bytes.equals(bytes)) throw publicationError();
+    fs.renameSync(temporary, file);
+    syncDirectory(directory);
+  } finally {
+    if (stat) {
+      try { discardPrivate(temporary, maximum, { stat }); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
+}
+// Called only with exclusive queue ownership. Fixed slots are uncommitted,
+// regardless of their contents. Legacy final names are different: ONLY JSON
+// syntax failures prove an interrupted write. Valid but unsupported/unticketed
+// or noncanonical data is never discarded, repaired or assigned chronology.
+function recoverQueue(stateDir, directory, deadlineAt) {
+  let recovered = recoverSlot(path.join(stateDir, '.revisions-v1.tmp'), REVISION_BYTES)
+    + recoverSlot(path.join(directory, OUTBOX_SLOT), MAX_FILE_BYTES);
+  const files = [], handle = fs.opendirSync(directory);
+  try {
+    for (let count = 0; ; count++) {
+      if (Date.now() >= deadlineAt) throw publicationError('recovery_pending');
+      const entry = handle.readSync();
+      if (!entry) break;
+      if (count >= OUTBOX_LIMITS.scan) throw publicationError('recovery_pending');
+      if (!FILE_PATTERN.test(entry.name)) throw publicationError();
+      const file = path.join(directory, entry.name), inspected = inspectPrivate(file, MAX_FILE_BYTES);
+      try { JSON.parse(inspected.bytes.toString('utf8')); }
+      catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        discardPrivate(file, MAX_FILE_BYTES, inspected); recovered++; continue;
+      }
+      files.push({ name: entry.name, file, ...inspected });
+    }
+  } finally { handle.closeSync(); }
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  return { files, recovered };
+}
+// Adapter GC uses a queue-locked snapshot, never interpreting a paused writer's
+// slot as an unknown reference. The optional synchronous visitor keeps queue
+// ownership through GC's reference closure/deletions; it must not acquire any
+// adapter/context locks. Lock order: adapter -> queue, never the reverse.
+// No credentials/SDK are needed to recover.
+function recoverOutbox({ stateDir = defaultStateDir(), deadlineAt = Date.now() + 5000 } = {}, visit = inventory => inventory) {
+  const directory = outboxDirectory(stateDir), lock = claimLock(stateDir, 'queue', { deadlineAt });
+  try {
+    while (lock.blocked()) {
+      if (Date.now() >= deadlineAt) throw publicationError('recovery_pending');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+    const inventory = recoverQueue(stateDir, directory, deadlineAt);
+    const state = readRevisions(stateDir), records = [];
+    let invalid = 0;
+    for (const item of inventory.files) {
+      try { records.push(canonicalEntry(item, state).record); } catch { invalid++; }
+    }
+    return visit({ recovered: inventory.recovered, invalid, records });
+  } finally { lock.release(); }
 }
 
 function revisionKey(record) {
   // Only projected metadata is hashed, never caller payloads or native files.
   return createHash('sha256').update(`${record.nativeSessionId}:${record.id}`).digest('hex');
 }
-function readRevisions(stateDir) {
+function readRevisions(stateDir, requireExisting = false) {
   try {
     const state = JSON.parse(privateRead(path.join(stateDir, 'revisions-v1.json'), REVISION_BYTES));
     if (state.schema !== 1 || !state.entries || typeof state.entries !== 'object' || Array.isArray(state.entries)
@@ -76,22 +172,15 @@ function readRevisions(stateDir) {
           || value.floor.revision > value.allocated || !Number.isSafeInteger(value.floor.endTime) || value.floor.endTime <= 0))) throw new Error('Invalid revision state');
     }
     return state;
-  } catch (error) { if (error.code === 'ENOENT') return { schema: 1, entries: {} }; throw error; }
+  } catch (error) { if (error.code === 'ENOENT' && !requireExisting) return { schema: 1, entries: {} }; throw error; }
 }
 function writeRevisions(stateDir, state) {
   const data = JSON.stringify(state);
   if (Buffer.byteLength(data) > REVISION_BYTES) throw new Error('Revision capacity exceeded');
   // The queue lock excludes every live publisher; a fixed orphan slot keeps
   // repeated crashes bounded without age-based stealing or temp accumulation.
-  const temp = path.join(stateDir, '.revisions-v1.tmp');
-  try { privateRead(temp, REVISION_BYTES); fs.unlinkSync(temp); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  try {
-    const fd = fs.openSync(temp, 'wx', 0o600);
-    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    fs.renameSync(temp, path.join(stateDir, 'revisions-v1.json'));
-    syncDirectory(stateDir);
-  } finally { try { fs.unlinkSync(temp); } catch {} }
+  recoverSlot(path.join(stateDir, '.revisions-v1.tmp'), REVISION_BYTES);
+  publishPrivate(stateDir, '.revisions-v1.tmp', path.join(stateDir, 'revisions-v1.json'), data, REVISION_BYTES);
 }
 function syncDirectory(directory) {
   const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -121,7 +210,8 @@ function reserveRevisions(records, { stateDir = defaultStateDir() } = {}) {
       if (Date.now() >= deadlineAt) throw new Error('Revision state is busy');
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
-    const state = readRevisions(stateDir);
+    const inventory = recoverQueue(stateDir, outboxDirectory(stateDir), deadlineAt);
+    const state = readRevisions(stateDir, inventory.files.length > 0);
     const revisions = allocateRevisions(state, safe);
     writeRevisions(stateDir, state);
     return revisions;
@@ -135,12 +225,14 @@ function queueObservation(record, { stateDir = defaultStateDir(), revision } = {
   let safe;
   try { safe = sanitizeObservation(record); }
   catch { return { queued: false, reason: 'invalid_record' }; }
-  let file, lock, created = false;
+  let lock;
   try {
     const directory = outboxDirectory(stateDir);
-    lock = claimLock(stateDir, 'queue', { deadlineAt: Date.now() + 500 });
+    const deadlineAt = Date.now() + 500;
+    lock = claimLock(stateDir, 'queue', { deadlineAt });
     if (lock.blocked()) return { queued: false, reason: 'busy' };
-    const state = readRevisions(stateDir);
+    const inventory = recoverQueue(stateDir, directory, deadlineAt);
+    const state = readRevisions(stateDir, inventory.files.length > 0);
     if (revision === undefined) {
       [revision] = allocateRevisions(state, [safe]);
       writeRevisions(stateDir, state);
@@ -148,25 +240,19 @@ function queueObservation(record, { stateDir = defaultStateDir(), revision } = {
     const floor = state.entries[revisionKey(safe)];
     if (!Number.isSafeInteger(revision) || revision < 1 || !floor || revision > floor.allocated) return { queued: false, reason: 'invalid_revision' };
     if (olderThanFloor(safe, revision, floor.floor)) return { queued: false, obsolete: true, reason: 'superseded', revision };
-    const files = filesIn(directory);
-    let bytes = 0;
-    for (const name of files) {
-      const stat = fs.lstatSync(path.join(directory, name));
-      if (!stat.isFile() || stat.isSymbolicLink()) return { queued: false, reason: 'unsafe_outbox' };
-      bytes += stat.size;
-    }
+    const files = inventory.files;
+    const bytes = files.reduce((sum, item) => sum + item.stat.size, 0);
     const version = randomBytes(16).toString('hex');
     const payload = JSON.stringify({ schema: 2, version, revision, record: safe });
     if (files.length >= OUTBOX_LIMITS.records || bytes + Buffer.byteLength(payload) > OUTBOX_LIMITS.bytes) return { queued: false, reason: 'capacity' };
-    file = path.join(directory, `${safe.traceId}-${safe.id}-${version}.json`);
-    const fd = fs.openSync(file, 'wx', 0o600);
-    created = true;
-    try { fs.writeFileSync(fd, payload); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    syncDirectory(directory);
+    const file = path.join(directory, `${safe.traceId}-${safe.id}-${version}.json`);
+    // The slot itself consumes the admitted record/byte budget. Rename never
+    // exposes an empty/partial final record, and recovery never promotes a slot.
+    try { fs.lstatSync(file); throw publicationError(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    publishPrivate(directory, OUTBOX_SLOT, file, payload, MAX_FILE_BYTES);
     return { queued: true, id: safe.id, traceId: safe.traceId, version, revision, privacy: 'metadata-only' };
   } catch (error) {
-    if (created) { try { fs.unlinkSync(file); } catch {} }
-    return { queued: false, reason: error.message === 'Revision capacity exceeded' ? 'revision_capacity' : 'state_unavailable' };
+    return { queued: false, reason: error.reason || (error.message === 'Revision capacity exceeded' ? 'revision_capacity' : 'state_unavailable') };
   } finally { lock?.release(); }
 }
 
@@ -204,30 +290,30 @@ function loadCredentials({ env = process.env, home = os.homedir(), agentDir = pa
   return null;
 }
 
-function readEntries(directory, state) {
+function canonicalEntry({ name, bytes }, state) {
+  const envelope = JSON.parse(bytes.toString('utf8'));
+  const record = sanitizeObservation(envelope.record), revision = envelope.revision;
+  const canonical = { schema: 2, version: envelope.version, revision, record };
+  // Parseable legacy/noncanonical/unticketed data is ambiguous, not a crash
+  // artifact. Preserve it, without replay-time tickets or guessed chronology.
+  if (envelope.schema !== 2 || !/^[a-f0-9]{32}$/.test(envelope.version)
+    || !Number.isSafeInteger(revision) || revision < 1
+    || revision > (state.entries[revisionKey(record)]?.allocated || 0)
+    || name !== `${record.traceId}-${record.id}-${envelope.version}.json`
+    || JSON.stringify(canonical) !== bytes.toString('utf8')) throw new Error();
+  return { record, revision };
+}
+function readEntries(inventory, state) {
   const latest = new Map();
   let invalid = 0;
-  for (const name of filesIn(directory)) {
-    if (!FILE_PATTERN.test(name)) { invalid++; continue; }
+  for (const item of inventory.files) {
     try {
-      const file = path.join(directory, name);
-      const bytes = privateRead(file, MAX_FILE_BYTES);
-      const envelope = JSON.parse(bytes.toString('utf8'));
-      const record = sanitizeObservation(envelope.record);
-      const revision = envelope.revision;
-      const canonical = { schema: 2, version: envelope.version, revision, record };
-      // Legacy records have no provable equal-timestamp capture order. Leave
-      // them intact/invalid, just like unticketed pending suffixes, rather than
-      // assigning new chronology to an old snapshot at replay time.
-      if (envelope.schema !== 2 || !/^[a-f0-9]{32}$/.test(envelope.version)
-        || !Number.isSafeInteger(revision) || revision < 1
-        || revision > (state.entries[revisionKey(record)]?.allocated || 0)
-        || name !== `${record.traceId}-${record.id}-${envelope.version}.json`
-        || JSON.stringify(canonical) !== bytes.toString('utf8')) throw new Error();
+      const { file, bytes, stat } = item;
+      const { record, revision } = canonicalEntry(item, state);
       if (olderThanFloor(record, revision, state.entries[revisionKey(record)]?.floor)) {
-        fs.unlinkSync(file); continue;
+        discardPrivate(file, MAX_FILE_BYTES, item); continue;
       }
-      const entry = { file, bytes, record, revision, superseded: [] };
+      const entry = { file, bytes, stat, record, revision, superseded: [] };
       const key = revisionKey(record);
       const previous = latest.get(key);
       if (!previous) latest.set(key, entry);
@@ -346,17 +432,12 @@ function transportExporter({ credentials, timeoutMs, signal }) {
 
 async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependencyRoot, timeoutMs = 3000, exporterFactory, env = process.env } = {}) {
   const result = { queued: 0, accepted: 0, failed: 0, attempted: 0, invalid: 0, verified: false, status: 'offline' };
-  let directory, entries;
-  try {
-    directory = outboxDirectory(stateDir);
-    result.queued = filesIn(directory).length;
-    // Read/project only after acquiring the shared queue lock below. Admission
-    // and send floors must never race, even across separate flush processes.
-    entries = result.queued ? [true] : [];
-  } catch { result.status = 'state_unavailable'; return result; }
-  if (!entries.length) { result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
-  const config = credentials === undefined && !exporterFactory ? loadCredentials({ env }) : validateCredentials(credentials, true);
-  if (!config && !exporterFactory) return result;
+  let directory, entries, config;
+  try { directory = outboxDirectory(stateDir); }
+  catch { result.status = 'state_unavailable'; return result; }
+  // Recover even when empty/offline: neither credentials nor an exporter is
+  // permission to clean crash artifacts, and missing credentials must not
+  // indefinitely pin adapter references or queue capacity.
   // Serialize senders, recovering only uniquely named dead-process claims.
   timeoutMs = Number.isFinite(timeoutMs) ? Math.max(10, Math.min(10000, Math.floor(timeoutMs))) : 3000;
   const deadlineAt = Date.now() + timeoutMs;
@@ -377,19 +458,25 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
       if (Date.now() >= deadlineAt) throw new Error('Queue busy');
       await new Promise(resolve => setTimeout(resolve, 10));
     }
+    const inventory = recoverQueue(stateDir, directory, deadlineAt);
+    result.recovered = inventory.recovered;
+    result.queued = inventory.files.length;
     const state = readRevisions(stateDir);
-    const fresh = readEntries(directory, state); entries = fresh.entries; result.invalid = fresh.invalid;
-    for (const entry of entries) {
-      const key = revisionKey(entry.record);
-      const head = state.entries[key];
-      head.floor = { endTime: entry.record.endTime, revision: entry.revision };
+    const fresh = readEntries(inventory, state); entries = fresh.entries; result.invalid = fresh.invalid;
+    if (entries.length) config = credentials === undefined && !exporterFactory ? loadCredentials({ env }) : validateCredentials(credentials, true);
+    if (entries.length && (config || exporterFactory)) {
+      for (const entry of entries) {
+        const head = state.entries[revisionKey(entry.record)];
+        head.floor = { endTime: entry.record.endTime, revision: entry.revision };
+      }
+      // Persist BEFORE export. Never create/reset a ledger for invalid legacy
+      // data, nor promote an uncommitted ledger slot after a crash.
+      writeRevisions(stateDir, state);
     }
-    // Persist BEFORE handing anything to an exporter. An uncertain ACK can
-    // retry this exact revision, but can never permit an older one afterwards.
-    writeRevisions(stateDir, state);
-  } catch { queueLock?.release(); unlock(); result.status = 'state_unavailable'; return result; }
+  } catch (error) { queueLock?.release(); unlock(); result.status = error.reason || 'state_unavailable'; return result; }
   queueLock.release();
   if (!entries.length) { unlock(); result.queued = filesIn(directory).length; result.status = result.queued ? 'invalid_outbox' : 'empty'; return result; }
+  if (!config && !exporterFactory) { unlock(); return result; }
   timeoutMs = deadlineAt - Date.now();
   if (timeoutMs < 10) { unlock(); result.status = 'timeout'; return result; }
   const controller = new AbortController();
@@ -471,12 +558,10 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
   }
   for (const entry of accepted) {
     try {
-      if (privateRead(entry.file, MAX_FILE_BYTES).equals(entry.bytes)) {
-        fs.unlinkSync(entry.file);
-        result.accepted++;
-        for (const older of entry.superseded) {
-          try { if (privateRead(older.file, MAX_FILE_BYTES).equals(older.bytes)) fs.unlinkSync(older.file); } catch {}
-        }
+      discardPrivate(entry.file, MAX_FILE_BYTES, entry);
+      result.accepted++;
+      for (const older of entry.superseded) {
+        try { discardPrivate(older.file, MAX_FILE_BYTES, older); } catch {}
       }
     } catch {}
   }
@@ -487,4 +572,4 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
   return result;
 }
 
-module.exports = { queueObservation, reserveRevisions, flushOutbox, loadCredentials, OUTBOX_LIMITS, REVISION_LIMIT };
+module.exports = { queueObservation, reserveRevisions, flushOutbox, recoverOutbox, loadCredentials, OUTBOX_LIMITS, REVISION_LIMIT };

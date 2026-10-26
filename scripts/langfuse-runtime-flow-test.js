@@ -333,9 +333,9 @@ test('aggregate checkpoint file and byte limits refuse safely, then reclaim expi
   // Prefill a restart fixture with valid private checkpoints, then exercise
   // real flow admission against directory usage, not ContextStore's own caps.
   flow.writeState('checkpoint:0', { completedAt: 0 });
-  for (let i = 1; i < ADAPTER_LIMITS.files - 3; i++) fs.copyFileSync(flow.stateFile('checkpoint:0'), flow.stateFile(`checkpoint:${i}`));
+  for (let i = 1; i < ADAPTER_LIMITS.files - 4; i++) fs.copyFileSync(flow.stateFile('checkpoint:0'), flow.stateFile(`checkpoint:${i}`));
   flow = f.flow();
-  flow.writeState(`checkpoint:${ADAPTER_LIMITS.files - 3}`, { completedAt: 1 });
+  flow.writeState(`checkpoint:${ADAPTER_LIMITS.files - 4}`, { completedAt: 1 });
   assert.throws(() => flow.writeState('over-file-limit', { completedAt: 1 }), /capacity/);
   flow.writeState('health', { captureFailureObserved: true });
   flow.writeState('delivery', { verified: false });
@@ -355,7 +355,7 @@ test('aggregate checkpoint file and byte limits refuse safely, then reclaim expi
   assert.ok(usage().files <= 3);
   assert.deepEqual(flow.readState('reclaimed-file-slot'), { completedAt: 3 });
   const block = Array(110).fill('a'.repeat(8192));
-  for (let i = 0; i < 37; i++) flow.writeState(`large:${i}`, { counters: block });
+  for (let i = 0; i < 36; i++) flow.writeState(`large:${i}`, { counters: block });
   assert.throws(() => flow.writeState('over-byte-limit', { counters: block }), /capacity/);
   assert.ok(usage().bytes <= ADAPTER_LIMITS.bytes);
   f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow();

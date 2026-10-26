@@ -6,7 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { ContextStore } = require('./context.cjs');
 const { sanitizeObservation } = require('./privacy.cjs');
-const { queueObservation, reserveRevisions, flushOutbox } = require('./export.cjs');
+const { queueObservation, reserveRevisions, flushOutbox, recoverOutbox } = require('./export.cjs');
 const { claimLock } = require('./locks.cjs');
 
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -91,29 +91,90 @@ function createFlow(options = {}) {
   const fileFor = key => path.join(adapterDir, `${hash(key)}.json`);
   const readFile = file => {
     try {
-      const stat = fs.lstatSync(file);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_STATE || (stat.mode & 0o077)
-        || (process.getuid && stat.uid !== process.getuid())) return null;
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
+      const before = fs.lstatSync(file); safeTemporary(before);
+      const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      try {
+        const stat = fs.fstatSync(fd); safeTemporary(stat);
+        if (!sameFile(before, stat) || before.size !== stat.size) return null;
+        const bytes = Buffer.alloc(stat.size + 1), length = fs.readSync(fd, bytes, 0, bytes.length, 0);
+        const after = fs.fstatSync(fd); safeTemporary(after);
+        if (length !== stat.size || after.size !== stat.size || !sameFile(stat, after)) return null;
+        return JSON.parse(bytes.subarray(0, length).toString('utf8'));
+      } finally { fs.closeSync(fd); }
     } catch { return null; }
   };
+  const checkpointSlot = path.join(adapterDir, '.checkpoint-v1.tmp');
+  const uuidPart = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
+  const legacyAdapterTemp = new RegExp(`^[a-f0-9]{64}\\.json\\.${uuidPart}\\.tmp$`);
+  const legacyPendingTemp = new RegExp(`^${uuidPart}\\.json(?:\\.${uuidPart}\\.claim)?\\.${uuidPart}\\.tmp$`);
+  const unsafeCheckpoint = () => new Error('Unsafe tracing checkpoint publication; preserved for offline inspection');
+  const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+  const safeTemporary = stat => {
+    if (!stat.isFile() || (process.getuid && stat.uid !== process.getuid()) || (stat.mode & 0o077)
+      || stat.nlink !== 1 || stat.size > MAX_STATE) throw unsafeCheckpoint();
+  };
+  const inspectTemporary = file => {
+    const before = fs.lstatSync(file); safeTemporary(before);
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+      const stat = fs.fstatSync(fd); safeTemporary(stat);
+      if (!sameFile(before, stat) || before.size !== stat.size) throw unsafeCheckpoint();
+      return stat;
+    } finally { fs.closeSync(fd); }
+  };
+  const discardTemporary = (file, expected) => {
+    const current = inspectTemporary(file);
+    if (!sameFile(current, expected)) throw unsafeCheckpoint();
+    const final = fs.lstatSync(file); safeTemporary(final);
+    if (!sameFile(final, current) || final.size !== current.size) throw unsafeCheckpoint();
+    fs.unlinkSync(file);
+  };
+  function recoverCheckpoints(deadlineAt) {
+    // All checkpoint/pending/claim publications use the adapter lock. These
+    // names identify uncommitted writes, never replayable records. No promotion.
+    for (const dir of [adapterDir, pendingDir]) {
+      const handle = fs.opendirSync(dir);
+      try {
+        for (let count = 0; ; count++) {
+          if (Date.now() >= deadlineAt) throw new Error('Tracing checkpoint recovery pending');
+          const entry = handle.readSync(); if (!entry) break;
+          if (count >= ADAPTER_LIMITS.files + 2) throw new Error('Tracing checkpoint recovery pending');
+          const file = path.join(dir, entry.name);
+          if (file === checkpointSlot || (dir === adapterDir ? legacyAdapterTemp : legacyPendingTemp).test(entry.name)) {
+            discardTemporary(file, inspectTemporary(file));
+          } else if (entry.name.endsWith('.tmp')) throw unsafeCheckpoint();
+        }
+      } finally { handle.closeSync(); }
+    }
+  }
   const writeFile = (file, data) => {
     const content = JSON.stringify(safeState(data));
     if (Buffer.byteLength(content) > MAX_STATE) throw new Error('Tracing checkpoint budget exceeded');
-    if (fs.existsSync(file)) {
-      const stat = fs.lstatSync(file);
-      if (!stat.isFile() || stat.isSymbolicLink() || (process.getuid && stat.uid !== process.getuid())) throw new Error('Unsafe tracing checkpoint');
-    }
-    const temp = `${file}.${crypto.randomUUID()}.tmp`;
+    try { inspectTemporary(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    // One admitted 1 MiB slot, not an unbounded random temporary per crash.
+    // reserve() accounts this slot in addition to the committed checkpoints.
+    const temp = checkpointSlot;
+    let published;
     try {
-      const fd = fs.openSync(temp, 'wx', 0o600);
-      try { fs.writeFileSync(fd, content); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      const fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      try {
+        published = fs.fstatSync(fd); safeTemporary(published);
+        fs.writeFileSync(fd, content); fs.fsyncSync(fd);
+      } finally { fs.closeSync(fd); }
+      const current = inspectTemporary(temp);
+      if (!sameFile(current, published) || current.size !== Buffer.byteLength(content)) throw unsafeCheckpoint();
       fs.renameSync(temp, file);
-      const dir = fs.openSync(path.dirname(file), fs.constants.O_RDONLY);
-      try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
-    } finally { try { fs.unlinkSync(temp); } catch {} }
+      for (const directory of new Set([adapterDir, path.dirname(file)])) {
+        const dir = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+      }
+    } finally {
+      if (published) {
+        try { discardTemporary(temp, published); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
+    }
   };
-  let actor = null, adapterLockDepth = 0;
+  let actor = null, adapterLockDepth = 0, recoveredPublications = 0;
   function transaction(fn) {
     if (adapterLockDepth) return fn();
     const deadlineAt = Date.now() + 5000;
@@ -123,6 +184,7 @@ function createFlow(options = {}) {
         if (Date.now() >= deadlineAt) throw new Error('Tracing checkpoints are busy');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
+      recoverCheckpoints(deadlineAt);
       adapterLockDepth++;
       try { return fn(); } finally { adapterLockDepth--; }
     } finally { lock.release(); }
@@ -183,42 +245,46 @@ function createFlow(options = {}) {
       roots.add(batch.runId);
       for (const record of batch.records || []) addRecord(record);
     }
-    const outbox = path.join(stateDir, 'outbox');
-    if (fs.existsSync(outbox)) for (const name of fs.readdirSync(outbox)) {
-      if (Date.now() >= deadlineAt) return;
-      // Outbox records are independently projected/validated by the exporter.
-      const record = readFile(path.join(outbox, name))?.record;
-      if (!record) { unknownReference = true; continue; }
-      addRecord(record);
-    }
-    // Close over saved parent/caller/run dependencies, including ancestors that
-    // have aged out of ContextStore while a deferred descendant still needs them.
-    let changed = true;
-    while (changed) {
-      const before = roots.size + sessions.size;
-      for (const [file, envelope] of entries) {
-        if (Date.now() >= deadlineAt) return;
-        if (path.dirname(file) !== adapterDir || !envelope) continue;
-        const data = unwrap(envelope);
-        if (roots.has(data?.run?.rootSpanId) || roots.has(envelope.ownerRoot)
-          || sessions.has(envelope.ownerSession)) {
-          for (const run of [data?.run, data?.parent, data?.caller]) addRun(run);
-          if (data?.rootSpanId) roots.add(data.rootSpanId);
+    // Recover under queue ownership BEFORE deciding whether references are
+    // unknown. The adapter lock is held; the context transaction above has
+    // finished. Exporters never acquire adapter/context locks while holding
+    // queue ownership, so there is no queue -> adapter/context inversion.
+    try {
+      recoverOutbox({ stateDir, deadlineAt: Math.min(deadlineAt, Date.now() + 5000) }, outbox => {
+        recoveredPublications += outbox.recovered;
+        if (outbox.invalid) unknownReference = true;
+        for (const record of outbox.records) addRecord(record);
+        // Keep queue ownership until deletion is done: a new publisher cannot
+        // introduce a reference between this snapshot and checkpoint reclamation.
+        // This visitor performs no adapter/context lock acquisition.
+        let changed = true;
+        while (changed) {
+          const before = roots.size + sessions.size;
+          for (const [file, envelope] of entries) {
+            if (Date.now() >= deadlineAt) return;
+            if (path.dirname(file) !== adapterDir || !envelope) continue;
+            const data = unwrap(envelope);
+            if (roots.has(data?.run?.rootSpanId) || roots.has(envelope.ownerRoot)
+              || sessions.has(envelope.ownerSession)) {
+              for (const run of [data?.run, data?.parent, data?.caller]) addRun(run);
+              if (data?.rootSpanId) roots.add(data.rootSpanId);
+            }
+          }
+          changed = before !== roots.size + sessions.size;
         }
-      }
-      changed = before !== roots.size + sessions.size;
-    }
-    for (const [file, envelope] of entries) {
-      if (Date.now() >= deadlineAt) return;
-      if (path.dirname(file) !== adapterDir || !envelope || file === fileFor('health')) continue;
-      const data = unwrap(envelope), stat = fs.lstatSync(file);
-      const updatedAt = envelope.checkpointVersion === 1 ? envelope.updatedAt : stat.mtimeMs;
-      if (!Number.isFinite(updatedAt) || clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) continue;
-      if (unknownReference || roots.has(data?.run?.rootSpanId) || roots.has(data?.rootSpanId)
-        || roots.has(envelope.ownerRoot) || sessions.has(envelope.ownerSession)) continue;
-      if (!envelope.ownerSession && (roots.size || sessions.size)) continue;
-      fs.unlinkSync(file);
-    }
+        for (const [file, envelope] of entries) {
+          if (Date.now() >= deadlineAt) return;
+          if (path.dirname(file) !== adapterDir || !envelope || file === fileFor('health')) continue;
+          const data = unwrap(envelope), stat = fs.lstatSync(file);
+          const updatedAt = envelope.checkpointVersion === 1 ? envelope.updatedAt : stat.mtimeMs;
+          if (!Number.isFinite(updatedAt) || clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) continue;
+          if (unknownReference || roots.has(data?.run?.rootSpanId) || roots.has(data?.rootSpanId)
+            || roots.has(envelope.ownerRoot) || sessions.has(envelope.ownerSession)) continue;
+          if (!envelope.ownerSession && (roots.size || sessions.size)) continue;
+          fs.unlinkSync(file);
+        }
+      });
+    } catch { return; } // Unsafe/unknown state remains an explicit exporter refusal.
   }
   function reserve(writes) {
     const fits = () => {
@@ -228,10 +294,10 @@ function createFlow(options = {}) {
       const diagnosticFiles = [fileFor('health'), fileFor('delivery')];
       const diagnostics = writes.every(([file]) => diagnosticFiles.includes(file));
       const ordinary = [...sizes].filter(([file]) => !diagnosticFiles.includes(file));
-      return sizes.size <= ADAPTER_LIMITS.files
-        && [...sizes.values()].reduce((sum, size) => sum + size, 0) <= ADAPTER_LIMITS.bytes
-        && (diagnostics || (ordinary.length <= ADAPTER_LIMITS.files - 2
-          && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes - 8192));
+      return sizes.size + 1 <= ADAPTER_LIMITS.files
+        && [...sizes.values()].reduce((sum, size) => sum + size, 0) + MAX_STATE <= ADAPTER_LIMITS.bytes
+        && (diagnostics || (ordinary.length <= ADAPTER_LIMITS.files - 3
+          && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes - MAX_STATE - 8192));
     };
     if (!fits()) { collect(); if (!fits()) throw new Error('Tracing checkpoint capacity exceeded'); }
   }
@@ -577,8 +643,10 @@ function createFlow(options = {}) {
       try { result.queued = fs.readdirSync(path.join(stateDir, 'outbox')).length; } catch {}
     }
     result.deferred = fs.readdirSync(pendingDir).length;
+    result.recovered = (result.recovered || 0) + recoveredPublications;
+    recoveredPublications = 0;
     writeState('delivery', { status: result.status, queued: result.queued, accepted: result.accepted, failed: result.failed,
-      deferred: result.deferred, verified: false, sharedOutbox: true });
+      deferred: result.deferred, recovered: result.recovered, verified: false, sharedOutbox: true });
     return result;
   }
 
