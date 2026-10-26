@@ -13,6 +13,10 @@
       {
         "prompt": "Design the multi-agent review so a script owns the orchestration instead of an orchestrator agent deciding who runs next",
         "top_k": 3
+      },
+      {
+        "prompt": "Our LLM pipeline gives a different answer for the same ticket on every run and the token bill keeps growing; fix it so the same input gives the same result",
+        "top_k": 3
       }
     ],
     "negative": [
@@ -23,6 +27,14 @@
       {
         "prompt": "Add a GitHub Actions job that blocks the merge when lint or tests fail",
         "owner": "ci-cd-and-automation"
+      },
+      {
+        "prompt": "We're inside Herdr: fan this review out to parallel sub-agents in separate tabs and merge their findings",
+        "owner": "herdr-fanout"
+      },
+      {
+        "prompt": "The agent keeps forgetting project conventions mid-session; fix its context and rules files",
+        "owner": "context-engineering"
       }
     ]
   },
@@ -37,10 +49,12 @@
       "expectations": [
         "The agent lists the workflow steps and classifies each as deterministic or judgment before rewriting",
         "Header parsing, customer lookup, and queue routing by plan and keywords become plain code, not model calls",
+        "The agent names the cases the prompt leaves to the model (an enterprise customer asking for a refund matches two rules; a customer lookup that finds nothing) and resolves each explicitly or asks, rather than guessing",
         "The order of steps and the stop condition live in code; the unbounded agent loop is removed",
         "The summary step is the only model call, with a typed output validated against a schema instead of regex-parsed text",
         "A validation failure takes an explicit branch rather than a silent or unbounded retry",
-        "Tests cover the deterministic steps and run with the model call replaced by a fake"
+        "Tests cover the deterministic steps and run with the model call replaced by a fake",
+        "Old and new triage are compared on the same inputs, including those two cases, and every difference is fixed or recorded"
       ]
     }
   ]

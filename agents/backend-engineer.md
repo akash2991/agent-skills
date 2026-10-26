@@ -33,7 +33,7 @@ Fetch the skills for the activity at hand.
 | Debugging a failure | `debugging-and-error-recovery`, `development-setup` |
 | Instrumenting what you ship | `observability-and-instrumentation` |
 | A security-sensitive surface | `security-and-hardening` |
-| A workflow that calls a model or agent, orchestrates agents, or repeats a multi-step procedure | `deterministic-workflows`, `adrs` |
+| A workflow that calls a model or agent, orchestrates agents, or that an agent repeats across sessions or tickets | `deterministic-workflows`, `adrs` |
 | Replacing a flow that is in use | `deprecation-and-migration` |
 | Raising, updating, or merging a PR; cutting a release | `git-workflow-and-versioning`, `github`, `linear` |
 | CI and shipping | `ci-cd-and-automation`, `shipping-and-launch` |
