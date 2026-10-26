@@ -22,8 +22,17 @@ const GIT_MERGE = /^Merge (pull request #\d+|branch |branches |remote-tracking b
 const CHANGELOG = /(^|\/)CHANGELOG\.md$/;
 const SIZE_EXCEPTION = /^Size-exception:[ \t]*\S/m;
 
+// LINEAR_TEAM: one team key (ENG) or several separated by commas (ENG,OPS); teamError reports any other value.
 function ticketSource(env = process.env) {
-  return env.LINEAR_TEAM ? `${env.LINEAR_TEAM.replace(/[^A-Za-z0-9]/g, '')}-\\d+` : '[A-Z][A-Z0-9]*-\\d+';
+  if (!env.LINEAR_TEAM) return '[A-Z][A-Z0-9]*-\\d+';
+  const keys = env.LINEAR_TEAM.split(',').map(k => k.trim()).filter(Boolean);
+  return keys.length === 1 ? `${keys[0]}-\\d+` : `(?:${keys.join('|')})-\\d+`;
+}
+
+function teamError(env = process.env) {
+  if (!env.LINEAR_TEAM) return null;
+  return env.LINEAR_TEAM.split(',').every(k => /^[A-Z][A-Z0-9]*$/.test(k.trim()))
+    ? null : `LINEAR_TEAM must be Linear team keys such as ENG or ENG,OPS: got "${env.LINEAR_TEAM}" (P4)`;
 }
 
 // allowFixup is for the local commit-msg hook only: autosquash folds fixup!/squash! commits before a PR merges, and CI
@@ -215,14 +224,16 @@ function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
   return [...required];
 }
 
-function checkChangelog(files, allChangelogs = ['CHANGELOG.md'], headFiles) {
+// renamed: the same diff with renames detected; a changelog moved unchanged gains no line there, so it is the one that
+// says whether a line was added (the rename-free list still decides which changelogs are required).
+function checkChangelog(files, allChangelogs = ['CHANGELOG.md'], headFiles, renamed = files) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
   if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
   }
   const changed = files.map(f => f.path);
   const missing = requiredChangelogs(changed, allChangelogs, headFiles).filter(c => {
-    const entry = files.find(f => f.path === c);
+    const entry = renamed.find(f => f.path === c);
     return !entry || entry.added < 1;
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
@@ -308,6 +319,7 @@ function report(errors) {
 function main(argv) {
   loadDotenv();
   const [cmd, ...rest] = argv;
+  if (teamError()) return report([teamError()]);
   if (cmd !== 'commit-msg' && longLivedPatternError()) return report([longLivedPatternError()]);
   // In CI the ticket pattern must be the team's: the generic one also matches tokens such as UTF-8 or SHA-256.
   if (process.env.CI && !process.env.LINEAR_TEAM && ['commits', 'pr', 'branch'].includes(cmd)) {
@@ -316,10 +328,19 @@ function main(argv) {
   }
   if (cmd === 'commit-msg') {
     if (!rest[0] || !fs.existsSync(rest[0])) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
-    // A merge commit is being made exactly when MERGE_HEAD exists; a subject that merely reads "Merge branch …" is not one.
+    // A merge commit is being made when MERGE_HEAD exists. Amending one leaves no MERGE_HEAD: the message then keeps
+    // HEAD's own merge subject, so a message whose subject is HEAD's while HEAD is a merge is that amend. Anything
+    // else that merely reads "Merge branch …" is an ordinary commit. CI, which knows the parents, has the last word.
+    const raw = fs.readFileSync(rest[0], 'utf8');
     let isMerge = false;
-    try { isMerge = fs.existsSync(git(['rev-parse', '--git-path', 'MERGE_HEAD']).trim()); } catch { /* outside a repository */ }
-    return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true, isMerge }));
+    try {
+      if (fs.existsSync(git(['rev-parse', '--git-path', 'MERGE_HEAD']).trim())) isMerge = true;
+      else if (git(['rev-list', '--parents', '-n', '1', 'HEAD']).trim().split(' ').length > 2) {
+        const subject = raw.split(/\r?\n/).find(l => !l.startsWith('#') && l.trim()) || '';
+        if (subject.trim() === git(['log', '-1', '--format=%s', 'HEAD']).trim()) isMerge = true;
+      }
+    } catch { /* outside a repository, or no commit yet */ }
+    return report(checkCommitMessage(raw, process.env, { allowFixup: true, isMerge }));
   }
   if (cmd === 'branch') {
     const name = rest[0] || git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
@@ -374,7 +395,7 @@ function main(argv) {
         messages: git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean).map(sha => git(['log', '-1', '--format=%B', sha])),
       }),
       ...checkSize(sized, body),
-      ...checkChangelog(files, listChangelogs(base), treeFiles(head)),
+      ...checkChangelog(files, listChangelogs(base), treeFiles(head), sized),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | push [<remote> <url>] | pr --base <ref>');
@@ -388,10 +409,12 @@ if (require.main === module) main(process.argv.slice(2));
 // branches beyond main, the default branch, release/*, and protected ones. Never in CI.
 function loadDotenv(env = process.env) {
   if (env.CI) return;
+  // An empty LINEAR_TEAM is unset (the generic pattern would accept any team); an empty BRAIN_LONG_LIVED means none.
+  if (env.LINEAR_TEAM === '') delete env.LINEAR_TEAM;
   for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (env[key] === undefined) {
     const v = dotenvValue(key, { skipEmpty: key === 'LINEAR_TEAM' });
     if (v !== null) env[key] = v;
   }
 }
 
-module.exports = { isTicketBranch, isLongLived, longLivedPatternError, checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+module.exports = { isTicketBranch, isLongLived, longLivedPatternError, teamError, checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };

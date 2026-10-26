@@ -8,7 +8,7 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle, loadDotenv, checkCommitMessage, checkOneTicket, isTicketBranch, isLongLived, longLivedPatternError } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, loadDotenv, checkCommitMessage, checkOneTicket, isTicketBranch, isLongLived, longLivedPatternError, teamError } = require('./brain-git-check');
 
 // Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 4 the merge's outcome
 // could not be read (nothing deleted; run merge-pr again to verify and clean up), 3 merged but P7
@@ -36,8 +36,15 @@ function originRepo() {
   const urls = git(['config', '--get-all', 'remote.origin.url']).split('\n').filter(Boolean);
   if (urls.length !== 1) throw new Error(`origin has ${urls.length} URLs; pass --repo <host>/<owner>/<name>`);
   const url = urls[0].trim();
+  // Only GitHub's transports: a file:// URL (file://github.com/tmp/o/r.git is a local path) names no GitHub repository.
+  const scheme = (url.match(/^([a-z][a-z0-9+.-]*):\/\//i) || [])[1];
+  if (scheme && !['https', 'http', 'ssh', 'git', 'git+ssh', 'ssh+git'].includes(scheme.toLowerCase())) {
+    throw new Error(`origin (${url}) is not a GitHub transport; pass --repo <host>/<owner>/<name>`);
+  }
   const host = ((url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '').toLowerCase();
-  const repo = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
+  // The path must be exactly owner/name: https://github.com/a/b/c.git names no repository a/b or b/c.
+  const repoPath = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+\//i, '').replace(/^[^@/]+@[^:/]+:/, '').replace(/^[^@/:]+:(?!\/)/, '');
+  const repo = /^([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(repoPath);
   if (!repo || resolvedHost(host, url) !== 'github.com') {
     throw new Error(`origin (${url}) is not a github.com remote; pass --repo <host>/<owner>/<name>`);
   }
@@ -349,21 +356,28 @@ function main(argv) {
       if (urls.length === 1) verifiedUrl = urls[0].trim(); else ownRepo = false;
     } catch { ownRepo = false; }
   }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
-  view.number = Number(pr);
+  // Everything the gates judge, read in one place: once before the checks, and again just before the merge.
+  const readGates = () => {
+    const v = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
+    v.number = Number(pr);
+    v.unresolvedThreads = unresolvedThreads(repo, pr);
+    if (v.state !== 'MERGED') {
+      v.commitMessages = prCommitMessages(repo, pr);
+      const { files, records, total } = prFiles(repo, pr);
+      v.changedFiles = files;
+      // Records, not names: a rename adds a second name, which must not make up for a record the API left out.
+      v.changedFilesIncomplete = records < total;
+      v.metadataChangedAt = metadataChangedAt(repo, pr);
+    }
+    runIdentity(repo, v.statusCheckRollup || []);
+    const reviewers = new Set((v.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
+    v.writers = writers(repo, [...reviewers]);
+    return v;
+  };
+  const view = readGates();
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
   // on to cleanup only if the merge commit proves P15 and P3.
   const alreadyMerged = view.state === 'MERGED';
-  view.unresolvedThreads = unresolvedThreads(repo, pr);
-  if (!alreadyMerged) view.commitMessages = prCommitMessages(repo, pr);
-  if (!alreadyMerged) {
-    const { files, records, total } = prFiles(repo, pr);
-    view.changedFiles = files;
-    // Records, not names: a rename adds a second name, which must not make up for a record the API left out.
-    view.changedFilesIncomplete = records < total;
-  }
-  view.metadataChangedAt = alreadyMerged ? '' : metadataChangedAt(repo, pr);
-  runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
   // The same default branch for the checks merge-pr re-runs (P5 and one-ticket promotion) as for cleanup.
   process.env.DEFAULT_BRANCH = defaultBranch;
@@ -390,8 +404,6 @@ function main(argv) {
   }
   const ticketBranch = !view.isCrossRepository && isTicketBranch(view.headRefName) && !isLongLived(view.headRefName) && !longLivedUnknown;
   const keep = !ticketBranch || isProtected || protectionUnknown;
-  const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
-  view.writers = writers(repo, [...reviewers]);
   const { blockers, ticket } = alreadyMerged ? { blockers: [], ticket: '' } : mergeBlockers(view, { reviewOptional: opts.reviewOptional });
   // GitHub's "Automatically delete head branches" deletes any unprotected same-repository head on merge: a head that
   // must be kept has to be protected first.
@@ -404,6 +416,7 @@ function main(argv) {
   if (!alreadyMerged) for (const p of checkCommitMessage(`Merge pull request #${pr} [${ticket || ''}]\n\nModel: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}`, process.env, { isMerge: true })) blockers.push(`planned merge commit: ${p}`);
   // As in CI: the generic ticket pattern also matches UTF-8 or SHA-256, so the team's must be known.
   if (!alreadyMerged && longLivedPatternError()) blockers.push(longLivedPatternError());
+  if (!alreadyMerged && teamError()) blockers.push(teamError());
   if (!alreadyMerged && !process.env.LINEAR_TEAM) blockers.push('LINEAR_TEAM is not set (environment, .env, or the repository variable) (P4)');
   if (!alreadyMerged && hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
   if (blockers.length) {
@@ -416,14 +429,24 @@ function main(argv) {
   const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}${opts.reviewOptional ? '\nReview: optional (per the ticket)' : ''}`;
   let mergeError = '';
   if (!alreadyMerged) {
-    // gh pins the head but not the base, title, or body: a PR retargeted or edited during the checks above would merge
-    // on gates that judged something else (the ticket, a size exception), so read them again and refuse any change.
+    // gh pins the head but nothing else: a PR retargeted, edited, reviewed, or given a new thread or CI result during the
+    // checks above would merge on gates that judged something else. Read every gate input again and judge it afresh;
+    // anything unreadable refuses. What changes after this read is caught after the merge (base, title, body) or by
+    // the base branch's own protection.
     let now;
-    try { now = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,baseRefName,headRefOid'])); } catch { now = {}; }
+    try { now = readGates(); } catch (err) {
+      console.error(`merge-pr: could not read PR #${pr} again before merging (${String(err.stderr || err.message).trim()}); nothing was merged`);
+      process.exit(1);
+    }
     const changed = ['baseRefName', 'title', 'body', 'headRefOid'].filter(k => (now[k] || '') !== (view[k] || ''));
     if (changed.length) {
       const what = changed.includes('baseRefName') ? `now targets ${now.baseRefName || 'an unreadable base'}, not ${view.baseRefName} as checked` : `changed (${changed.join(', ')}) during the checks`;
       console.error(`merge-pr: PR #${pr} ${what}; run merge-pr again`);
+      process.exit(1);
+    }
+    const late = now.state === 'OPEN' ? mergeBlockers(now, { reviewOptional: opts.reviewOptional }).blockers : [`PR #${pr} is ${now.state}`];
+    if (late.length) {
+      for (const b of late) console.error(`merge-pr: just before merging: ${b}`);
       process.exit(1);
     }
     try {

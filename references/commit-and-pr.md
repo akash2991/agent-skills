@@ -24,4 +24,4 @@ Thinking-effort: <low|medium|high|...>
 Harness: <claude-code|herdr|...>
 ```
 
-The anatomy bends to the work type: a bug fix leads with the cause; a chore may be summary only.
+The anatomy bends to the work type: a bug fix leads with the cause; a chore may be summary only. The three trailers are the message's last paragraph, where git reads trailers; any other trailer (`Co-Authored-By:`) joins that paragraph, with no blank line between.
