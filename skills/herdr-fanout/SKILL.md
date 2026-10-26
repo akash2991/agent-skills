@@ -55,19 +55,20 @@ straight from the response — `result.root_pane.pane_id`:
 
 ```bash
 out=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" \
-      --cwd "$PWD" --label "reviewer:auth" --no-focus)
+      --cwd "$PWD" --label "PROJ-42 auth review (code-reviewer)" --no-focus)
 pane=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')
 ```
 
 - **`--no-focus`** always, so the user's focus stays in your pane. The tab bar
   still shows the new tab.
-- **`--label`** every tab with its role (`reviewer:auth`, `design:mvp`,
-  `research:pricing`) — the labels are your at-a-glance dashboard.
+- **`--label`** every tab with the agent's visible runtime name
+  (`development-setup` DS2): `<ticket> <scope> (<persona>)` on a shared
+  checkout, `<ticket>-<slug> (<persona>)` in a worktree. The labels are your
+  at-a-glance dashboard.
 - **`--cwd "$PWD"`** shares this checkout. For agents that will *write* in
   parallel and could collide, give each its own git worktree instead and use
-  that worktree's basename followed by the persona, `<ticket>-<slug> (<persona>)`,
-  as the agent's visible runtime name (`development-setup` DS2) — `herdr-worktree-agent` supplies the worktree
-  procedure; read-only reviewers can safely share.
+  that worktree's basename in the name — `herdr-worktree-agent` supplies the
+  worktree procedure; read-only reviewers can safely share.
 
 Then start an agent in that pane and **fire the brief without `--wait`**, so you
 can launch the next slice while this one works. **Address the agent by its pane
@@ -75,13 +76,15 @@ id**, not a custom name:
 
 ```bash
 herdr agent start "$(basename "$pane")" --kind claude --pane "$pane"   # returns when ready
+herdr agent rename "$pane" "PROJ-42 auth review (code-reviewer)"        # the visible name, after init
 herdr agent prompt "$pane" "<the self-contained brief for this slice>"
 ```
 
 - **Target by pane id.** A name set at `agent start` is cleared when the agent
   re-registers during init (Claude does this), so a later `agent prompt <name>`
   fails with `agent_not_found`. The pane id is the stable handle; the name arg is
-  required but you don't rely on it.
+  required but you don't rely on it. Set the visible name with `agent rename`
+  once `agent start` has returned, so init does not clear it.
 - `agent start` returns once Herdr detects the agent ready for input. Omitting
   `--wait` on `agent prompt` submits the task and returns; you collect later. Use
   the `--kind` matching the requested agent (`claude`, `codex`, `pi`, `gemini`,

@@ -1,6 +1,6 @@
 ---
 name: development-setup
-description: Development setup rules for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, matching main-agent and subagent names, independent Docker containers on their own ports, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus Android builds in that environment, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when a mobile build is needed; or when agents, frontend, and backend work on one repository concurrently.
+description: Development setup rules for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, main-agent and subagent names made of the worktree basename and the persona, independent Docker containers on their own ports, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus Android builds in that environment, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when a mobile build is needed; or when agents, frontend, and backend work on one repository concurrently.
 category: delivery
 ---
 
@@ -91,7 +91,7 @@ What is in place before development starts: an environment that belongs to this 
 
 Before starting work:
 
-- [ ] Each main agent and subagent has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is exactly that worktree's basename (DS2).
+- [ ] Each main agent and subagent has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is that worktree's basename followed by its persona, `<ticket>-<slug> (<persona>)` (DS2).
 - [ ] Docker containers and LocalStack are running for the services you touch, as this agent's own Compose project on its own ports (DS3, DS4).
 - [ ] The database is snapshotted or seeded for this agent (DS5).
 - [ ] The API contract, DB model, and dependency shapes for this slice exist (DS7–DS9).
