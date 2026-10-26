@@ -12,6 +12,7 @@
  *   - every listed skill exists in skills/ and, for a selected persona, in manifest.json
  *   - sections Role, Guidelines, Never are present on a persona that lists skills (upstream base personas are exempt)
  *   - every persona and skill named in manifest.json exists
+ *   - the persona table in project/AGENTS.md lists exactly the personas selected in manifest.json
  */
 
 'use strict';
@@ -24,6 +25,7 @@ const ROOT = path.resolve(__dirname, '..');
 const AGENTS_DIR = path.join(ROOT, 'agents');
 const SKILLS_DIR = path.join(ROOT, 'skills');
 const MANIFEST = path.join(ROOT, 'manifest.json');
+const PROJECT_AGENTS = path.join(ROOT, 'project', 'AGENTS.md');
 
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const TRIGGER = /\buse (this )?(when|for|before|after|during)\b/i;
@@ -32,6 +34,18 @@ const FORBIDDEN_KEYS = ['model', 'effort', 'allowed', 'allowed-models', 'allowed
 
 const splitList = v => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
 const stripFences = s => s.replace(/^(`{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm, '');
+
+// The names in the first column of the table under "## Your personas": `a` · `b` rows list several.
+function personaTableNames(markdown) {
+  const section = markdown.split(/^## Your personas\s*$/m)[1];
+  if (!section) return null;
+  const names = [];
+  for (const line of section.split(/^## /m)[0].split('\n')) {
+    const first = line.startsWith('|') ? line.split('|')[1] : '';
+    for (const m of first.matchAll(/`([a-z0-9-]+)`/g)) names.push(m[1]);
+  }
+  return names;
+}
 
 function main() {
   const errors = [];
@@ -45,6 +59,13 @@ function main() {
   for (const s of selectedSkills) if (!knownSkills.has(s)) errors.push(`manifest.json: skill "${s}" is not in skills/`);
   for (const p of selectedPersonas) if (!knownPersonas.has(p)) errors.push(`manifest.json: persona "${p}" is not in agents/`);
   if (!selectedPersonas.size) errors.push('manifest.json: `personas` is empty');
+
+  const tableNames = personaTableNames(fs.readFileSync(PROJECT_AGENTS, 'utf8'));
+  if (!tableNames) errors.push('project/AGENTS.md: no "## Your personas" section');
+  else {
+    for (const p of selectedPersonas) if (!tableNames.includes(p)) errors.push(`project/AGENTS.md: persona table is missing "${p}"`);
+    for (const n of tableNames) if (!selectedPersonas.has(n)) errors.push(`project/AGENTS.md: persona table lists "${n}", which manifest.json does not select`);
+  }
 
   for (const file of personaFiles) {
     const name = file.replace(/\.md$/, '');
@@ -82,4 +103,6 @@ function main() {
   if (errors.length) process.exit(1);
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { personaTableNames };
