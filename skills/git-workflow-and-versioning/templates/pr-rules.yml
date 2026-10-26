@@ -28,8 +28,11 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          # Set the repository variable LINEAR_TEAM (e.g. ENG) to accept only that team's ticket ids.
+          # Required: the repository variable LINEAR_TEAM (e.g. ENG), the team whose ticket ids are accepted.
           LINEAR_TEAM: ${{ vars.LINEAR_TEAM }}
           # Set BRAIN_LONG_LIVED (e.g. ^(staging|develop)$) for the long-lived branches P16 allows besides main and release/*.
           BRAIN_LONG_LIVED: ${{ vars.BRAIN_LONG_LIVED }}

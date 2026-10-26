@@ -8,7 +8,7 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle, extraLongLived, loadDotenv, checkCommitMessage, checkOneTicket } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, extraLongLived, loadDotenv, checkCommitMessage, checkOneTicket, checkBranchName } = require('./brain-git-check');
 
 // Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 4 the merge's outcome
 // could not be read (nothing deleted; run merge-pr again to verify and clean up), 3 merged but P7
@@ -157,7 +157,7 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // The same title rule CI checks: "<ticket>: <goal>". The title, branch, and commits are checked again here, because a
   // pr-rules success on this head may predate a retitle (the head SHA does not change).
   blockers.push(...checkPrTitle(view.title, env));
-  if (view.commitMessages) blockers.push(...checkOneTicket({ branch: view.headRefName, title: view.title, messages: view.commitMessages }, env));
+  if (view.commitMessages) blockers.push(...checkOneTicket({ branch: view.headRefName, title: view.title, messages: view.commitMessages }, view.isCrossRepository ? { ...env, HEAD_REPO: 'fork', REPO: 'base' } : env));
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
@@ -165,12 +165,17 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // skipped or neutral pr-rules never checked anything.
   const rules = checks.filter(c => (c.name || c.context) === 'pr-rules');
   const passed = rules.filter(c => (c.conclusion || c.state) === 'SUCCESS');
-  if (checks.length && !passed.length) blockers.push('no passing pr-rules check on this head: install templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
-  // The head SHA does not change when the title, body, or base does: a pass that started before the last such change
-  // checked other metadata (a removed Size-exception, a retitle, a new base). Wait for the run the edit triggers.
+  if (checks.length && !passed.length) blockers.push('no passing pr-rules check on this head: install skills/git-workflow-and-versioning/templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
+  // A PR that changes the workflow behind its own pr-rules pass certified itself: merge it by hand after review.
+  const own = new Set(passed.map(c => c.workflowPath).filter(Boolean));
+  if ((view.changedFiles || []).some(f => own.has(f))) blockers.push('this PR changes the workflow that produced its pr-rules pass, so that pass proves nothing: a reviewer merges it by hand (P10)');
+  if (view.commitMessages && view.commitMessages.length >= 250) blockers.push('the PR has 250 or more commits, more than the API lists, so the ticket check cannot see them all: split it (P11)');
+  // The head SHA does not change when the title, body, or base does. A run checks the PR as it was when the run was
+  // created (a re-run keeps that snapshot), so only a pass from a run created after the last such change counts; a
+  // pass whose run time is unknown does not.
   const changed = Date.parse(view.metadataChangedAt || '') || 0;
-  if (passed.length && changed && !passed.some(c => (Date.parse(c.startedAt || '') || 0) >= changed)) {
-    blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers, or re-run pr-rules if the change came from a workflow token, which starts none (P10, P11)`);
+  if (passed.length && changed && !passed.some(c => (Date.parse(c.runCreated || '') || 0) >= changed)) {
+    blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers. A re-run checks the old snapshot: if no run starts (an edit by a workflow token), make a fresh edit or close and reopen the PR (P10, P11)`);
   }
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
@@ -300,6 +305,8 @@ function main(argv) {
   // Every gh command gets host/owner/name: a bare owner/name would follow GH_HOST to another host.
   const { host: rh, owner: ro, name: rn } = splitRepo(given);
   const repo = `${rh}/${ro}/${rn}`;
+  // Commands without a host argument (gh variable get --org) follow GH_HOST: pin it to the same host.
+  process.env.GH_HOST = rh;
   // Branch cleanup goes through this checkout's origin, so it runs only when origin is the target repository.
   let ownRepo = !opts.repo;
   if (!ownRepo) {
@@ -310,21 +317,28 @@ function main(argv) {
   // The origin URL as verified now; cleanup uses this one and stops if origin is changed meanwhile.
   let verifiedUrl = '';
   if (ownRepo) { try { verifiedUrl = git(['config', '--get', 'remote.origin.url']).trim(); } catch { ownRepo = false; } }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit,files']));
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
   // on to cleanup only if the merge commit proves P15 and P3.
   const alreadyMerged = view.state === 'MERGED';
   view.unresolvedThreads = unresolvedThreads(repo, pr);
   if (!alreadyMerged) view.commitMessages = prCommitMessages(repo, pr);
+  view.changedFiles = (view.files || []).map(f => f.path);
   view.metadataChangedAt = alreadyMerged ? '' : metadataChangedAt(repo, pr);
   runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
+  // The same default branch for the checks merge-pr re-runs (P5 and one-ticket promotion) as for cleanup.
+  process.env.DEFAULT_BRANCH = defaultBranch;
   // BRAIN_LONG_LIVED as pr-rules sees it: the repository variable when neither the environment nor .env defines it.
   // An invalid or unreadable pattern cannot say which branches are long-lived, so no branch is deleted.
   let patternInvalid = false;
-  if (process.env.BRAIN_LONG_LIVED === undefined) {
-    try { process.env.BRAIN_LONG_LIVED = gh(['variable', 'get', 'BRAIN_LONG_LIVED', '--repo', repo]).trim(); } catch (err) {
-      if (!/not found|404/i.test(String(err.stderr || err.message))) patternInvalid = true;
+  // The repository variable, then the organisation's (pr-rules sees both through vars.*); LINEAR_TEAM the same way.
+  for (const key of ['BRAIN_LONG_LIVED', 'LINEAR_TEAM']) {
+    if (process.env[key] !== undefined) continue;
+    for (const scope of [['--repo', repo], ['--org', ro]]) {
+      try { process.env[key] = gh(['variable', 'get', key, ...scope]).trim(); break; } catch (err) {
+        if (!/not found|404/i.test(String(err.stderr || err.message))) { if (key === 'BRAIN_LONG_LIVED') patternInvalid = true; break; }
+      }
     }
   }
   if (process.env.BRAIN_LONG_LIVED) { try { new RegExp(process.env.BRAIN_LONG_LIVED); } catch { patternInvalid = true; } }
@@ -343,10 +357,12 @@ function main(argv) {
   view.writers = writers(repo, [...reviewers]);
   const { blockers, ticket } = alreadyMerged ? { blockers: [], ticket: '' } : mergeBlockers(view, { reviewOptional: opts.reviewOptional });
   // GitHub's "Automatically delete head branches" deletes any unprotected head on merge, long-lived or not.
-  if (!alreadyMerged && longLived(view.headRefName, defaultBranch) && !isProtected) {
+  // Any head merge-pr would keep (long-lived, or kept because its pattern or protection could not be read) must survive
+  // the merge itself; only branch protection guarantees that against automatic deletion.
+  if (!alreadyMerged && (longLived(view.headRefName, defaultBranch) || patternInvalid || protectionUnknown) && !isProtected) {
     let autoDelete = true;
     try { autoDelete = gh(['api', '--hostname', h, `repos/${o}/${n}`, '--jq', '.delete_branch_on_merge']).trim() !== 'false'; } catch { /* unknown: assume it deletes */ }
-    if (autoDelete) blockers.push(`${view.headRefName} is long-lived but unprotected, and the repository deletes head branches on merge (or that could not be read): protect it first (P16)`);
+    if (autoDelete) blockers.push(`${view.headRefName} must be kept but is not known to be protected, and the repository deletes head branches on merge (or that could not be read): protect it first (P16)`);
   }
   if (!alreadyMerged && hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
   if (blockers.length) {
@@ -401,6 +417,13 @@ function main(argv) {
   }
   if (keep) {
     console.log(`merged #${pr} with a merge commit; ${view.headRefName} is long-lived and stays (P7 does not apply)`);
+    return;
+  }
+  // Only a ticket branch is ever deleted: a head that is not <ticket>-<slug> may be a long-lived branch whose pattern
+  // this run could not see.
+  if (checkBranchName(view.headRefName).length) {
+    console.error(`merge-pr: merged #${pr}; ${view.headRefName} is not a <ticket>-<slug> branch, so it was kept: delete it by hand if it should go (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
     return;
   }
   if (view.isCrossRepository || !ownRepo) {

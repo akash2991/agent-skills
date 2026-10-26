@@ -12,7 +12,7 @@ const { install, MARKER } = require('../skills/git-workflow-and-versioning/scrip
 const { checkCommitMessage } = check;
 
 // The suite is independent of the caller's shell: a project's .env loaded there must not change the results.
-for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED', 'CI', 'GH_HOST']) delete process.env[key];
+for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED', 'CI', 'GH_HOST', 'DEFAULT_BRANCH']) delete process.env[key];
 
 const GOOD = [
   'feat(login): add the login form [ENG-123]',
@@ -582,7 +582,7 @@ test('pr mode run from a subdirectory still requires the service changelog, and 
   fs.writeFileSync(path.join(dir, '.gitattributes'), '*.js -diff\n');
   g(['add', '-A']); g(['commit', '-q', '-m', 'work']);
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
-  const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: x'], { cwd: path.join(dir, 'svc'), encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: x'], { cwd: path.join(dir, 'svc'), encoding: 'utf8', env: { ...process.env, CI: '1', LINEAR_TEAM: 'ENG' } });
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /svc\/api\/CHANGELOG\.md/);
   assert.match(r.stderr, /PR changes \d{3,} lines/);
@@ -647,7 +647,7 @@ test('the commits and push CLI paths read real git: parent counts, origin/HEAD, 
   g(['switch', '-q', '-c', 'ENG-1-x']);
   g(['commit', '-q', '--allow-empty', '-m', 'Merge pull request #9 [ENG-1]']);
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
-  const commits = require('child_process').spawnSync('node', [script, 'commits', '--base', 'trunk'], { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  const commits = require('child_process').spawnSync('node', [script, 'commits', '--base', 'trunk'], { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1', LINEAR_TEAM: 'ENG' } });
   assert.strictEqual(commits.status, 1, 'a one-parent "Merge pull request" commit is held to the anatomy');
   g(['update-ref', 'refs/remotes/origin/trunk', 'trunk']); g(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk']);
   const sha = g(['rev-parse', 'HEAD']).trim();
@@ -765,7 +765,7 @@ test('pr-rules.yml passes LINEAR_TEAM and BRAIN_LONG_LIVED from repository varia
   assert.match(yml, /^\s+LINEAR_TEAM: \$\{\{ vars\.LINEAR_TEAM \}\}$/m);
   assert.match(yml, /^\s+BRAIN_LONG_LIVED: \$\{\{ vars\.BRAIN_LONG_LIVED \}\}$/m);
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
-  const r = require('child_process').spawnSync('node', [script, 'branch', 'develop'], { encoding: 'utf8', env: { ...process.env, CI: '1', BRAIN_LONG_LIVED: '^(staging|develop)$' } });
+  const r = require('child_process').spawnSync('node', [script, 'branch', 'develop'], { encoding: 'utf8', env: { ...process.env, CI: '1', LINEAR_TEAM: 'ENG', BRAIN_LONG_LIVED: '^(staging|develop)$' } });
   assert.strictEqual(r.status, 0, r.stderr);
 });
 
@@ -932,14 +932,15 @@ test('an invalid BRAIN_LONG_LIVED keeps the branch, and local cleanup removes th
 test('a pr-rules pass from before the last title, body, or base change does not count', () => {
   const base = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
-    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:00:00Z' }] };
-  // a Size-exception removed from the body, a retitle, or a new base all move metadataChangedAt
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', runCreated: '2026-10-26T10:00:00Z', startedAt: '2026-10-26T10:06:00Z' }] };
+  // a Size-exception removed from the body, a retitle, or a new base all move metadataChangedAt; a job that started
+  // after the edit still checked the run's older snapshot
   assert.match(mergeBlockers({ ...base, metadataChangedAt: '2026-10-26T10:05:00Z' }).blockers.join(), /pr-rules last passed before/);
   assert.deepStrictEqual(mergeBlockers({ ...base, metadataChangedAt: '2026-10-26T09:55:00Z' }).blockers, []);
 });
 
 test('end to end: merge-pr refuses after an edit newer than the pr-rules pass', () => {
-  const f = approvedFixture({ ...mergeView, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:00:00Z' }] });
+  const f = approvedFixture({ ...mergeView, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', runCreated: '2026-10-26T10:00:00Z', startedAt: '2026-10-26T10:06:00Z' }] });
   const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_EDITED: '["2026-10-26T10:05:00Z"]' }, encoding: 'utf8' });
   assert.strictEqual(r.status, 1, r.stderr);
   assert.match(r.stderr, /pr-rules last passed before/);
@@ -955,7 +956,7 @@ test('a release promotion passes pr mode end to end, while a mixed-ticket featur
   g(['switch', '-q', '-c', 'release/1.0']);
   for (const t of ['ENG-1', 'ENG-2']) { fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), `- ${t}\n`); g(['commit', '-q', '-am', `feat: ${t} [${t}]${T}`]); }
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
-  const run = (branch, title) => require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--branch', branch, '--title', title], { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  const run = (branch, title) => require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--branch', branch, '--title', title], { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1', LINEAR_TEAM: 'ENG' } });
   assert.strictEqual(run('release/1.0', 'ENG-3: release 1.0').status, 0);
   g(['branch', '-m', 'ENG-1-mixed']);
   assert.match(run('ENG-1-mixed', 'ENG-1: mixed').stderr, /one ticket per PR/);
@@ -971,7 +972,7 @@ test('every gh command names the host, so GH_HOST cannot redirect it', () => {
   const f = approvedFixture();
   const r = require('child_process').spawnSync('node', [mergeScript, '1', ...PROV], { cwd: f.work, env: { ...f.env, GH_HOST: 'enterprise.example' }, encoding: 'utf8' });
   assert.strictEqual(r.status, 0, r.stderr);
-  for (const line of fs.readFileSync(f.log, 'utf8').split('\n').filter(l => /^(pr|repo|variable) /.test(l))) assert.match(line, /--repo github\.com\/o\/r|repo view github\.com\/o\/r/, line);
+  for (const line of fs.readFileSync(f.log, 'utf8').split('\n').filter(l => /^(pr|repo|variable) /.test(l))) assert.match(line, /--repo github\.com\/o\/r|repo view github\.com\/o\/r|--org o$/, line);
   fs.rmSync(f.root, { recursive: true, force: true });
 });
 
@@ -1047,4 +1048,53 @@ test('a change request after a dismissed approval still blocks; a dismissed appr
   const base = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }] };
   assert.match(mergeBlockers({ ...base, reviews: [rev('DISMISSED', 'h1'), rev('CHANGES_REQUESTED', 'h2')] }, { reviewOptional: true }).blockers.join(), /requested changes/);
   assert.match(mergeBlockers({ ...base, reviews: [rev('APPROVED', 'h2'), rev('DISMISSED', 'h2')] }).blockers.join(), /no approval of the current head/);
+});
+
+test('an invalid pattern on an unprotected head with automatic deletion refuses the merge', () => {
+  const f = approvedFixture({ ...mergeView, headRefName: 'staging' });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, BRAIN_LONG_LIVED: '([', FAKE_AUTODELETE: 'true' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /deletes head branches on merge/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('the default branch is long-lived for P5 and the one-ticket rule, whatever its name', () => {
+  assert.deepStrictEqual(check.checkBranchName('trunk', { DEFAULT_BRANCH: 'trunk' }), []);
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'trunk', title: 'ENG-3: promote', messages: ['feat: a [ENG-1]', 'feat: b [ENG-2]'] }, { DEFAULT_BRANCH: 'trunk' }), []);
+  const yml = fs.readFileSync(path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'templates', 'pr-rules.yml'), 'utf8');
+  assert.match(yml, /DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+});
+
+test('CI refuses to run without LINEAR_TEAM; git\'s other merge subjects are merges; a fork head named main is not long-lived', () => {
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'branch', 'ENG-1-x'], { encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /LINEAR_TEAM is not set/);
+  const T = '\n\nENG-1\n\nModel: m\nThinking-effort: h\nHarness: c';
+  for (const subject of ["Merge commit 'abc123' into ENG-1-x", "Merge tag 'v1.0' into ENG-1-x", "Merge branches 'a' and 'b' into ENG-1-x"]) {
+    assert.deepStrictEqual(check.checkCommitMessage(subject + T, {}), [], subject);
+  }
+  const fork = { HEAD_REPO: 'someone/r', REPO: 'o/r' };
+  assert.match(check.checkOneTicket({ branch: 'main', title: 'ENG-1: x', messages: ['feat: a [ENG-1]', 'feat: b [ENG-2]'] }, fork).join(), /one ticket per PR/);
+  assert.strictEqual(check.checkBranchName('main', fork).length, 1);
+});
+
+test('merge-pr keeps a head that is not a ticket branch, refuses a PR that edits its own pr-rules workflow, and caps commits', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request' }],
+    changedFiles: ['.github/workflows/pr-rules.yml'] };
+  assert.match(mergeBlockers(view).blockers.join(), /changes the workflow that produced its pr-rules pass/);
+  assert.match(mergeBlockers({ ...view, changedFiles: [], commitMessages: Array(250).fill('feat: x [ENG-1]') }).blockers.join(), /250 or more commits/);
+  const f = approvedFixture({ ...mergeView, headRefName: 'staging' });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /not a <ticket>-<slug> branch, so it was kept/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('an explicit [TICKET] is the owner even when prose holds a ticket-shaped token', () => {
+  const revert = 'Revert "feat(b): add b [ENG-2]"\n\nThis broke UTF-8 input. [ENG-1]';
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'ENG-1-fix', title: 'ENG-1: fix', messages: [revert] }, {}), []);
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'ENG-1-fix', title: 'ENG-1: fix', messages: ['chore: note SHA-256 sums\n\n[ENG-1]'] }, {}), []);
 });

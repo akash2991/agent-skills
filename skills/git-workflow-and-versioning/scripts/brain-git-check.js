@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const TYPES = 'feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert';
 // git's own merge subjects: "Merge pull request #n ..." and "Merge branch ...". Anything else starting "Merge " is a commit.
-const GIT_MERGE = /^Merge (pull request #\d+|branch |remote-tracking branch )/;
+const GIT_MERGE = /^Merge (pull request #\d+|branch |branches |remote-tracking branch |commit '|tag ')/;
 const CHANGELOG = /(^|\/)CHANGELOG\.md$/;
 const SIZE_EXCEPTION = /^Size-exception:[ \t]*\S/m;
 
@@ -57,8 +57,23 @@ function extraLongLived(name, env = process.env) {
   try { return new RegExp(env.BRAIN_LONG_LIVED).test(name); } catch { return false; }
 }
 
+// The repository's default branch: DEFAULT_BRANCH (pr-rules passes it) or origin/HEAD.
+function defaultBranch(env = process.env) {
+  if (env.DEFAULT_BRANCH) return env.DEFAULT_BRANCH;
+  try {
+    return execFileSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().replace(/^origin\//, '');
+  } catch { return ''; }
+}
+
+// Long-lived branches (P16): main, the default branch, release/*, and BRAIN_LONG_LIVED; the same set merge-pr keeps.
+// A head from a fork is never long-lived here: its "main" is the fork's (HEAD_REPO and REPO, passed by pr-rules, differ).
+function isLongLived(name, env = process.env) {
+  if (env.HEAD_REPO && env.REPO && env.HEAD_REPO !== env.REPO) return false;
+  return name === 'main' || name.startsWith('release/') || extraLongLived(name, env) || (!!name && name === defaultBranch(env));
+}
+
 function checkBranchName(name, env = process.env) {
-  if (name === 'main' || name.startsWith('release/') || extraLongLived(name, env)) return [];
+  if (isLongLived(name, env)) return [];
   if (!new RegExp(`^${ticketSource(env)}-[a-z0-9]+(-[a-z0-9]+)*$`).test(name)) {
     return [`branch "${name}" is not <ticket>-<slug>, for example ENG-123-login-form (P5)`];
   }
@@ -76,10 +91,14 @@ function commitTicket(msg, id) {
   if (bracket && id.test(bracket[1])) return bracket[1];
   const into = /^Merge .* into (\S+)/.exec(subject);
   if (into && id.test(into[1])) return id.exec(into[1])[1];
+  // An explicit [TICKET] wins over a ticket-shaped token in prose (UTF-8, SHA-256 under the generic pattern).
+  const explicit = text => { const b = new RegExp(`\\[(${id.source.replace(/^\\b\(|\)\\b$/g, '')})\\]`).exec(text); return b ? b[1] : ''; };
   if (/^(Revert|Reapply) ".*"/.test(subject)) {
     const own = msg.replace(/^(Revert|Reapply) ".*"/, '');
+    if (explicit(own)) return explicit(own);
     if (id.test(own)) return id.exec(own)[1];
   }
+  if (explicit(msg)) return explicit(msg);
   const any = id.exec(msg);
   return any ? any[1] : '';
 }
@@ -88,7 +107,7 @@ function checkOneTicket({ branch, title, messages }, env = process.env) {
   const id = new RegExp(`\\b(${ticketSource(env)})\\b`);
   const named = new Map();
   const add = (where, ticket) => { if (ticket) (named.get(ticket) || named.set(ticket, []).get(ticket)).push(where); };
-  const longLivedHead = branch && (branch === 'main' || branch.startsWith('release/') || extraLongLived(branch, env));
+  const longLivedHead = branch && isLongLived(branch, env);
   if (branch && !longLivedHead) add('branch', (id.exec(branch) || [])[1]);
   add('title', (id.exec(title || '') || [])[1]);
   if (!longLivedHead) for (const [i, msg] of (messages || []).entries()) add(`commit ${i + 1}`, commitTicket(msg, id));
@@ -262,6 +281,11 @@ function report(errors) {
 function main(argv) {
   loadDotenv();
   const [cmd, ...rest] = argv;
+  // In CI the ticket pattern must be the team's: the generic one also matches tokens such as UTF-8 or SHA-256.
+  if (process.env.CI && !process.env.LINEAR_TEAM && ['commits', 'pr', 'branch'].includes(cmd)) {
+    console.error('brain-git-check: LINEAR_TEAM is not set; set it as a repository variable for pr-rules.yml (P4)');
+    process.exit(1);
+  }
   if (cmd === 'commit-msg') {
     if (!rest[0] || !fs.existsSync(rest[0])) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
     return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true }));
