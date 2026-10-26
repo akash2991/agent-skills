@@ -438,8 +438,8 @@ if (a[0] === 'variable' && a[1] === 'get' && a[2] === 'LINEAR_TEAM' && !process.
 if (a[0] === 'variable' && a[1] === 'get') { if (process.env.FAKE_LONG_LIVED !== undefined) { process.stdout.write(process.env.FAKE_LONG_LIVED); process.exit(0); } process.stderr.write('variable ' + a[2] + ' was not found'); process.exit(1); }
 if (a[0] === 'pr' && a[1] === 'view') {
   const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
-  if (a.includes('--jq') && a[a.length - 1] === '.baseRefName') { process.stdout.write(process.env.FAKE_RETARGET || v.baseRefName); process.exit(0); }
-  process.stdout.write(JSON.stringify(a[a.length - 1] === 'state,mergeCommit,baseRefName' ? { state: 'MERGED', mergeCommit: { oid: 'abcdef1234' }, baseRefName: process.env.FAKE_MERGED_BASE || v.baseRefName } : v)); process.exit(0);
+  if (a[a.length - 1] === 'title,body,baseRefName,headRefOid') { process.stdout.write(JSON.stringify({ ...v, baseRefName: process.env.FAKE_RETARGET || v.baseRefName, title: process.env.FAKE_RETITLE || v.title, body: process.env.FAKE_REBODY !== undefined ? process.env.FAKE_REBODY : v.body })); process.exit(0); }
+  process.stdout.write(JSON.stringify(a[a.length - 1] === 'state,mergeCommit,baseRefName,title,body' ? { state: 'MERGED', mergeCommit: { oid: 'abcdef1234' }, baseRefName: process.env.FAKE_MERGED_BASE || v.baseRefName, title: process.env.FAKE_MERGED_TITLE || v.title, body: v.body } : v)); process.exit(0);
 }
 if (a[0] === 'pr' && a[1] === 'merge') {
   const tmp = fs.mkdtempSync(require('os').tmpdir() + '/m-');
@@ -840,7 +840,7 @@ test('one ticket per PR: branch, title, and commits must agree', () => {
 test('the merge commit is verified before cleanup; a re-run on a merged PR cleans up; an unreadable outcome is exit 4', () => {
   // first run: the state cannot be read after the merge call
   const f = approvedFixture();
-  patchGh(f, "if (a[0] === 'pr' && a[1] === 'view') {", "if (a[0] === 'pr' && a[1] === 'view' && a[a.length - 1] === 'state,mergeCommit,baseRefName' && !fs.existsSync(" + JSON.stringify(path.join(f.root, 'ok')) + ")) { process.stderr.write('HTTP 503'); process.exit(1); }");
+  patchGh(f, "if (a[0] === 'pr' && a[1] === 'view') {", "if (a[0] === 'pr' && a[1] === 'view' && a[a.length - 1] === 'state,mergeCommit,baseRefName,title,body' && !fs.existsSync(" + JSON.stringify(path.join(f.root, 'ok')) + ")) { process.stderr.write('HTTP 503'); process.exit(1); }");
   const first = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
   assert.strictEqual(first.status, 4, first.stderr);
   execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
@@ -1539,4 +1539,86 @@ test('a tie in creation time keeps a newer pending run in front of an older pass
   for (const order of [[run(7, 'COMPLETED', 'SUCCESS'), run(8, 'QUEUED', null)], [run(8, 'QUEUED', null), run(7, 'COMPLETED', 'SUCCESS')]]) {
     assert.deepStrictEqual(latestRuns(order).map(c => c.status), ['QUEUED']);
   }
+});
+
+test('a title edited during the checks stops the merge', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_RETITLE: 'ENG-2: unrelated ticket' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /changed \(title\) during the checks/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /^pr merge/m);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('install-hooks never writes through a symlinked hook file, and restores the execute bit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hfs-'));
+  const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const run = () => require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
+  assert.strictEqual(run().status, 0);
+  const hook = path.join(repo, '.git', 'hooks', 'commit-msg');
+  fs.chmodSync(hook, 0o644);
+  assert.strictEqual(run().status, 0);
+  assert.strictEqual(fs.statSync(hook).mode & 0o777, 0o755);
+  const shared = path.join(dir, 'shared-commit-msg');
+  fs.copyFileSync(hook, shared);
+  const before = fs.readFileSync(shared, 'utf8') + '# shared\n';
+  fs.writeFileSync(shared, before);
+  fs.rmSync(hook); fs.symlinkSync(shared, hook);
+  const r = run();
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /symlink/);
+  assert.strictEqual(fs.readFileSync(shared, 'utf8'), before);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('P11 counts lines of a file the base marks -diff', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nodiff-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']);
+  fs.writeFileSync(path.join(dir, '.gitattributes'), 'package-lock.json -diff\n');
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# c\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'init']); g(['switch', '-q', '-c', 'ENG-1-x']);
+  fs.writeFileSync(path.join(dir, 'package-lock.json'), Array.from({ length: 2000 }, (_, i) => `"l${i}"`).join('\n') + '\n');
+  fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '- x\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: x', '--branch', 'ENG-1-x'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /P11/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('trailers count only in the last paragraph', () => {
+  const ok = 'feat(x): y [ENG-1]\n\nBody.\n\nModel: a\nThinking-effort: b\nHarness: c';
+  assert.deepStrictEqual(check.checkCommitMessage(ok, { LINEAR_TEAM: 'ENG' }), []);
+  const late = 'feat(x): y [ENG-1]\n\nModel: a\nThinking-effort: b\nHarness: c\n\nThis paragraph follows the trailers.';
+  assert.strictEqual(check.checkCommitMessage(late, { LINEAR_TEAM: 'ENG' }).filter(e => /missing trailer/.test(e)).length, 3);
+});
+
+test('the commit-msg hook treats a "Merge branch" subject as a merge only while git is merging', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, 'msg'), 'Merge branch cleanup into utils [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n');
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const run = () => require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG' } });
+  assert.strictEqual(run().status, 1, 'an ordinary commit with a merge-like subject gets the subject check');
+  fs.writeFileSync(path.join(dir, '.git', 'MERGE_HEAD'), 'a'.repeat(40) + '\n');
+  assert.strictEqual(run().status, 0, 'during a merge it is a merge');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a body edit (a removed size exception) during the checks stops the merge; an edit during the merge keeps the branches', () => {
+  const f = approvedFixture();
+  const v = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify({ ...v, body: 'Size-exception: generated client' }));
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_REBODY: '' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /changed \(body\) during the checks/);
+  const m = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_MERGED_TITLE: 'ENG-2: other' }, encoding: 'utf8' });
+  assert.strictEqual(m.status, 3, m.stderr);
+  assert.match(m.stderr, /title changed while it was being merged/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
 });

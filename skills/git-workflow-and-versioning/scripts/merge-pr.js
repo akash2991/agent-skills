@@ -349,7 +349,7 @@ function main(argv) {
       if (urls.length === 1) verifiedUrl = urls[0].trim(); else ownRepo = false;
     } catch { ownRepo = false; }
   }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
   view.number = Number(pr);
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
   // on to cleanup only if the merge commit proves P15 and P3.
@@ -416,11 +416,14 @@ function main(argv) {
   const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}${opts.reviewOptional ? '\nReview: optional (per the ticket)' : ''}`;
   let mergeError = '';
   if (!alreadyMerged) {
-    // gh pins the head but not the base: a PR retargeted since the checks would merge into a base nothing checked.
-    let base;
-    try { base = gh(['pr', 'view', pr, '--repo', repo, '--json', 'baseRefName', '--jq', '.baseRefName']).trim(); } catch { base = ''; }
-    if (base !== view.baseRefName) {
-      console.error(`merge-pr: PR #${pr} now targets ${base || 'an unreadable base'}, not ${view.baseRefName} as checked; run merge-pr again`);
+    // gh pins the head but not the base, title, or body: a PR retargeted or edited during the checks above would merge
+    // on gates that judged something else (the ticket, a size exception), so read them again and refuse any change.
+    let now;
+    try { now = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,baseRefName,headRefOid'])); } catch { now = {}; }
+    const changed = ['baseRefName', 'title', 'body', 'headRefOid'].filter(k => (now[k] || '') !== (view[k] || ''));
+    if (changed.length) {
+      const what = changed.includes('baseRefName') ? `now targets ${now.baseRefName || 'an unreadable base'}, not ${view.baseRefName} as checked` : `changed (${changed.join(', ')}) during the checks`;
+      console.error(`merge-pr: PR #${pr} ${what}; run merge-pr again`);
       process.exit(1);
     }
     try {
@@ -428,7 +431,7 @@ function main(argv) {
     } catch (err) { mergeError = String(err.stderr || err.message).trim(); }
   }
   let after;
-  try { after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state,mergeCommit,baseRefName'])); } catch (err) {
+  try { after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state,mergeCommit,baseRefName,title,body'])); } catch (err) {
     console.error(`merge-pr: could not read PR #${pr} after the merge call (${String(err.stderr || err.message).trim()}); nothing was deleted: run merge-pr again to verify and clean up`);
     process.exit(OUTCOME_UNKNOWN);
   }
@@ -444,6 +447,8 @@ function main(argv) {
     process.exit(OUTCOME_UNKNOWN);
   }
   if (after.baseRefName && after.baseRefName !== view.baseRefName) problems.push(`it was merged into ${after.baseRefName}, not ${view.baseRefName} as checked`);
+  // The re-read before the merge leaves a moment GitHub cannot close: an edit in it is caught here, and the branches stay.
+  if (!alreadyMerged) for (const k of ['title', 'body']) if (after[k] !== undefined && (after[k] || '') !== (view[k] || '')) problems.push(`its ${k} changed while it was being merged`);
   if (problems.length) {
     console.error(`merge-pr: PR #${pr} is merged${mergeError || alreadyMerged ? ', but not by this run' : ''}, and its merge commit does not meet the rules; the branches were kept:`);
     for (const p of problems) console.error(`merge-pr:   ${p}`);

@@ -38,11 +38,18 @@ function install(hooksDir, checkPathFromRoot) {
   fs.mkdirSync(hooksDir, { recursive: true });
   for (const name of ['commit-msg', 'pre-push']) {
     const file = path.join(hooksDir, name);
+    // A hook file that is a symlink may point at a hook other repositories share: never write through it.
+    if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      results.push(`${name}: skipped, it is a symlink (${file} -> ${fs.readlinkSync(file)}); replace it with a plain file or remove it`);
+      continue;
+    }
     if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').includes(MARKER)) {
       results.push(`${name}: skipped, a hook this script did not write is already there (${file})`);
       continue;
     }
     fs.writeFileSync(file, hookBody(name, checkPathFromRoot), { mode: 0o755 });
+    // The mode above applies only to a new file: a hook restored without its execute bit would be ignored by git.
+    fs.chmodSync(file, 0o755);
     results.push(`${name}: installed`);
   }
   return results;

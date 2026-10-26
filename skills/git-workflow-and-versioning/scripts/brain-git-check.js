@@ -50,8 +50,11 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerg
   if (!revert && !merge && !new RegExp(`^(${TYPES})(\\([a-z0-9._/,-]+\\))?!?: \\S.* \\[${ticket}\\]$`).test(subject)) {
     errors.push(`subject must be "<type>(<scope>): <what changed> [<TICKET-ID>]", type one of ${TYPES.split('|').join(', ')} (P2, P3): got "${subject}"`);
   }
+  // Trailers are git's: the last paragraph of the message, where `git interpret-trailers` and %(trailers) find them.
+  const paragraphs = message.split(/\n[ \t]*\n/);
+  const trailerBlock = paragraphs.length > 1 ? paragraphs[paragraphs.length - 1] : '';
   for (const trailer of ['Model', 'Thinking-effort', 'Harness']) {
-    if (!new RegExp(`^${trailer}:[ \\t]*\\S`, 'm').test(message)) errors.push(`missing trailer "${trailer}: <value>" (P3)`);
+    if (!new RegExp(`^${trailer}:[ \\t]*\\S`, 'm').test(trailerBlock)) errors.push(`missing trailer "${trailer}: <value>" in the message's last paragraph (P3)`);
   }
   return errors;
 }
@@ -313,7 +316,10 @@ function main(argv) {
   }
   if (cmd === 'commit-msg') {
     if (!rest[0] || !fs.existsSync(rest[0])) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
-    return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true }));
+    // A merge commit is being made exactly when MERGE_HEAD exists; a subject that merely reads "Merge branch …" is not one.
+    let isMerge = false;
+    try { isMerge = fs.existsSync(git(['rev-parse', '--git-path', 'MERGE_HEAD']).trim()); } catch { /* outside a repository */ }
+    return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true, isMerge }));
   }
   if (cmd === 'branch') {
     const name = rest[0] || git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
@@ -349,14 +355,16 @@ function main(argv) {
     const base = optionValue(rest, '--base');
     if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>] [--branch <name>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
-    // Attributes come from the base, so a PR's own .gitattributes (`*.js -diff`) cannot hide its lines from P11.
+    // Every line counts for P11, whatever any .gitattributes says (`package-lock.json -diff` has no exemption, and a PR's
+    // own .gitattributes cannot hide its lines): attributes are read from the empty tree, so none apply.
+    const noAttrs = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
     let numstat;
-    try { numstat = git(['--attr-source', base, 'diff', '-z', '--numstat', '--no-renames', `${base}...${head}`]); }
+    try { numstat = git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
     catch { numstat = git(['diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
     const files = parseNumstat(numstat);
     // P11 counts a rename as one file with its own line changes; P13 keeps the rename-free list above.
     let sized = files;
-    try { sized = parseNumstatRenames(git(['--attr-source', base, 'diff', '-z', '--numstat', '-M', `${base}...${head}`])); } catch { /* old git: count without renames */ }
+    try { sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '-M', '--text', `${base}...${head}`])); } catch { /* old git: count without renames */ }
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
