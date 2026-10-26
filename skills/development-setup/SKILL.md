@@ -1,6 +1,6 @@
 ---
 name: development-setup
-description: Development setup rules for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, matching main-agent and subagent names, independent Docker containers on their own ports, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus Android builds in that environment, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when a mobile build is needed; or when agents, frontend, and backend work on one repository concurrently.
+description: Development setup rules for each agent's isolated environment — a sibling git worktree that shares the main repository's parent but is never inside it, main-agent and subagent names made of the worktree basename and the persona, independent Docker containers on their own ports, LocalStack, a database snapshot or seed, optional observability, and cleanup after the PR — plus Android builds in that environment, explicitly approved iOS builds on EAS, and contract-first parallel work. Use when starting any task that writes, runs, tests, debugs, or builds code; when a mobile build is needed; or when agents, frontend, and backend work on one repository concurrently.
 category: delivery
 ---
 
@@ -23,7 +23,7 @@ What is in place before development starts: an environment that belongs to this 
 | ID | Rule |
 | --- | --- |
 | DS1 | **Every agent creates its own environment.** Everything below is ephemeral and belongs to this agent only; the user's checkout stays untouched. Nothing lives only in the environment: commit and push before every pause. |
-| DS2 | **A git worktree beside the main repository, never inside it, with the agent named after it.** If the main checkout is `<workspace-root>/<repo-name>`, create the worktree at `<workspace-root>/<ticket>-<slug>` so both directories share the same parent. The visible runtime name of each main agent and subagent is exactly the basename of that agent's assigned worktree, `<ticket>-<slug>`; persona, role, and immutable harness IDs remain separate metadata. The worktree also never belongs inside a harness directory (such as a `herdr` or `claude` root) or the agent brain. Remove it after the PR is open. |
+| DS2 | **A git worktree beside the main repository, never inside it, with the agent named after it and its persona.** If the main checkout is `<workspace-root>/<repo-name>`, create the worktree at `<workspace-root>/<ticket>-<slug>` so both directories share the same parent. The visible runtime name of each main agent and subagent is the basename of that agent's assigned worktree followed by its persona in parentheses, `<ticket>-<slug> (<persona>)`; an agent without a worktree is named `<ticket> <scope> (<persona>)`. The visible name is what the harness shows people (Claude's agent description, Pi's subagent name, a Herdr tab label); where a harness accepts only a restricted identifier, such as a Herdr agent name (`[a-z][a-z0-9_-]{0,31}`), that identifier stays a lowercase handle and the name goes on its free-text label. This rule overrides a harness's own naming guidance, such as pi-herdr-agents' `<task>-<role>`. Immutable harness IDs remain separate metadata. The worktree also never belongs inside a harness directory (such as a `herdr` or `claude` root) or the agent brain. Remove it after the PR is open. |
 | DS3 | **The service runs in its own Docker containers**; Docker is the local development standard. The Compose project is named after the worktree in lowercase (Compose accepts no capitals: `eng-123-login` for `ENG-123-login`), on host ports no other project on this machine uses (`docker ps --format '{{.Ports}}'`). Never reuse or touch another agent's containers, ports, or directory. |
 | DS4 | **LocalStack mocks AWS.** The app never calls a real AWS service from a development environment, wherever that environment runs, and no AWS credentials are copied into it. |
 | DS5 | **Its own data:** a snapshot of the database or a seed script. Never the shared database. |
@@ -45,7 +45,7 @@ What is in place before development starts: an environment that belongs to this 
 
 ## Procedure
 
-1. From the main repository or any worktree, run this skill's `scripts/new-worktree.js create <ticket>-<slug> --ports <n>`: it creates the sibling worktree and branch, and prints the agent name, the lowercase Compose project, and free host ports (`remove` takes the worktree away after the PR is open). It replaces `git worktree add ../<ticket>-<slug>`, so the worktree is the main repository's sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts (DS2).
+1. From the main repository or any worktree, run this skill's `scripts/new-worktree.js create <ticket>-<slug> --persona <persona> --ports <n>`: it creates the sibling worktree and branch, and prints the agent name `<ticket>-<slug> (<persona>)`, the lowercase Compose project, and free host ports (`remove` takes the worktree away after the PR is open). It replaces `git worktree add ../<ticket>-<slug>`, so the worktree is the main repository's sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to that printed name before work starts (DS2).
 2. Start Docker and LocalStack for the services you touch as the Compose project `<ticket>-<slug>`, lowercased, on free host ports (DS3, DS4); snapshot or seed the database (DS5).
 3. Confirm the API contract, DB model, and every dependency's shape exist for the slice you are about to build (DS7–DS9); if not, that is the first task, not a thing to work around.
 4. Work; run the app and tests inside this environment, and push before every pause (DS1). Build Android here; iOS on EAS only with explicit permission (DS16).
@@ -63,7 +63,7 @@ What is in place before development starts: an environment that belongs to this 
 |---|---|
 | "I'll just work in the user's checkout." | Every agent creates its own environment; the user's checkout stays untouched (DS1). |
 | "The main repository or harness directory is a convenient place for the worktree." | The worktree is a sibling of the main repository: both share one parent, but neither contains the other (DS2). |
-| "A role-based agent name is more descriptive." | The persona and role are separate metadata. The visible runtime name exactly matches the worktree basename so parallel agents reveal their ticket at a glance (DS2). |
+| "I'll lead the name with the persona; it is more descriptive." | The ticket comes first so parallel agents reveal it at a glance, even when a narrow pane cuts the name short; the persona follows in parentheses (DS2). |
 | "Another agent's containers are already running, I'll reuse them." | Everything is ephemeral and belongs to this agent only, in its own Compose project on its own ports (DS3). |
 | "I'll hit real AWS / the shared database for this test." | LocalStack and your own snapshot or seed (DS4, DS5). |
 | "The environment keeps my work, so pushing can wait." | Nothing lives only in the environment; push before every pause (DS1). |
@@ -78,7 +78,7 @@ What is in place before development starts: an environment that belongs to this 
 - Code changes appearing in the user's checkout instead of an agent worktree (DS1).
 - Unpushed work at a pause (DS1).
 - A worktree created inside the main repository, a harness directory, or the agent brain instead of beside the main repository (DS2).
-- A main agent or subagent whose visible runtime name differs from its assigned worktree basename, including a persona or role appended to the name (DS2).
+- A main agent or subagent whose visible runtime name is not `<ticket>-<slug> (<persona>)` for its own worktree and persona, or `<ticket> <scope> (<persona>)` without a worktree (DS2).
 - Two agents sharing a container, a Compose project, host ports, a database, or a worktree (DS3, DS5).
 - Tests run against real AWS or a shared database, or AWS credentials copied into the environment (DS4, DS5).
 - Worktrees, containers, or snapshots left behind after the PR is open (DS2).
@@ -91,7 +91,8 @@ What is in place before development starts: an environment that belongs to this 
 
 Before starting work:
 
-- [ ] Each main agent and subagent has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is exactly that worktree's basename (DS2).
+- [ ] Each agent that writes, runs, tests, or builds code has a git worktree at `<workspace-root>/<ticket>-<slug>` beside `<workspace-root>/<repo-name>`, not inside it, and its visible runtime name is `<ticket>-<slug> (<persona>)` (DS2).
+- [ ] Each agent without a worktree, such as a read-only reviewer, is named `<ticket> <scope> (<persona>)` (DS2).
 - [ ] Docker containers and LocalStack are running for the services you touch, as this agent's own Compose project on its own ports (DS3, DS4).
 - [ ] The database is snapshotted or seeded for this agent (DS5).
 - [ ] The API contract, DB model, and dependency shapes for this slice exist (DS7–DS9).
