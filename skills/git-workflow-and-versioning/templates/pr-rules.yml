@@ -1,0 +1,31 @@
+# Copy to .github/workflows/pr-rules.yml in a project. Runs the mechanical git-workflow-and-versioning rules on every PR
+# (P2/P3 commit messages, P5 branch, P10 title, P11 size, P13 changelog); see skills/git-workflow-and-versioning/SKILL.md.
+name: pr-rules
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  pr-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Check the PR against the git workflow rules
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          CHECK="$(find . -path ./node_modules -prune -o -path '*/skills/git-workflow-and-versioning/scripts/brain-git-check.js' -print | head -1)"
+          test -n "$CHECK" || { echo "brain-git-check.js not found; pull the brain first"; exit 1; }
+          node "$CHECK" branch "$HEAD_REF"
+          node "$CHECK" commits --base "origin/$BASE_REF" --head "$HEAD_SHA"
+          node "$CHECK" pr --base "origin/$BASE_REF" --head "$HEAD_SHA"

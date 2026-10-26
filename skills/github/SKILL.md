@@ -34,7 +34,7 @@ The server entry is in this skill's `mcp.json`; copy it into your tool's MCP con
 | Verdict | `submit_pending_pull_request_review` with `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` | `gh pr review --approve` / `--request-changes` / `--comment` |
 | Reply to and resolve a thread | reply comment, then resolve the thread | `gh api graphql` `resolveReviewThread` after the reply |
 | CI status | `get_pull_request_status` | `gh pr checks` |
-| Merge: merge commit with the ticket id, delete the branch | `merge_pull_request` with method `merge` | `gh pr merge --merge --delete-branch` |
+| Merge: merge commit with the ticket id, delete the branch | `merge_pull_request` with method `merge` | `node ../git-workflow-and-versioning/scripts/merge-pr.js <n>`: refuses unless CI is green and the PR approved (`--review-optional` when the ticket says so), then `gh pr merge --merge --delete-branch` |
 | Tag and release `vX.Y.Z` | `create_release` | `git tag -a vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --notes-file <changelog entry>` |
 
 ## Interaction with other skills
