@@ -72,9 +72,14 @@ function isLongLived(name, env = process.env) {
   return name === 'main' || name.startsWith('release/') || extraLongLived(name, env) || (!!name && name === defaultBranch(env));
 }
 
+// A ticket branch: <ticket>-<slug>, the only kind merge-pr ever deletes.
+function isTicketBranch(name, env = process.env) {
+  return new RegExp(`^${ticketSource(env)}-[a-z0-9]+(-[a-z0-9]+)*$`).test(name || '');
+}
+
 function checkBranchName(name, env = process.env) {
   if (isLongLived(name, env)) return [];
-  if (!new RegExp(`^${ticketSource(env)}-[a-z0-9]+(-[a-z0-9]+)*$`).test(name)) {
+  if (!isTicketBranch(name, env)) {
     return [`branch "${name}" is not <ticket>-<slug>, for example ENG-123-login-form (P5)`];
   }
   return [];
@@ -103,11 +108,12 @@ function commitTicket(msg, id) {
   return any ? any[1] : '';
 }
 
-function checkOneTicket({ branch, title, messages }, env = process.env) {
+// promotion, when given, says whether the head is a long-lived promotion (merge-pr knows it from the PR itself).
+function checkOneTicket({ branch, title, messages, promotion }, env = process.env) {
   const id = new RegExp(`\\b(${ticketSource(env)})\\b`);
   const named = new Map();
   const add = (where, ticket) => { if (ticket) (named.get(ticket) || named.set(ticket, []).get(ticket)).push(where); };
-  const longLivedHead = branch && isLongLived(branch, env);
+  const longLivedHead = promotion !== undefined ? promotion : branch && isLongLived(branch, env);
   if (branch && !longLivedHead) add('branch', (id.exec(branch) || [])[1]);
   add('title', (id.exec(title || '') || [])[1]);
   if (!longLivedHead) for (const [i, msg] of (messages || []).entries()) add(`commit ${i + 1}`, commitTicket(msg, id));
@@ -215,6 +221,8 @@ function checkPushedRefs(stdin, env = process.env, protectedBranches = ['main'])
     const branch = remoteRef.slice('refs/heads/'.length);
     const deletion = /^0+$/.test(localSha);
     if (protectedBranches.includes(branch)) { errors.push(`${deletion ? 'deleting' : 'direct push to'} ${branch} is refused${deletion ? '' : ': open a PR'} (P8)`); continue; }
+    // A long-lived branch (release/*, BRAIN_LONG_LIVED) is never deleted by a push either (P16).
+    if (deletion && isLongLived(branch, env)) { errors.push(`deleting the long-lived branch ${branch} is refused (P16)`); continue; }
     if (deletion) continue;
     if (branch.startsWith('release/')) continue;
     errors.push(...checkBranchName(branch, env));
@@ -346,4 +354,4 @@ function loadDotenv(env = process.env) {
   for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (env[key] === undefined) { const v = dotenvValue(key); if (v !== null) env[key] = v; }
 }
 
-module.exports = { checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+module.exports = { isTicketBranch, isLongLived, checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };

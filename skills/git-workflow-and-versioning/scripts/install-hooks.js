@@ -57,6 +57,11 @@ if (require.main === module) {
   const hooksDir = path.resolve(git(['rev-parse', '--git-path', 'hooks']));
   const rel = path.relative(root, CHECK).split(path.sep).join('/');
   const results = install(hooksDir, rel);
+  // A relative core.hooksPath resolves inside each worktree, so these hooks guard only this one: run it in every
+  // worktree (development-setup DS2 creates them).
+  let hooksPath = '';
+  try { hooksPath = git(['config', '--get', 'core.hooksPath']); } catch { /* unset: hooks are shared by every worktree */ }
+  if (hooksPath && !path.isAbsolute(hooksPath)) results.push(`note: core.hooksPath (${hooksPath}) is relative, so these hooks cover this worktree only: run install-hooks.js in each worktree`);
   for (const line of results) console.log(line);
   // A skipped hook means the rules are not enforced here: say so through the exit code too.
   if (results.some(r => r.includes('skipped'))) process.exitCode = 1;
