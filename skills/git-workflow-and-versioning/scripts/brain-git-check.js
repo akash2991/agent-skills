@@ -85,7 +85,9 @@ function checkSize(files, body = '', env = process.env) {
 // A changelog must gain a line; deleting or leaving the file untouched does not satisfy P13.
 // P13 needs a line in the global changelog and in the changelog of every service the change touches. A service's
 // changelog is the nearest CHANGELOG.md above a changed file. `allChangelogs` is the repository's list of them.
-const GLOBAL_CHANGELOGS = ['CHANGELOG.md', 'docs/CHANGELOG.md'];
+// The brain's documentation map keeps the project changelog in docs/ (references/documentation-map.md). A root
+// CHANGELOG.md, whatever tool writes it, is not the project's global changelog.
+const GLOBAL_CHANGELOGS = ['docs/CHANGELOG.md'];
 
 function requiredChangelogs(changedPaths, allChangelogs) {
   const required = new Set();
@@ -103,7 +105,7 @@ function requiredChangelogs(changedPaths, allChangelogs) {
   return [...required];
 }
 
-function checkChangelog(files, allChangelogs = ['CHANGELOG.md']) {
+function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
   if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
@@ -137,9 +139,14 @@ function git(args) {
 }
 
 // Every CHANGELOG.md tracked in the repository; the PR's own checkout is the source of truth.
-function listChangelogs() {
-  // ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
-  return git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n').filter(f => f && !f.startsWith('templates/'));
+// Every CHANGELOG.md the PR touches or could require: those in the checkout and those on the base branch. A changelog the
+// PR deletes is still on the base branch, so the service it belongs to still needs its entry (P13).
+// ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
+function listChangelogs(base) {
+  const here = git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n');
+  const onBase = base ? git(['ls-tree', '-r', '--name-only', base]).split('\n') : [];
+  return [...new Set([...here, ...onBase.filter(f => /(^|\/)CHANGELOG\.md$/.test(f))])]
+    .filter(f => f && !f.startsWith('templates/'));
 }
 
 // The repository's default branch, as far as this checkout knows it. Pushes to it are refused like pushes to main.
@@ -191,7 +198,7 @@ function main(argv) {
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, listChangelogs()),
+      ...checkChangelog(files, listChangelogs(base)),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');

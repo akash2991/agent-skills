@@ -75,10 +75,10 @@ test('an oversized PR fails unless the body records an exception', () => {
 });
 
 test('a changelog line is required in the global file and in the service it touches', () => {
-  const all = ['CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const all = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
   assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tsrc/a.ts'), all).length, 1);
-  assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tCHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all).length, 1);
-  assert.deepStrictEqual(check.checkChangelog(check.parseNumstat('1\t0\tCHANGELOG.md\n1\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
+  assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all).length, 1);
+  assert.deepStrictEqual(check.checkChangelog(check.parseNumstat('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
 });
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
@@ -108,8 +108,8 @@ const { hookBody } = require('../skills/git-workflow-and-versioning/scripts/inst
 const { originRepo, latestRuns, isApproved } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 
 test('a deleted changelog does not satisfy P13; an added line does', () => {
-  assert.strictEqual(checkChangelog(numstat('0\t100\tCHANGELOG.md')).length, 1);
-  assert.deepStrictEqual(checkChangelog(numstat('2\t0\tCHANGELOG.md')), []);
+  assert.strictEqual(checkChangelog(numstat('0\t100\tdocs/CHANGELOG.md')).length, 1);
+  assert.deepStrictEqual(checkChangelog(numstat('2\t0\tdocs/CHANGELOG.md')), []);
 });
 
 test('pre-push judges the remote ref being updated, not the local name', () => {
@@ -142,12 +142,12 @@ test('a revert keeps the ticket and trailers; fixup and squash commits are check
 
 test('a changelog is required in the global file and in each service the change touches', () => {
   const { requiredChangelogs } = check;
-  const all = ['CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/web/CHANGELOG.md'];
-  assert.deepStrictEqual(requiredChangelogs(['services/api/src/a.ts'], all).sort(), ['CHANGELOG.md', 'services/api/CHANGELOG.md']);
-  assert.deepStrictEqual(requiredChangelogs(['README.md'], all), ['CHANGELOG.md']);
+  const all = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/web/CHANGELOG.md'];
+  assert.deepStrictEqual(requiredChangelogs(['services/api/src/a.ts'], all).sort(), ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
+  assert.deepStrictEqual(requiredChangelogs(['README.md'], all), ['docs/CHANGELOG.md']);
   const onlyService = check.checkChangelog(check.parseNumstat('3\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all);
   assert.match(onlyService[0], /CHANGELOG\.md/);
-  assert.deepStrictEqual(check.checkChangelog(check.parseNumstat('1\t0\tCHANGELOG.md\n2\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
+  assert.deepStrictEqual(check.checkChangelog(check.parseNumstat('1\t0\tdocs/CHANGELOG.md\n2\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
 });
 
 test('a release branch and main are not held to the branch name', () => {
@@ -311,4 +311,16 @@ test('a change request stays in force after a new push until its reviewer approv
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r2', 'APPROVED', h2)] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r1', 'APPROVED', h2), rev('r2', 'APPROVED', h2)] }), true);
+});
+
+test('a root CHANGELOG.md is not the global changelog: a generated root file never satisfies P13', () => {
+  assert.match(check.checkChangelog(check.parseNumstat('2\t0\tCHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md'])[0], /no global changelog \(docs\/CHANGELOG\.md\)/);
+  assert.strictEqual(check.checkChangelog(check.parseNumstat('2\t0\tdocs/CHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md', 'docs/CHANGELOG.md']).length, 0);
+});
+
+test('a service changelog the PR deletes is still required, from the base branch list', () => {
+  const base = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const head = ['docs/CHANGELOG.md'];
+  const req = check.requiredChangelogs(['services/api/src/a.ts'], [...new Set([...head, ...base])]);
+  assert.deepStrictEqual(req.sort(), ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
 });

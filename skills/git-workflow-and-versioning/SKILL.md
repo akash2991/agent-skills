@@ -225,7 +225,7 @@ git log --grep="validation" --oneline
 
 ## Release & Versioning
 
-Releases follow semver and add a `CHANGELOG.md` entry listing the tickets. Commits are how *you* track change; a **version** is how your *consumers* track it. The moment anything else depends on your code — another team, a published package, a deployed client — "latest on main" stops being a sufficient answer to "what am I running, and is it safe to upgrade?" A version number and a changelog are the contract that answers it.
+Releases follow semver and add an entry to the project changelog, `docs/CHANGELOG.md` (the brain's documentation map), listing the tickets. Commits are how *you* track change; a **version** is how your *consumers* track it. The moment anything else depends on your code — another team, a published package, a deployed client — "latest on main" stops being a sufficient answer to "what am I running, and is it safe to upgrade?" A version number and a changelog are the contract that answers it.
 
 ### Semantic Versioning
 
