@@ -25,6 +25,11 @@ const WRITE = {
   pi: ['edit', 'write'],
 };
 
+// Pi's tracing extension exposes this metadata-only bookkeeping tool. It is a
+// harness capability exception, not permission to read or write application
+// data or use a shell. Pi ignores the name when the extension is not loaded.
+const PI_CONTEXT = 'brain_context';
+
 // Linear's read tools, as its MCP server names them.
 const LINEAR_READ = [
   'extract_images', 'get_agent_skill', 'get_attachment', 'get_diff', 'get_diff_threads', 'get_document',
@@ -95,6 +100,7 @@ function nativeTools(tools, harness) {
   const readOnly = labels.some(l => LABELS[l].readOnly);
   const out = [...READ[harness], ...(readOnly ? [] : WRITE[harness])];
   for (const label of labels) out.push(...(LABELS[label][harness] || []));
+  if (harness === 'pi') out.push(PI_CONTEXT);
   return [...new Set(out)];
 }
 
@@ -108,12 +114,15 @@ function nativePersona(source, harness) {
   if (!match) return content;
   const lines = match[1].split('\n');
   const { tools, skills } = parseFrontmatter(content);
-  if (tools === undefined) return content;
+  const hasToolLabels = tools !== undefined;
+  // Pi personas always receive the narrow metadata tool, including personas
+  // with no application-tool labels. Other harness copies remain unchanged.
+  if (!hasToolLabels && harness !== 'pi') return content;
   // One `key: value` per line: a wrapped value would be read in part and
   // its continuation left behind in the copy.
   const loose = lines.find(l => l.trim() && !/^[A-Za-z0-9_-]+[ \t]*:/.test(l));
   if (loose !== undefined) throw new Error(`frontmatter line "${loose.trim()}" continues a value; write each key on one line`);
-  const native = nativeTools(tools, harness);
+  const native = hasToolLabels ? nativeTools(tools, harness) : [PI_CONTEXT];
   // `skills:` goes too: Claude Code and pi-herdr-agents load every listed
   // skill in full at start, Gemini rejects the key, and the persona fetches
   // skills as the activity needs them. Gemini's `tools` is a YAML list.
@@ -121,7 +130,7 @@ function nativePersona(source, harness) {
   kept.push(harness === 'gemini' ? `tools: [${native.join(', ')}]` : `tools: ${native.join(', ')}`);
   const labels = splitLabels(tools);
   const viaShell = labels.filter(l => LABELS[l].viaShell);
-  const note = [`Tools: ${labels.join(', ')}.${viaShell.length ? ` Reach ${viaShell.join(', ')} through the shell.` : ''}`];
+  const note = hasToolLabels ? [`Tools: ${labels.join(', ')}.${viaShell.length ? ` Reach ${viaShell.join(', ')} through the shell.` : ''}`] : [];
   const loader = { claude: ' with the Skill tool', gemini: ' with activate_skill', pi: '' }[harness];
   if (skills) note.push(`Skills (load each as the work needs it${loader}): ${skills}.`);
   let body = content.slice(match[0].length);
@@ -133,7 +142,7 @@ function nativePersona(source, harness) {
     else if (!fence && /^# /.test(line)) { at = pos + line.length + 1; break; }
     pos += line.length + 1;
   }
-  body = `${body.slice(0, at)}\n${note.join('\n')}\n${body.slice(at)}`;
+  if (note.length) body = `${body.slice(0, at)}\n${note.join('\n')}\n${body.slice(at)}`;
   return `---\n${kept.join('\n')}\n---\n${body}`;
 }
 
