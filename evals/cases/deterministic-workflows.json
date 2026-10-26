@@ -63,12 +63,12 @@
         "The summary step is the only model call, with a typed output validated against a schema instead of regex-parsed text",
         "A validation failure takes an explicit branch and is not retried automatically",
         "Tests cover the deterministic steps and run with the model call replaced by a fake",
-        "Every ticket in recorded-runs.json is replayed through the new routing and the queue per ticket is reported: T-101 billing, T-102 billing, T-103 priority, T-104 billing, T-105 general with needs_sender, T-106 billing; each ticket whose recorded runs differ from the new queue is named with the rule applied"
+        "Every ticket in recorded-runs.json is replayed through the new routing and the queue per ticket is reported: T-101 billing, T-102 billing, T-103 priority, T-104 billing, T-105 general with needs_sender, T-106 billing. The tickets whose recorded runs disagree with that result are named with the rule applied: T-102 (a run chose priority), T-103 (a run chose general), T-104 (a run chose general), T-105 (a run chose billing); T-101 and T-106 match"
       ]
     },
     {
       "id": 2,
-      "prompt": "Support wants tickets that mention cancelling to go to a new retention queue in triage-agent.js. Owner-approved routing policy, in order: (1) a ticket with no From: header goes to general and is flagged needs_sender, whatever keywords it contains; (2) otherwise a ticket whose subject or body contains \"cancel\", \"cancelling\", or \"cancellation\" goes to retention; (3) otherwise one containing \"refund\" or \"charge\" goes to billing; (4) otherwise a ticket from an enterprise customer goes to priority; (5) otherwise general. Keywords match case-insensitively as whole words; a sender not in the customer list counts as not enterprise. Code must call assignQueue exactly once per ticket with the router's result; the model no longer chooses or assigns the queue. Change only the routing and its assignment: keep the customer lookup, the summary, and the rest of the loop as they are.",
+      "prompt": "Support wants tickets that mention cancelling to go to a new retention queue in triage-agent.js. Owner-approved routing policy, in order: (1) a ticket with no From: header goes to general and is flagged needs_sender, whatever keywords it contains; (2) otherwise a ticket whose subject or body contains \"cancel\", \"cancelling\", or \"cancellation\" goes to retention; (3) otherwise one containing \"refund\" or \"charge\" goes to billing; (4) otherwise a ticket from an enterprise customer goes to priority; (5) otherwise general. Keywords match case-insensitively as whole words; a sender not in the customer list counts as not enterprise. Code must call assignQueue exactly once per ticket with the router's result; the model no longer chooses or assigns the queue. triage returns the router's queue. Write a unit test per rule, and replay every ticket in recorded-runs.json (production outputs of the current agent) through the new router, reporting the queue per ticket. Change only the routing and its assignment: keep the customer lookup, the summary, and the rest of the loop as they are.",
       "expected_output": "Queue selection leaves the system prompt and the model's tools; a tested routing function implements the stated policy, code calls assignQueue once with its result, an integration test with a fake model shows the persisted queue equals the router's, the recorded tickets are replayed, and lookup and summary are untouched",
       "files": [
         "deterministic-workflows"
@@ -84,7 +84,7 @@
     },
     {
       "id": 3,
-      "prompt": "triage-agent.js runs support triage as an agent loop. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed.",
+      "prompt": "triage-agent.js runs support triage as an agent loop; recorded-runs.json holds its outputs from production. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed.",
       "expected_output": "The agent classifies the steps, then lists the routing decisions the prompt leaves to the model and stops to ask the owner instead of choosing a policy",
       "files": [
         "deterministic-workflows"

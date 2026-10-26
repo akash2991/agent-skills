@@ -69,15 +69,15 @@
     },
     {
       "id": "T-105",
-      "raw": "Subject: Cannot log in\n\nThe login page keeps spinning and I was charged for this month anyway.",
+      "raw": "Subject: Cannot log in\n\nThe login page keeps spinning; please refund this month.",
       "runs": [
         {
           "queue": "billing",
-          "summary": "Cannot log in and was still charged this month."
+          "summary": "Cannot log in and wants this month refunded."
         },
         {
           "queue": "general",
-          "summary": "Login page hangs; mentions a charge."
+          "summary": "Login page hangs; asks for a refund."
         }
       ]
     },

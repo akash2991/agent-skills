@@ -56,7 +56,7 @@ While classifying, write down every case the current workflow leaves to the mode
 
 ### 4. Pick the lowest rung for each step
 
-Go down this ladder and stop at the first rung that does the job:
+Rungs 1 to 3 are all deterministic; among them, pick by where the work runs, and prefer a check or hook when the rule must be enforced rather than remembered. Go to rung 4 or 5 only when none of them does the job:
 
 ```
 1. Code in the product        a function, a state machine, a query
@@ -93,7 +93,7 @@ Product logic goes in the service's code, in the feature it belongs to. An agent
 
 ### 8. Prove the behavior
 
-For a new feature with no old workflow, verify against the owner-approved requirements and acceptance examples. For a conversion, run the old workflow and the new one on the same inputs: recorded real runs where they exist, plus one input for each case found in step 3. Compare the outputs. Each difference is either a bug in the new workflow, fixed now, or a decision the old one made inconsistently, recorded with the rule the new one follows.
+For a new feature with no old workflow, verify against the owner-approved requirements and acceptance examples. For a conversion, run the old workflow and the new one on the same inputs: recorded real runs where they exist, plus one input for each case found in step 3. Compare the outputs. Each difference is a bug in the new workflow, fixed now; a decision the old one made inconsistently, recorded with the rule the new one follows; or an owner-approved behavior change, linked to its requirement and covered by an acceptance test. Any other difference is a bug.
 
 ## Common Rationalizations
 
@@ -127,7 +127,7 @@ For a new feature with no old workflow, verify against the owner-approved requir
 - [ ] Control flow, including branches, loop bounds, and the stop condition, lives in code or a script
 - [ ] Each remaining model call has typed input and output, validation with an explicit failure branch, a prompt in the repository, and a recorded reason it can't be code
 - [ ] Any agent loop has an ADR saying why the path can't be known in advance
-- [ ] For a conversion, old and new ran on the same inputs and every difference is fixed or recorded with the rule chosen; for a new feature, the approved acceptance examples pass
+- [ ] For a conversion, old and new ran on the same inputs and every difference is fixed, recorded with the rule chosen, or an approved change with its acceptance test; for a new feature, the approved acceptance examples pass
 - [ ] The deterministic part runs twice on the same input with identical output (show both runs)
 - [ ] Tests pass with every model call replaced by a fake
 - [ ] A script sits where step 7 says; in the brain repository, the prose steps it replaced are deleted
