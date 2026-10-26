@@ -9,6 +9,7 @@
  *   - frontmatter with name and description ("Use when"); a persona that lists skills also lists tools
  *   - name equals the file name; file name is kebab-case
  *   - no model or effort in frontmatter: the user sets those per run
+ *   - every tool label is in scripts/lib/persona-tools.js, and one reached through the shell has shell beside it
  *   - every listed skill exists in skills/ and, for a selected persona, in manifest.json
  *   - sections Role, Guidelines, Never are present on a persona that lists skills (upstream base personas are exempt)
  *   - every persona and skill named in manifest.json exists
@@ -18,7 +19,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFrontmatter } = require('./lib/skill-lint');
+const { parseFrontmatter, frontmatterYamlErrors } = require('./lib/skill-lint');
+const { HARNESSES, labelErrors, nativePersona } = require('./lib/persona-tools');
+const { splitFrontmatter } = require('./lib/build-brain');
 
 const ROOT = path.resolve(__dirname, '..');
 const AGENTS_DIR = path.join(ROOT, 'agents');
@@ -52,6 +55,8 @@ function main() {
     const content = fs.readFileSync(path.join(AGENTS_DIR, file), 'utf8');
     const fm = parseFrontmatter(content);
     if (!fm) { errors.push(`${where}: missing frontmatter`); continue; }
+    // The build reads frontmatter more strictly; fail here, not at install.
+    try { splitFrontmatter(content); } catch (err) { errors.push(`${where}: ${err.message}`); }
     if (!KEBAB.test(name)) errors.push(`${where}: file name is not kebab-case`);
     if (fm.name !== name) errors.push(`${where}: frontmatter name "${fm.name}" != file name "${name}"`);
     if (!fm.description) errors.push(`${where}: missing description`);
@@ -59,6 +64,16 @@ function main() {
     // An upstream base persona carries only name and description. A persona that lists skills follows the thin anatomy.
     const thin = fm.skills !== undefined;
     if (thin && !fm.tools) errors.push(`${where}: missing \`tools\``);
+    for (const e of labelErrors(fm.tools)) errors.push(`${where}: ${e}`);
+    // The installed copies must build, and Gemini's must still parse as YAML.
+    if (fm.tools && !labelErrors(fm.tools).length) {
+      for (const harness of HARNESSES) {
+        try {
+          const copy = nativePersona(content, harness);
+          if (harness === 'gemini') for (const e of frontmatterYamlErrors(copy)) errors.push(`${where}: Gemini copy: ${e}`);
+        } catch (err) { errors.push(`${where}: ${harness} copy: ${err.message}`); }
+      }
+    }
     for (const key of FORBIDDEN_KEYS) if (fm[key] !== undefined) errors.push(`${where}: must not set \`${key}\`; the user sets model and effort per run`);
     for (const s of splitList(fm.skills)) {
       if (!knownSkills.has(s)) errors.push(`${where}: skill "${s}" does not exist in skills/`);

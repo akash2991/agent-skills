@@ -25,4 +25,6 @@ that says which skills go together; a skill may name a related skill and the rel
 What it refuses, and which persona it names instead.
 ```
 
+`tools` names labels from `scripts/lib/persona-tools.js`, not a harness's tool names; the installer resolves them for each harness ([harness layout](harness-layout.md#persona-tools-labels-in-the-source-native-names-in-harness-copies)). A new label goes in that map first.
+
 No model, no effort: the user sets those per run. `scripts/validate-agents.js` checks the frontmatter, the required sections, and that every skill exists and is in `manifest.json`. Keep a persona under about forty lines; if it grows, the content belongs in a skill.

@@ -5,7 +5,7 @@ argument-hint: [persona] [request]
 
 Read `AGENTS.md`. If `$ARGUMENTS` starts with a persona name from `.agents/agents/`, adopt that persona; the rest is the request. Otherwise classify the request in `$ARGUMENTS` (or ask for it) and adopt exactly one persona from `.agents/agents/`.
 
-Read the persona file. Load its `skills:` from `.agents/skills/<name>/SKILL.md` as their triggers match, and its `tools:`. Declare before any work:
+Read the persona file. Load its skills (the `skills:` line, or the `Skills` line under its heading) from `.agents/skills/<name>/SKILL.md` as their triggers match, and its tools (the labels in the `Tools` line under its heading, or its `tools:`). Declare before any work:
 
 ```
 Persona: <name>
