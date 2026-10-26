@@ -188,7 +188,7 @@ function projectContent(value) {
     // Bound work before regex processing/JSON escaping, then bound both forms.
     if (raw.length > CONTENT_LIMITS.recordBytes) contentFailure('refused_size');
     charge(Buffer.byteLength(JSON.stringify(raw)));
-    if (/\bdata:/i.test(raw)) contentFailure('unsupported');
+    if (/^\s*data:(?:[a-z0-9.+-]+\/[a-z0-9.+-]+)?(?:;[^,\s]*)?,/i.test(raw)) contentFailure('unsupported');
     const safe = redactCredentials(raw);
     if (safe !== raw) redacted = true;
     return safe;

@@ -76,6 +76,8 @@ test('explicit v1 content preserves PII, JSON types, empty/null, Unicode and blo
   assert.equal(PROMPT.tools[0].arguments.name, PII.name, 'snapshot is detached');
   const nullPrototype = Object.assign(Object.create(null), { email: PII.email });
   assert.deepEqual(projectContent(nullPrototype), surface({ email: PII.email }));
+  const ordinaryDataText = `data: ${PII.email}; describe data:image/png;base64 without embedding media`;
+  assert.deepEqual(projectContent(ordinaryDataText), surface(ordinaryDataText), 'ordinary data: prose is not a binary attachment');
 });
 
 test('metadata default and context cannot opt into content and never read input/output getters', t => {
