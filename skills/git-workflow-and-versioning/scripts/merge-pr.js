@@ -200,7 +200,10 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   // not be looked up, can be posted by anything.
   // ...and only a run GitHub ties to this very PR: a fork's runs carry no PR list, so they never qualify here.
   const rules = checks.filter(c => (c.name || c.context) === 'pr-rules' && c.workflowPath && (c.runPrs || []).includes(Number(view.number)));
-  const passed = rules.filter(c => (c.conclusion || c.state) === 'SUCCESS');
+  // A pass counts only when the Actions job behind it is a pr-rules job of that very run, on this head, that succeeded:
+  // an integration can post a check named pr-rules with a details URL pointing at some other job.
+  const passed = rules.filter(c => (c.conclusion || c.state) === 'SUCCESS' && c.jobName === 'pr-rules' && c.jobConclusion === 'success'
+    && c.jobRun === runId(c) && c.jobHead === view.headRefOid);
   if (checks.length && !passed.length) blockers.push('no passing pr-rules Actions check (with an identified run) on this head: install the git-workflow-and-versioning skill\'s templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
   // A PR that touches any workflow can change what certifies it: a reviewer merges it by hand.
   if ((view.changedFiles || []).some(f => f.startsWith('.github/workflows/'))) blockers.push('this PR changes .github/workflows/, which could change its own checks: a reviewer merges it by hand (P10)');
@@ -253,11 +256,20 @@ function runIdentity(repo, checks) {
       try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt, prs: [.pull_requests[].number], head: .head_sha, branch: .head_branch}']))); }
       catch { runs.set(id, null); }
     }
+    // The job itself, from the Actions API: a check's details URL is chosen by whoever posted the check, so only the
+    // job record says which job ran, in which run, on which head, and how it ended. A check gets its run's identity
+    // (and so may supersede, or be superseded by, other runs) only when that job is a job of this name in that run;
+    // otherwise it stays an unidentified check, which never counts as pr-rules and never hides another run.
+    const job = jobId(c);
+    let j = null;
+    if (job) {
+      try { j = JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/jobs/${job}`, '--jq', '{attempt: .run_attempt, name: .name, conclusion: .conclusion, run: .run_id, head: .head_sha}'])); } catch { /* unverified */ }
+    }
+    if (!j || j.name !== c.name || String(j.run || '') !== id) continue;
+    // Each job's own attempt: a re-run's jobs share the run id and its current attempt number.
+    Object.assign(c, { jobAttempt: Number(j.attempt) || undefined, jobName: j.name, jobConclusion: j.conclusion, jobRun: String(j.run || ''), jobHead: j.head });
     const run = runs.get(id);
     if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runPrs: run.prs || [], runHead: run.head, runBranch: run.branch });
-    // Each job's own attempt: a re-run's jobs share the run id and its current attempt number.
-    const job = jobId(c);
-    if (job) { try { c.jobAttempt = Number(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/jobs/${job}`, '--jq', '.run_attempt']).trim()) || undefined; } catch { /* unknown */ } }
   }
   return checks;
 }
@@ -416,6 +428,12 @@ function main(argv) {
     try { process.env.BRAIN_LONG_LIVED = gh(['variable', 'get', 'BRAIN_LONG_LIVED', '--repo', repo]).trim(); } catch (err) {
       if (!/not found|404/i.test(String(err.stderr || err.message))) longLivedUnknown = true;
     }
+  }
+  // A malformed LINEAR_TEAM or BRAIN_LONG_LIVED is reported as such before any pattern is built from it.
+  const configError = teamError() || longLivedPatternError();
+  if (configError) {
+    console.error(`merge-pr: ${configError}${alreadyMerged ? `; PR #${pr} is already merged, and nothing was cleaned up` : '; nothing was merged'}`);
+    process.exit(alreadyMerged ? CLEANUP_INCOMPLETE : 1);
   }
   const ticketBranch = !view.isCrossRepository && isTicketBranch(view.headRefName) && !isLongLived(view.headRefName) && !longLivedUnknown;
   const keep = !ticketBranch || isProtected || protectionUnknown;

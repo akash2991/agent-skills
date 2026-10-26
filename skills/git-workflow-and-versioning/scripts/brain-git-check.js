@@ -50,7 +50,7 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerg
   const subject = message.split('\n')[0] || '';
   // A git revert keeps the subject shape of git's own "Revert \"…\"", but still needs its ticket and trailers (P2, P3).
   // fixup!/squash! are not exempt: they must be autosquashed before the PR is merged, so the commit that lands is checked.
-  const revert = /^(Revert|Reapply) ".*"/.test(subject);
+  const revert = /^(Revert|Reapply) ".*"$/.test(subject);
   const errors = [];
   if (revert && !new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('revert commit: name the ticket id it belongs to (P2)');
   if (allowFixup && /^(fixup! |squash! |amend! )/.test(subject)) return [];
@@ -276,9 +276,9 @@ function git(args) {
 
 // Every CHANGELOG.md tracked in the repository, plus every one on the base: deleting a service's changelog does not
 // drop its P13 requirement.
-function listChangelogs(base) {
-  // ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
-  const here = git(['ls-files', '-z', '--full-name', '--', ':/*CHANGELOG.md']).split('\0');
+function listChangelogs(base, head = 'HEAD') {
+  // From the trees compared, never the checkout: `pr --head <ref>` must not depend on what is checked out.
+  const here = treeFiles(head).filter(f => CHANGELOG.test(f));
   const onBase = base ? treeFiles(base).filter(f => CHANGELOG.test(f)) : [];
   return [...new Set([...here, ...onBase])].filter(f => f && !f.startsWith('templates/'));
 }
@@ -409,7 +409,7 @@ function main(argv) {
         messages: git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean).map(sha => git(['log', '-1', '--format=%B', sha])),
       }),
       ...checkSize(sized, body),
-      ...checkChangelog(files, listChangelogs(base), treeFiles(head), sized),
+      ...checkChangelog(files, listChangelogs(base, head), treeFiles(head), sized),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | push [<remote> <url>] | pr --base <ref>');

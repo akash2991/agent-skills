@@ -96,14 +96,15 @@ test('a changelog line is required in the global file and in the service it touc
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
   const ok = { state: 'OPEN', number: 1, title: 'ENG-1: x', reviewDecision: 'APPROVED', headRefOid: 'h1', author: { login: 'agent' },
-    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }, { name: 'ci', conclusion: 'SUCCESS' }] };
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h1' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h1' }, { name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
   assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
-  assert.strictEqual(mergeBlockers({ ...ok, headRefOid: 'h2' }).blockers.length, 1, 'reviewDecision APPROVED does not cover a newer head');
+  assert.match(mergeBlockers({ ...ok, headRefOid: 'h2' }).blockers.join(), /no approval of the current head/, 'reviewDecision APPROVED does not cover a newer head');
+  assert.match(mergeBlockers({ ...ok, headRefOid: 'h2' }).blockers.join(), /no passing pr-rules/, 'nor does a pr-rules job of the older head');
   assert.match(mergeBlockers({ ...ok, unresolvedThreads: 2 }).blockers.join(), /2 review thread\(s\) are unresolved/);
   assert.deepStrictEqual(mergeBlockers({ ...ok, reviewDecision: null }, { reviewOptional: true }).blockers, []);
-  assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }, { name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
+  assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h1' }, { name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
   assert.strictEqual(mergeBlockers({ ...ok, title: 'x', state: 'MERGED' }).blockers.length, 2);
 });
 
@@ -435,6 +436,18 @@ if (a[0] === 'api' && a.some(x => x.startsWith('repos/') && x.split('/').length 
 if (a[0] === 'api' && a.some(x => x.includes('/pulls/') && x.includes('/commits'))) { process.stdout.write(process.env.FAKE_COMMITS || '[[]]'); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('lastEditedAt'))) { process.stdout.write(process.env.FAKE_EDITED || '[]'); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('mergeQueue'))) { process.stdout.write(process.env.FAKE_QUEUE || ''); process.exit(0); }
+// An Actions job as GitHub records it: the check in the view whose details URL names the job (FAKE_JOB overrides).
+if (a[0] === 'api' && a.some(x => x.includes('/actions/jobs/'))) {
+  if (process.env.FAKE_JOB) { process.stdout.write(process.env.FAKE_JOB); process.exit(0); }
+  const id = a.find(x => x.includes('/actions/jobs/')).split('/').pop();
+  const jobs = JSON.parse(process.env.FAKE_JOBS || '{}');
+  if (jobs[id]) { process.stdout.write(JSON.stringify(jobs[id])); process.exit(0); }
+  const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
+  const c = (v.statusCheckRollup || []).find(k => (k.detailsUrl || '').endsWith('/job/' + id));
+  if (!c) { process.stderr.write('HTTP 404'); process.exit(1); }
+  process.stdout.write(JSON.stringify({ attempt: 1, name: c.name, conclusion: String(c.conclusion || '').toLowerCase() || null, run: Number(c.detailsUrl.match(/runs\\/(\\d+)/)[1]), head: ${JSON.stringify(head)} }));
+  process.exit(0);
+}
 if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
 if (a[0] === 'repo' && a[1] === 'view') { process.stdout.write(process.env.FAKE_DEFAULT || 'main'); process.exit(0); }
 if (a[0] === 'variable' && a[1] === 'get' && a[2] === 'LINEAR_TEAM' && !process.env.FAKE_NO_TEAM) { process.stdout.write('ENG'); process.exit(0); }
@@ -628,7 +641,7 @@ exec "${path.join(f.root, 'bin', 'git-net')}" "$@"
 });
 
 test('optional review still respects a writer\'s change request, and a pr-rules check must be present', () => {
-  const base = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }] };
+  const base = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }] };
   const cr = { ...base, reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'CHANGES_REQUESTED', commit: { oid: 'h' } }] };
   assert.match(mergeBlockers(cr, { reviewOptional: true }).blockers.join(), /requested changes/);
   assert.deepStrictEqual(mergeBlockers({ ...base, reviews: [] }, { reviewOptional: true }).blockers, []);
@@ -885,7 +898,7 @@ test('two jobs with the same name in one run and attempt are siblings: either fa
   const runs = latestRuns([{ ...id, conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/9/job/1' }, { ...id, conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/r/actions/runs/9/job/2' }]);
   assert.strictEqual(runs.length, 2);
   const view = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' }, reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
-    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }, ...runs] };
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }, ...runs] };
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: test/);
 });
 
@@ -898,7 +911,7 @@ test('deleting a service changelog while the service stays fails P13', () => {
 test('merge-pr re-checks one ticket at merge time: a retitle after a green pr-rules run is caught', () => {
   const view = { state: 'OPEN', number: 1, title: 'ENG-2: x', headRefName: 'ENG-1-x', headRefOid: 'h', author: { login: 'a' },
     commitMessages: ['feat: x [ENG-1]'],
-    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }] };
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }] };
   assert.match(mergeBlockers(view).blockers.join(), /one ticket per PR/);
 });
 
@@ -938,7 +951,7 @@ test('local cleanup removes the deleted branch\'s tracking config', () => {
 test('a pr-rules pass from before the last title, body, or base change does not count', () => {
   const base = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
-    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runCreated: '2026-10-26T10:00:00Z', startedAt: '2026-10-26T10:06:00Z' }] };
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runCreated: '2026-10-26T10:00:00Z', startedAt: '2026-10-26T10:06:00Z', jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }] };
   // a Size-exception removed from the body, a retitle, or a new base all move metadataChangedAt; a job that started
   // after the edit still checked the run's older snapshot
   assert.match(mergeBlockers({ ...base, metadataChangedAt: '2026-10-26T10:05:00Z' }).blockers.join(), /pr-rules last passed before/);
@@ -946,8 +959,9 @@ test('a pr-rules pass from before the last title, body, or base change does not 
 });
 
 test('end to end: merge-pr refuses after an edit newer than the pr-rules pass', () => {
-  const f = approvedFixture({ ...mergeView, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runCreated: '2026-10-26T10:00:00Z', startedAt: '2026-10-26T10:06:00Z' }] });
-  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_EDITED: '["2026-10-26T10:05:00Z"]' }, encoding: 'utf8' });
+  const f = approvedFixture({ ...mergeView, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/r/actions/runs/5/job/7', startedAt: '2026-10-26T10:06:00Z' }] });
+  const run = JSON.stringify({ path: '.github/workflows/pr-rules.yml', event: 'pull_request', created: '2026-10-26T10:00:00Z', prs: [1], head: f.head });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_RUN: run, FAKE_EDITED: '["2026-10-26T10:05:00Z"]' }, encoding: 'utf8' });
   assert.strictEqual(r.status, 1, r.stderr);
   assert.match(r.stderr, /pr-rules last passed before/);
   fs.rmSync(f.root, { recursive: true, force: true });
@@ -1017,7 +1031,7 @@ test('an unprotected long-lived head is refused when the repository deletes head
 test('a dismissed review withdraws its reviewer\'s verdict rather than reviving an older change request', () => {
   const rev = (state, oid) => ({ author: { login: 'w' }, authorAssociation: 'MEMBER', state, commit: { oid } });
   const view = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'a' }, reviews: [rev('CHANGES_REQUESTED', 'h0'), rev('DISMISSED', 'h1')],
-    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }] };
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h2' }] };
   assert.deepStrictEqual(mergeBlockers(view, { reviewOptional: true }).blockers, []);
 });
 
@@ -1051,7 +1065,7 @@ test('a partial re-run of either sibling keeps every job of the run: a fixed fai
 
 test('a change request after a dismissed approval still blocks; a dismissed approval never counts', () => {
   const rev = (state, oid) => ({ author: { login: 'w' }, authorAssociation: 'MEMBER', state, commit: { oid } });
-  const base = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }] };
+  const base = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'a' }, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h2' }] };
   assert.match(mergeBlockers({ ...base, reviews: [rev('DISMISSED', 'h1'), rev('CHANGES_REQUESTED', 'h2')] }, { reviewOptional: true }).blockers.join(), /requested changes/);
   assert.match(mergeBlockers({ ...base, reviews: [rev('APPROVED', 'h2'), rev('DISMISSED', 'h2')] }).blockers.join(), /no approval of the current head/);
 });
@@ -1060,7 +1074,7 @@ test('an invalid pattern on an unprotected head with automatic deletion refuses 
   const f = approvedFixture({ ...mergeView, headRefName: 'staging' });
   const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, BRAIN_LONG_LIVED: '([', FAKE_AUTODELETE: 'true' }, encoding: 'utf8' });
   assert.strictEqual(r.status, 1, r.stderr);
-  assert.match(r.stderr, /deletes head branches on merge/);
+  assert.match(r.stderr, /BRAIN_LONG_LIVED is not a valid regular expression.*nothing was merged/);
   fs.rmSync(f.root, { recursive: true, force: true });
 });
 
@@ -1088,7 +1102,7 @@ test('CI refuses to run without LINEAR_TEAM; git\'s other merge subjects are mer
 test('merge-pr keeps a head that is not a ticket branch, refuses a PR that edits its own pr-rules workflow, and caps commits', () => {
   const view = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
-    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }],
     changedFiles: ['.github/workflows/pr-rules.yml'] };
   assert.match(mergeBlockers(view).blockers.join(), /changes \.github\/workflows\//);
   assert.match(mergeBlockers({ ...view, changedFiles: [], commitMessages: Array(250).fill('feat: x [ENG-1]') }).blockers.join(), /250 or more commits/);
@@ -1110,7 +1124,7 @@ test('a pr-rules commit status, or a check whose run is unknown, does not count;
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }] };
   assert.match(mergeBlockers({ ...base, statusCheckRollup: [{ context: 'pr-rules', state: 'SUCCESS' }] }).blockers.join(), /no passing pr-rules Actions check/);
   assert.match(mergeBlockers({ ...base, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/r/actions/runs/1/job/1' }] }).blockers.join(), /no passing pr-rules Actions check/);
-  const ok = { ...base, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1] }] };
+  const ok = { ...base, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], jobName: 'pr-rules', jobConclusion: 'success', jobRun: '', jobHead: 'h' }] };
   assert.match(mergeBlockers({ ...ok, changedFilesIncomplete: true }).blockers.join(), /could not be read in full/);
 });
 
@@ -1372,7 +1386,8 @@ test('the run block of pr-rules.yml passes a compliant PR and fails a bad one, e
 
 test('a newer run of the same PR supersedes its own older failure', () => {
   const run = (id, conclusion, created) => ({ name: 'pr-rules', conclusion, status: 'COMPLETED', detailsUrl: `https://github.com/o/r/actions/runs/${id}/job/1`,
-    workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runHead: 'h', runCreated: created });
+    workflowPath: '.github/workflows/pr-rules.yml', event: 'pull_request', runPrs: [1], runHead: 'h', runCreated: created,
+    jobName: 'pr-rules', jobConclusion: conclusion.toLowerCase(), jobRun: String(id), jobHead: 'h' });
   const view = { state: 'OPEN', number: 1, title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
     reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
     statusCheckRollup: [run(4, 'FAILURE', '2026-10-26T10:00:00Z'), run(6, 'SUCCESS', '2026-10-26T10:05:00Z')] };
@@ -1886,4 +1901,62 @@ test('the stored-commit check (CI) applies git trailer semantics too', () => {
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /missing trailer "Model/);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a pr-rules check whose details URL points at another job does not count', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_JOB: JSON.stringify({ attempt: 1, name: 'build', conclusion: 'success', run: 5, head: f.head }) }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /no passing pr-rules Actions check/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /^pr merge/m);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('changelogs are found in the trees compared, whatever is checked out', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clhead-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n'); g(['add', '-A']); g(['commit', '-q', '-m', 'init']);
+  g(['switch', '-q', '-c', 'ENG-1-x']); fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '- x\n'); fs.appendFileSync(path.join(dir, 'a.txt'), 'b\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  g(['switch', '-q', 'main']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--head', 'ENG-1-x', '--branch', 'ENG-1-x', '--title', 'ENG-1: new feature'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+  assert.strictEqual(r.status, 0, r.stderr);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a subject that only starts like git\'s revert gets the full subject check', () => {
+  const msg = 'Revert "" whatever I like, no type [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: x';
+  assert.ok(check.checkCommitMessage(msg, { LINEAR_TEAM: 'ENG' }, { stripComments: false }).some(e => /subject must be/.test(e)));
+  assert.deepStrictEqual(check.checkCommitMessage('Revert "feat(a): x [ENG-1]"\n\nThis reverts commit abc. [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: x', { LINEAR_TEAM: 'ENG' }), []);
+});
+
+test('a malformed LINEAR_TEAM is reported, not thrown, also on an already-merged PR', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, LINEAR_TEAM: 'EN(G' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /LINEAR_TEAM must be Linear team keys/);
+  assert.doesNotMatch(r.stderr, /SyntaxError/);
+  const v = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify({ ...v, state: 'MERGED' }));
+  const m = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, LINEAR_TEAM: 'EN(G' }, encoding: 'utf8' });
+  assert.strictEqual(m.status, 3);
+  assert.match(m.stderr, /already merged, and nothing was cleaned up/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a check whose details URL names another job can neither pass nor hide a newer failure', () => {
+  const checks = [
+    { name: 'pr-rules', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/r/actions/runs/5/job/7' },
+    { name: 'test', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/8/job/9' },
+    { name: 'test', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/r/actions/runs/10/job/11' },
+  ];
+  const f = approvedFixture({ ...mergeView, statusCheckRollup: checks });
+  const run = JSON.stringify({ path: '.github/workflows/ci.yml', event: 'pull_request', created: '2026-10-26T10:00:00Z', prs: [1], head: f.head });
+  const jobs = JSON.stringify({ 11: { attempt: 1, name: 'lint', conclusion: 'success', run: 10, head: f.head } });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_RUN: run, FAKE_JOBS: jobs }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /CI is not green: test/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /^pr merge/m);
+  fs.rmSync(f.root, { recursive: true, force: true });
 });
