@@ -5,6 +5,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const GUARD = Symbol.for('agent-brain.observability.controller');
+const METADATA_CAPTURE_POLICY = Object.freeze({ schema: 1, enabled: true, captureMode: 'metadata-only' });
+const FULL_CAPTURE_POLICY = Object.freeze({ schema: 2, enabled: true, captureMode: 'full-content',
+  capturePolicyVersion: 1, redactionPolicyVersion: 1, pii: 'retain', durableRetry: true });
 
 // Dynamic discovery metadata must never block on a FIFO, including one swapped
 // in after lstat. Keep this inline: the cached bootstrap is a standalone file.
@@ -34,26 +37,43 @@ function readMetadata(file, cap) {
 
 // undefined means no declaration; null means an explicit refusal (including
 // unreadable/invalid declarations). Only absence permits principal fallback.
-function runtimeAt(root) {
+function declarationAt(root) {
   const marker = path.join(root, '.agent-brain', 'tracing.json');
   try {
     const metadata = readMetadata(marker, 4096);
     if (metadata === undefined) return undefined;
     const config = JSON.parse(metadata);
-    if (config.schema !== 1 || config.enabled !== true || config.captureMode !== 'metadata-only') return null;
+    const policy = capturePolicy(config);
+    if (!policy) return null;
     if (config.runtime !== undefined && !['.agent-brain/observability', 'runtime/langfuse'].includes(config.runtime)) return null;
     const entry = path.join(root, config.runtime || '.agent-brain/observability', 'pi.js');
-    return fs.statSync(entry).isFile() ? entry : null;
+    return fs.statSync(entry).isFile() ? { entry, policy } : null;
   } catch { return null; }
 }
 
 // Read-only lookup before project factories run: no subprocess, timer or
 // project-code execution. Git worktree files identify the principal .git dir.
-function findPolicySync(cwd) {
+// Schema 1 is unchanged. Schema 2 requires EVERY consent fact below; neither
+// a mode label nor --brain-tracing is a grant. durableRetry covers already
+// captured records after marker removal/downgrade, NOT historical backfill.
+function capturePolicy(config) {
+  if (!config || config.enabled !== true) return null;
+  if (config.schema === 1 && config.captureMode === 'metadata-only') {
+    return METADATA_CAPTURE_POLICY;
+  }
+  if (config.schema === 2 && config.captureMode === 'full-content'
+    && config.capturePolicyVersion === 1 && config.redactionPolicyVersion === 1
+    && config.pii === 'retain' && config.durableRetry === true) {
+    return FULL_CAPTURE_POLICY;
+  }
+  return null;
+}
+
+function findDeclarationSync(cwd) {
   let root;
   try { root = fs.realpathSync(cwd); } catch { return null; }
   while (true) {
-    const direct = runtimeAt(root);
+    const direct = declarationAt(root);
     if (direct !== undefined) return direct;
     let stat;
     const git = path.join(root, '.git');
@@ -73,7 +93,7 @@ function findPolicySync(cwd) {
         const commonDir = metadata.trim();
         if (!commonDir) return null;
         const common = path.resolve(gitdir, commonDir);
-        return path.basename(common) === '.git' ? runtimeAt(path.dirname(common)) : undefined;
+        return path.basename(common) === '.git' ? declarationAt(path.dirname(common)) : undefined;
       } catch { return null; } // Never cross an unreadable/invalid Git boundary.
     }
     const parent = path.dirname(root);
@@ -84,6 +104,14 @@ function findPolicySync(cwd) {
 
 // Discovery and direct loading share exactly the same cwd-sensitive tri-state
 // policy. Resource registration (including -e) is not itself authorization.
+function findPolicySync(cwd) {
+  const declaration = findDeclarationSync(cwd);
+  return declaration ? declaration.entry : declaration;
+}
+function findCapturePolicySync(cwd) {
+  const declaration = findDeclarationSync(cwd);
+  return declaration ? declaration.policy : declaration;
+}
 function findRuntimeSync(cwd) { return findPolicySync(cwd) || null; }
 function findRuntime(cwd) { return findRuntimeSync(cwd); }
 
@@ -149,4 +177,7 @@ module.exports = function brainWorktreeBootstrap(pi) {
 module.exports.findRuntime = findRuntime;
 module.exports.findRuntimeSync = findRuntimeSync;
 module.exports.findPolicySync = findPolicySync;
+module.exports.findCapturePolicySync = findCapturePolicySync;
+module.exports.METADATA_CAPTURE_POLICY = METADATA_CAPTURE_POLICY;
+module.exports.FULL_CAPTURE_POLICY = FULL_CAPTURE_POLICY;
 module.exports.isTracingAllowed = isTracingAllowed;

@@ -5,7 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { ContextStore } = require('./context.cjs');
-const { sanitizeObservation } = require('./privacy.cjs');
+const { sanitizeObservation, sanitizeMetadataObservation, projectContent, CONTEXT_FIELDS } = require('./privacy.cjs');
+const { findCapturePolicySync, METADATA_CAPTURE_POLICY: METADATA_POLICY,
+  FULL_CAPTURE_POLICY: FULL_POLICY } = require('./bootstrap.js');
 const { queueObservation, reserveRevisions, flushOutbox, recoverOutbox } = require('./export.cjs');
 const { claimLock } = require('./locks.cjs');
 
@@ -26,8 +28,9 @@ function privateDir(dir) {
   return fs.realpathSync(dir);
 }
 
-// State is only IDs, timestamps, vetted metadata and numeric accounting. This
-// guard catches accidental payload persistence in adapter checkpoint changes.
+// Generic state is only IDs, timestamps, vetted metadata and numeric accounting.
+// Keep this guard strict; only managedState's whole-file versioned schemas may
+// carry projected observation bodies. Nested lookalikes are never exceptions.
 function safeState(value, depth = 0, seen = new Set()) {
   if (depth > 24) throw new Error('Tracing checkpoint budget exceeded');
   if (value === null || value === undefined || typeof value === 'boolean') return value;
@@ -78,6 +81,14 @@ function rebaseObservation(record, run) {
     parentId: record.id === run.rootSpanId ? run.parentSpanId : record.parentId, context };
 }
 
+const policyEquals = (value, expected) => value && typeof value === 'object'
+  && Object.keys(value).length === Object.keys(expected).length
+  && Object.entries(expected).every(([key, fact]) => Object.getOwnPropertyDescriptor(value, key)?.value === fact);
+const freeze = value => {
+  if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
+  return value;
+};
+
 function createFlow(options = {}) {
   const env = options.env || process.env;
   const stateDir = privateDir(options.stateDir || env.BRAIN_TRACE_STATE_DIR || path.join(os.homedir(), '.cache', 'agent-brain', 'tracing-state'));
@@ -89,6 +100,79 @@ function createFlow(options = {}) {
   const deliver = options.flushOutbox || flushOutbox;
   const clock = options.clock || Date.now;
   const fileFor = key => path.join(adapterDir, `${hash(key)}.json`);
+  const killed = () => [env.BRAIN_TRACING_ENABLED, env.LANGFUSE_TRACING_ENABLED]
+    .some(value => ['false', '0'].includes(String(value || '').toLowerCase()));
+  // Native adapters must still enforce native trust before calling the flow.
+  // An injected policy is a complete versioned test seam, never a mode string.
+  const getCapturePolicy = () => {
+    const policy = options.capturePolicy === undefined
+      ? findCapturePolicySync(options.cwd || process.cwd()) : options.capturePolicy;
+    return killed() ? null : policyEquals(policy, FULL_POLICY) ? FULL_POLICY
+      : policy === null ? null : METADATA_POLICY;
+  };
+  const captureMode = () => getCapturePolicy()?.captureMode || 'disabled';
+  const issuedCaptures = new WeakSet();
+  const ownerFor = run => ({ rootSpanId: run.rootSpanId, runId: run.runId,
+    nativeSessionId: run.nativeSessionId, harness: run.harness });
+  function validateOwner(owner, record) {
+    const safe = safeState(owner);
+    if (!safe || Object.keys(safe).sort().join(',') !== 'harness,nativeSessionId,rootSpanId,runId'
+      || !/^[a-f0-9]{16}$/.test(safe.rootSpanId) || !['pi', 'claude'].includes(safe.harness)
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(safe.runId)
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(safe.nativeSessionId)
+      || (record && (record.nativeSessionId !== safe.nativeSessionId
+        || record.context?.runId !== safe.runId || record.context?.harness !== safe.harness))) {
+      throw new Error('Invalid observation owner');
+    }
+    return safe;
+  }
+  function projected(record, grant) {
+    if (!policyEquals(grant, FULL_POLICY) && !policyEquals(grant, METADATA_POLICY)) throw new Error('Invalid capture grant');
+    if (grant.captureMode === 'metadata-only' && Object.hasOwn(record, 'content')) throw new Error('Unversioned content rejected');
+    return grant.captureMode === 'full-content' ? sanitizeObservation(record) : sanitizeMetadataObservation(record);
+  }
+  function validateCapture(value) {
+    if (!value || Object.keys(value).sort().join(',') !== 'captureGrant,observationVersion,owner,record,revision'
+      || value.observationVersion !== 1 || !Number.isSafeInteger(value.revision) || value.revision < 1) throw new Error('Invalid observation checkpoint');
+    const record = projected(value.record, value.captureGrant);
+    if (JSON.stringify(record) !== JSON.stringify(value.record)) throw new Error('Noncanonical observation checkpoint');
+    return { observationVersion: 1, captureGrant: value.captureGrant.captureMode === 'full-content' ? FULL_POLICY : METADATA_POLICY,
+      owner: validateOwner(value.owner, record), record, revision: value.revision };
+  }
+  // Only these two WHOLE-file schemas bypass safeState for observation bodies.
+  // Headers and every other checkpoint remain under the original strict guard.
+  function managedState(data) {
+    if (data?.checkpointVersion === 2) {
+      const { state, ...header } = data;
+      if (Object.keys(header).sort().join(',') !== 'checkpointVersion,ownerRoot,ownerSession,updatedAt') throw new Error('Invalid observation checkpoint');
+      safeState(header);
+      if (!Number.isSafeInteger(header.updatedAt) || header.updatedAt <= 0) throw new Error('Invalid checkpoint time');
+      const capture = validateCapture(state);
+      if (header.ownerRoot !== capture.owner.rootSpanId
+        || header.ownerSession !== `${capture.owner.harness}:${hash(capture.owner.nativeSessionId)}`) throw new Error('Invalid observation owner');
+      return { ...header, state: capture };
+    }
+    if (data?.pendingVersion === 2) {
+      const { records, revisions, captureGrants, ...header } = data;
+      safeState(header);
+      if (Object.keys(header).sort().join(',') !== 'createdAt,owner,pendingVersion,runId'
+        || !Number.isSafeInteger(header.createdAt) || header.createdAt <= 0
+        || header.runId !== header.owner?.rootSpanId || !Array.isArray(records) || records.length > 4096
+        || !Array.isArray(revisions) || !Array.isArray(captureGrants)
+        || revisions.length !== records.length || captureGrants.length !== records.length) throw new Error('Invalid pending observations');
+      validateOwner(header.owner);
+      const captures = records.map((record, index) => validateCapture({ observationVersion: 1,
+        owner: header.owner, record, revision: revisions[index], captureGrant: captureGrants[index] }));
+      return { ...header, records: captures.map(item => item.record), revisions: captures.map(item => item.revision),
+        captureGrants: captures.map(item => item.captureGrant) };
+    }
+    return safeState(data);
+  }
+  const serialize = data => {
+    const bytes = JSON.stringify(managedState(data));
+    if (Buffer.byteLength(bytes) > MAX_STATE) throw new Error('Tracing checkpoint budget exceeded');
+    return bytes;
+  };
   const readFile = file => {
     try {
       const before = fs.lstatSync(file); safeTemporary(before);
@@ -148,8 +232,7 @@ function createFlow(options = {}) {
     }
   }
   const writeFile = (file, data) => {
-    const content = JSON.stringify(safeState(data));
-    if (Buffer.byteLength(content) > MAX_STATE) throw new Error('Tracing checkpoint budget exceeded');
+    const content = serialize(data);
     try { inspectTemporary(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     // One admitted 1 MiB slot, not an unbounded random temporary per crash.
     // reserve() accounts this slot in addition to the committed checkpoints.
@@ -189,8 +272,9 @@ function createFlow(options = {}) {
       try { return fn(); } finally { adapterLockDepth--; }
     } finally { lock.release(); }
   }
-  const unwrap = data => data?.checkpointVersion === 1 ? data.state : data;
-  const readState = key => unwrap(readFile(fileFor(key)));
+  const unwrap = data => [1, 2].includes(data?.checkpointVersion) ? data.state : data;
+  // Generic reads never become a content migration path.
+  const readState = key => { const data = readFile(fileFor(key)); return data?.checkpointVersion === 2 ? null : unwrap(data); };
   const sessionKey = run => `${run.harness}:${hash(run.nativeSessionId)}`;
   const checkpointFiles = () => [adapterDir, pendingDir].flatMap(dir => fs.readdirSync(dir)
     .filter(name => dir === pendingDir || /\.(?:json|tmp)$/.test(name))
@@ -230,7 +314,7 @@ function createFlow(options = {}) {
     for (const [file, envelope] of entries) if (path.dirname(file) === adapterDir
       && ![fileFor('health'), fileFor('delivery')].includes(file) && envelope) {
       if (Date.now() >= deadlineAt) return;
-      const updatedAt = envelope.checkpointVersion === 1 ? envelope.updatedAt : fs.lstatSync(file).mtimeMs;
+      const updatedAt = [1, 2].includes(envelope.checkpointVersion) ? envelope.updatedAt : fs.lstatSync(file).mtimeMs;
       if (Number.isFinite(updatedAt) && clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) {
         if (envelope.ownerRoot) roots.add(envelope.ownerRoot);
         if (envelope.ownerSession) sessions.add(envelope.ownerSession);
@@ -276,7 +360,7 @@ function createFlow(options = {}) {
           if (Date.now() >= deadlineAt) return;
           if (path.dirname(file) !== adapterDir || !envelope || file === fileFor('health')) continue;
           const data = unwrap(envelope), stat = fs.lstatSync(file);
-          const updatedAt = envelope.checkpointVersion === 1 ? envelope.updatedAt : stat.mtimeMs;
+          const updatedAt = [1, 2].includes(envelope.checkpointVersion) ? envelope.updatedAt : stat.mtimeMs;
           if (!Number.isFinite(updatedAt) || clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) continue;
           if (unknownReference || roots.has(data?.run?.rootSpanId) || roots.has(data?.rootSpanId)
             || roots.has(envelope.ownerRoot) || sessions.has(envelope.ownerSession)) continue;
@@ -289,7 +373,7 @@ function createFlow(options = {}) {
   function reserve(writes) {
     const fits = () => {
       const sizes = new Map(checkpointFiles().map(file => [file, fs.lstatSync(file).size]));
-      for (const [file, data] of writes) sizes.set(file, Buffer.byteLength(JSON.stringify(safeState(data))));
+      for (const [file, data] of writes) sizes.set(file, Buffer.byteLength(serialize(data)));
       // Leave room for persistent health/delivery diagnostics even at refusal.
       const diagnosticFiles = [fileFor('health'), fileFor('delivery')];
       const diagnostics = writes.every(([file]) => diagnosticFiles.includes(file));
@@ -302,7 +386,9 @@ function createFlow(options = {}) {
     if (!fits()) { collect(); if (!fits()) throw new Error('Tracing checkpoint capacity exceeded'); }
   }
   const writeState = (key, data) => transaction(() => {
+    data = safeState(data); // Never accept a typed-content bypass via the generic API.
     const file = fileFor(key);
+    if (readFile(file)?.checkpointVersion === 2) throw new Error('Typed observation checkpoint requires typed API');
     const previous = readFile(file);
     // Pi can complete several roots out of order in one process. Its explicit
     // root key or saved run takes precedence over the last active hook actor.
@@ -513,59 +599,173 @@ function createFlow(options = {}) {
     return remember(updated);
   }
 
-  function submit(run, records) {
-    if (['false', '0'].includes(String(env.BRAIN_TRACING_ENABLED || '').toLowerCase()) || ['false', '0'].includes(String(env.LANGFUSE_TRACING_ENABLED || '').toLowerCase())) return { queued: 0, pending: 0, disabled: true };
-    const current = resolve(run);
-    // Allocate roots locally before tools, but export their span only with
-    // terminal evidence. Competing unfinished snapshots can otherwise replace
-    // terminal metadata during asynchronous OTLP ingestion.
-    const finished = records.filter(record => !(record.type === 'AGENT' && [undefined, 'unknown', 'pending'].includes(record.outcome)));
-    const safe = finished.map(record => sanitizeObservation(rebaseObservation({ ...record,
-      context: { ...run, ...record.context } }, current || run)));
-    if (!safe.length) return { queued: 0, pending: 0 };
-    let revisions;
-    try { revisions = reserveRevisions(safe, { stateDir }); }
+  // Adapter API (no raw state writes):
+  // const content = flow.createContent({ input: nativeJSON }); // projects NOW
+  // const open = flow.captureObservation(run, { ...idsAndTimes, content });
+  // flow.writeObservation(key, open); // owner is explicit, never active actor
+  // On completion capture a NEW revision with the same observation ID, retain
+  // open.record.content.input and project the newly available output; then
+  // writeObservation(key, completed) and closeObservation(key).
+  // Restart: readObservation(key) -> closeObservation(key) retries the original
+  // grant/ticket even after downgrade. It grants NO new raw capture. Kill stops
+  // delivery. Generic readState/writeState cannot read/write these envelopes.
+  function createContent(surfaces = {}) {
+    if (captureMode() !== 'full-content') return undefined; // No body access in metadata mode.
+    const result = { version: 1, captureMode: 'full-content', redactionPolicyVersion: 1 };
+    for (const field of ['input', 'output']) {
+      const descriptor = Object.getOwnPropertyDescriptor(surfaces, field);
+      result[field] = !descriptor ? { status: 'unavailable' }
+        : !Object.hasOwn(descriptor, 'value') ? { status: 'unsupported' } : projectContent(descriptor.value);
+    }
+    return freeze(result);
+  }
+  function atCapture(run, record, grant) {
+    // Copy descriptors of ONLY known fields. In metadata mode even an accessor
+    // named content/input/output is unread; no object spread of native bodies.
+    const seed = {}, context = { ...run };
+    const rawContext = Object.getOwnPropertyDescriptor(record, 'context')?.value;
+    for (const key of [...CONTEXT_FIELDS, 'outcome', 'skillsLoaded', 'skillsInvoked', 'skillsLoadedStatus', 'skillsInvokedStatus']) {
+      const descriptor = rawContext && Object.getOwnPropertyDescriptor(rawContext, key);
+      if (descriptor) Object.defineProperty(context, key, { ...descriptor, configurable: true });
+    }
+    for (const key of ['id', 'parentId', 'type', 'startTime', 'endTime', 'model', 'provider', 'toolName', 'usage', 'cost', 'outcome',
+      ...(grant.captureMode === 'full-content' ? ['content'] : [])]) {
+      const descriptor = Object.getOwnPropertyDescriptor(record, key);
+      if (descriptor) Object.defineProperty(seed, key, { ...descriptor, configurable: true });
+    }
+    // Root callers historically omit parentId: its exact run owns that edge,
+    // including provisional roots which will be rebound only at publication.
+    if (Object.getOwnPropertyDescriptor(seed, 'id')?.value === run.rootSpanId) {
+      Object.defineProperty(seed, 'parentId', { value: run.parentSpanId || null, enumerable: true, configurable: true });
+    }
+    Object.assign(seed, { traceId: run.traceId, sessionId: run.sessionId, nativeSessionId: run.nativeSessionId, context });
+    return grant.captureMode === 'full-content' ? sanitizeObservation(seed) : sanitizeMetadataObservation(seed);
+  }
+  function allocate(records) {
+    try { return reserveRevisions(records, { stateDir }); }
     catch (error) {
       writeState('health', { replayBlocked: true, reason: error.message === 'Revision capacity exceeded'
         ? 'revision_capacity' : 'revision_unavailable' });
       throw error;
     }
-    const retain = (batch, tickets) => transaction(() => {
-      // A native reconciliation can exceed both queue capacity and the single
-      // checkpoint budget. Split before writing, and reserve the entire suffix.
-      const writes = []; let chunk = [], chunkRevisions = [], bytes = 256;
-      const finish = () => {
-        if (chunk.length) writes.push([path.join(pendingDir, `${crypto.randomUUID()}.json`),
-          { runId: run.rootSpanId, records: chunk, revisions: chunkRevisions, createdAt: clock() }]);
-        chunk = []; chunkRevisions = []; bytes = 256;
-      };
-      for (const [index, record] of batch.entries()) {
-        const size = Buffer.byteLength(JSON.stringify(record)) + 32;
-        if (bytes + size > MAX_STATE || chunk.length >= 4096) finish();
-        chunk.push(record); chunkRevisions.push(tickets[index]); bytes += size;
+  }
+  function issue(capture) {
+    const result = freeze(validateCapture(capture));
+    issuedCaptures.add(result);
+    return result;
+  }
+  function captureObservation(run, record) {
+    const grant = getCapturePolicy();
+    if (!grant) throw new Error('Tracing capture disabled');
+    const saved = readState(`run:${run.rootSpanId}`)?.run;
+    if (!saved || saved.runId !== run.runId || saved.nativeSessionId !== run.nativeSessionId || saved.harness !== run.harness) throw new Error('Unknown observation owner');
+    const safe = atCapture(run, record, grant);
+    return issue({ observationVersion: 1, captureGrant: grant, owner: ownerFor(run), record: safe, revision: allocate([safe])[0] });
+  }
+  function requireIssued(capture) {
+    if (!issuedCaptures.has(capture)) throw new Error('Use captureObservation or readObservation for typed capture');
+    return validateCapture(capture);
+  }
+  function writeObservation(key, capture) {
+    return transaction(() => {
+      const state = requireIssued(capture), file = fileFor(key), previous = readFile(file);
+      if (previous) {
+        if (previous.checkpointVersion !== 2) throw new Error('Observation checkpoint identity mismatch');
+        const old = managedState(previous).state;
+        if (JSON.stringify(old.owner) !== JSON.stringify(state.owner) || old.record.id !== state.record.id
+          || old.record.type !== state.record.type) throw new Error('Observation checkpoint identity mismatch');
+        if (state.revision < old.revision || state.record.endTime < old.record.endTime) throw new Error('Obsolete observation checkpoint');
+        if (JSON.stringify(old.captureGrant) !== JSON.stringify(state.captureGrant)
+          || (old.record.content && !state.record.content)) throw new Error('Observation capture policy cannot change');
       }
-      finish();
-      try { reserve(writes); }
-      catch (error) {
-        writeState('health', { lineageLossObserved: true, reason: 'pending_capacity' });
+      const envelope = { checkpointVersion: 2, updatedAt: clock(), ownerRoot: state.owner.rootSpanId,
+        ownerSession: `${state.owner.harness}:${hash(state.owner.nativeSessionId)}`, state };
+      try { reserve([[file, envelope]]); writeFile(file, envelope); }
+      catch (error) { writeState('health', { captureFailureObserved: true, reason: 'observation_retention_failed' }); throw error; }
+      return capture;
+    });
+  }
+  function readObservation(key) {
+    const envelope = readFile(fileFor(key));
+    if (!envelope) return null;
+    if (envelope.checkpointVersion !== 2) throw new Error('Unversioned observation checkpoint');
+    return issue(managedState(envelope).state);
+  }
+  function retained(run, records, revisions, captureGrants) {
+    return transaction(() => {
+      const writes = [], header = { pendingVersion: 2, runId: run.rootSpanId, owner: ownerFor(run), createdAt: clock() };
+      let chunk = [], tickets = [], grants = [];
+      const data = () => ({ ...header, records: chunk, revisions: tickets, captureGrants: grants });
+      const emptyBytes = Buffer.byteLength(JSON.stringify(data()));
+      let bytes = emptyBytes;
+      const finish = () => {
+        if (chunk.length) writes.push([path.join(pendingDir, `${crypto.randomUUID()}.json`), data()]);
+        chunk = []; tickets = []; grants = []; bytes = emptyBytes;
+      };
+      try {
+        // EXACT UTF-8 JSON lengths, including all three arrays' commas and
+        // grant/ticket overhead, without quadratic whole-batch serialization.
+        // reserve/writeFile independently measure the final canonical bytes.
+        for (let i = 0; i < records.length; i++) {
+          const itemBytes = [records[i], revisions[i], captureGrants[i]]
+            .reduce((total, value) => total + Buffer.byteLength(JSON.stringify(value)), 0);
+          if (emptyBytes + itemBytes > MAX_STATE) throw new Error('Tracing checkpoint budget exceeded');
+          if (chunk.length >= 4096 || bytes + itemBytes + (chunk.length ? 3 : 0) > MAX_STATE) finish();
+          bytes += itemBytes + (chunk.length ? 3 : 0);
+          chunk.push(records[i]); tickets.push(revisions[i]); grants.push(captureGrants[i]);
+        }
+        finish(); reserve(writes);
+        for (const [file, batch] of writes) writeFile(file, batch);
+      } catch (error) {
+        writeState('health', { lineageLossObserved: true, reason: error.message === 'Tracing checkpoint capacity exceeded'
+          ? 'pending_capacity' : 'pending_retention_failed' });
         throw error;
       }
-      for (const [file, data] of writes) writeFile(file, data);
     });
-    if (!current) {
-      retain(safe, revisions);
-      return { queued: 0, pending: safe.length };
-    }
+  }
+  function publish(run, records, revisions, grants) {
+    if (killed()) return { queued: 0, pending: 0, disabled: true };
+    const current = resolve(run);
+    const safe = records.map(record => sanitizeObservation(rebaseObservation(record, current || run)));
+    if (!current) { retained(run, safe, revisions, grants); return { queued: 0, pending: safe.length }; }
     let superseded = 0;
     for (let i = 0; i < safe.length; i++) {
-      const result = enqueue(safe[i], { stateDir, revision: revisions[i] });
+      let result;
+      try { result = enqueue(safe[i], { stateDir, revision: revisions[i] }); }
+      catch { result = { queued: false }; }
       if (result?.obsolete) { superseded++; continue; }
       if (result?.queued === false) {
-        retain(safe.slice(i), revisions.slice(i));
+        retained(run, safe.slice(i), revisions.slice(i), grants.slice(i));
         return { queued: i - superseded, pending: safe.length - i, ...(superseded ? { superseded } : {}) };
       }
     }
     return { queued: safe.length - superseded, pending: 0, ...(superseded ? { superseded } : {}) };
+  }
+  const finished = record => !(record.type === 'AGENT' && [undefined, 'unknown', 'pending'].includes(record.outcome));
+  function submit(run, records) {
+    const grant = getCapturePolicy();
+    if (!grant) return { queued: 0, pending: 0, disabled: true };
+    const safe = records.map(record => atCapture(run, record, grant)).filter(finished);
+    if (!safe.length) return { queued: 0, pending: 0 };
+    return publish(run, safe, allocate(safe), safe.map(() => grant));
+  }
+  function submitCaptured(captures) {
+    const checked = captures.map(requireIssued).filter(item => finished(item.record));
+    if (!checked.length) return { queued: 0, pending: 0 };
+    const owner = checked[0].owner;
+    if (checked.some(item => JSON.stringify(item.owner) !== JSON.stringify(owner))) throw new Error('Mixed observation owners');
+    const run = readState(`run:${owner.rootSpanId}`)?.run;
+    if (!run || run.runId !== owner.runId || run.nativeSessionId !== owner.nativeSessionId || run.harness !== owner.harness) throw new Error('Unknown observation owner');
+    return publish(run, checked.map(item => item.record), checked.map(item => item.revision), checked.map(item => item.captureGrant));
+  }
+  function closeObservation(key) {
+    return transaction(() => {
+      const capture = readObservation(key);
+      if (!capture) return { queued: 0, pending: 0 };
+      const result = submitCaptured([capture]);
+      if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) fs.unlinkSync(fileFor(key));
+      return result; // Disabled/refused/unfinished captures remain durable.
+    });
   }
 
   async function flush(opts = {}) {
@@ -574,7 +774,7 @@ function createFlow(options = {}) {
     // Transfer/fsync work gets a bounded share; leave time to export its prefix.
     // A synchronous enqueue/fsync already in flight cannot be preempted.
     const transferDeadline = deadline - Math.min(1000, budget / 2);
-    if (['false', '0'].includes(String(env.BRAIN_TRACING_ENABLED || '').toLowerCase()) || ['false', '0'].includes(String(env.LANGFUSE_TRACING_ENABLED || '').toLowerCase())) return { queued: 0, accepted: 0, disabled: true };
+    if (killed()) return { queued: 0, accepted: 0, disabled: true };
     transaction(() => {
       // The process-identity adapter lock excludes every live transfer. Any
       // remaining claim is interrupted, not a live owner inferred from age.
@@ -588,13 +788,31 @@ function createFlow(options = {}) {
       for (const name of fs.readdirSync(pendingDir).filter(name => /^[a-f0-9-]+\.json$/.test(name)).slice(0, 256)) {
         if (Date.now() >= transferDeadline) break;
         const file = path.join(pendingDir, name);
-        const batch = readFile(file);
-        // Pre-ticket checkpoints have no provable same-timestamp order. Never
-        // invent it at replay or expire these records as if transfer succeeded.
-        // Keep the bounded payload intact and surface the recovery limitation.
-        if (batch && (!Array.isArray(batch.revisions) || batch.revisions.length !== batch.records.length)) {
+        let batch = readFile(file);
+        // Pre-ticket checkpoints cannot establish capture order. Preserve them
+        // before interpreting policy or TTL; never invent replay tickets.
+        if (batch && Array.isArray(batch.records)
+          && (!Array.isArray(batch.revisions) || batch.revisions.length !== batch.records.length)) {
           writeState('health', { replayBlocked: true, reason: 'pending_revision_missing' });
           continue;
+        }
+        if (batch) {
+          try {
+            if (!Array.isArray(batch.records)) throw new Error('Invalid pending observations');
+            if (batch.pendingVersion === 2) batch = managedState(batch);
+            else {
+              // Old private files never acquire content authority from today's
+              // marker. Preserve ambiguous bodies without reading their values.
+              if (batch.pendingVersion !== undefined || batch.records.some(record => Object.hasOwn(record, 'content'))) {
+                writeState('health', { replayBlocked: true, reason: 'pending_capture_policy_missing' });
+                continue;
+              }
+              safeState(batch);
+            }
+          } catch {
+            writeState('health', { replayBlocked: true, reason: 'pending_capture_invalid' });
+            continue;
+          }
         }
         if (batch && clock() - batch.createdAt > ADAPTER_LIMITS.retentionMs) {
           writeState('health', { lineageLossObserved: true, reason: 'pending_expired' });
@@ -604,6 +822,11 @@ function createFlow(options = {}) {
         const entry = batch && readState(`run:${batch.runId}`);
         const run = entry && resolve(entry.run);
         if (!run) continue;
+        if (batch.pendingVersion === 2 && (run.rootSpanId !== batch.owner.rootSpanId || run.runId !== batch.owner.runId
+          || run.nativeSessionId !== batch.owner.nativeSessionId || run.harness !== batch.owner.harness)) {
+          writeState('health', { replayBlocked: true, reason: 'pending_owner_mismatch' });
+          continue;
+        }
         const claim = `${file}.${crypto.randomUUID()}.claim`;
         fs.renameSync(file, claim);
         try {
@@ -618,7 +841,12 @@ function createFlow(options = {}) {
             // never permanently restart an oversized batch at its first record.
             batch.records = batch.records.slice(1);
             batch.revisions = batch.revisions.slice(1);
-            writeFile(claim, batch);
+            if (batch.pendingVersion === 2) batch.captureGrants = batch.captureGrants.slice(1);
+            try { writeFile(claim, batch); }
+            catch (error) {
+              writeState('health', { replayBlocked: true, reason: 'pending_retention_failed' });
+              throw error;
+            }
           }
           if (batch.records.length) fs.renameSync(claim, file);
           else fs.unlinkSync(claim);
@@ -710,7 +938,9 @@ function createFlow(options = {}) {
   }
 
   return { store, stateDir, harness, inboundIdentity, begin, acknowledgeSession, createToolLaunch, actorCapability, actorForTool, remember, resolve, session, update, submit, flush, id,
-    readState, writeState, stateFile: fileFor, knownPersona, knownSkill, captureBrainCommand, captureSkill, now: clock };
+    readState, writeState, stateFile: fileFor, getCapturePolicy, captureMode, createContent,
+    captureObservation, writeObservation, readObservation, submitCaptured, closeObservation,
+    knownPersona, knownSkill, captureBrainCommand, captureSkill, now: clock };
 }
 
 module.exports = { createFlow, safeState, ADAPTER_LIMITS };
