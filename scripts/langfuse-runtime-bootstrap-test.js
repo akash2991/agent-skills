@@ -173,17 +173,17 @@ test('shared policy keeps absence distinguishable and unreadable declarations fa
   const entry = runtime(root);
   assert.equal(bootstrap.findPolicySync(root), entry);
   assert.equal(bootstrap.isTracingAllowed(ctx), true);
-  const read = fs.readFileSync; const marker = path.join(root, '.agent-brain/tracing.json');
-  fs.readFileSync = function (file, ...args) {
+  const open = fs.openSync; const marker = path.join(root, '.agent-brain/tracing.json');
+  fs.openSync = function (file, ...args) {
     if (file === marker) throw Object.assign(new Error('synthetic permission refusal'), { code: 'EACCES' });
-    return read.call(this, file, ...args);
+    return open.call(this, file, ...args);
   };
   try {
     assert.equal(bootstrap.findPolicySync(root), null);
     assert.equal(bootstrap.findRuntimeSync(root), null);
     assert.equal(bootstrap.findRuntime(root), null);
     assert.equal(bootstrap.isTracingAllowed(ctx, { perRun: true }), false);
-  } finally { fs.readFileSync = read; }
+  } finally { fs.openSync = open; }
   assert.equal(bootstrap.findPolicySync(path.join(root, 'nonexistent')), null, 'unresolvable cwd is refusal, not absence');
 });
 

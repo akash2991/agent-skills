@@ -6,16 +6,40 @@ const fs = require('node:fs');
 const path = require('node:path');
 const GUARD = Symbol.for('agent-brain.observability.controller');
 
+// Dynamic discovery metadata must never block on a FIFO, including one swapped
+// in after lstat. Keep this inline: the cached bootstrap is a standalone file.
+function readMetadata(file, cap) {
+  let before;
+  try { before = fs.lstatSync(file); }
+  catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
+  const regular = stat => stat.isFile() && !stat.isSymbolicLink() && stat.size <= cap;
+  const same = stat => regular(stat) && stat.dev === before.dev && stat.ino === before.ino &&
+    stat.size === before.size && stat.mtimeMs === before.mtimeMs && stat.ctimeMs === before.ctimeMs;
+  if (!regular(before) || !Number.isInteger(fs.constants.O_NONBLOCK) || !Number.isInteger(fs.constants.O_NOFOLLOW)) throw new Error('Unsafe discovery metadata');
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
+    if (!same(fs.fstatSync(fd))) throw new Error('Replaced discovery metadata');
+    const bytes = Buffer.alloc(before.size + 1);
+    let used = 0;
+    while (used < bytes.length) {
+      const count = fs.readSync(fd, bytes, used, bytes.length - used, used);
+      if (!count) break;
+      used += count;
+    }
+    if (used !== before.size || !same(fs.fstatSync(fd)) || !same(fs.lstatSync(file))) throw new Error('Changed discovery metadata');
+    return bytes.subarray(0, used).toString('utf8');
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
 // undefined means no declaration; null means an explicit refusal (including
 // unreadable/invalid declarations). Only absence permits principal fallback.
 function runtimeAt(root) {
   const marker = path.join(root, '.agent-brain', 'tracing.json');
-  let stat;
-  try { stat = fs.lstatSync(marker); }
-  catch (error) { return error.code === 'ENOENT' ? undefined : null; }
   try {
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) return null;
-    const config = JSON.parse(fs.readFileSync(marker, 'utf8'));
+    const metadata = readMetadata(marker, 4096);
+    if (metadata === undefined) return undefined;
+    const config = JSON.parse(metadata);
     if (config.schema !== 1 || config.enabled !== true || config.captureMode !== 'metadata-only') return null;
     if (config.runtime !== undefined && !['.agent-brain/observability', 'runtime/langfuse'].includes(config.runtime)) return null;
     const entry = path.join(root, config.runtime || '.agent-brain/observability', 'pi.js');
@@ -39,16 +63,14 @@ function findPolicySync(cwd) {
       if (stat.isDirectory() && !stat.isSymbolicLink()) return undefined;
       try {
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size >= 4096) return null;
-        const match = /^gitdir: ([^\r\n]+)\s*$/.exec(fs.readFileSync(git, 'utf8'));
+        const match = /^gitdir: ([^\r\n]+)\s*$/.exec(readMetadata(git, 4095));
         if (!match) return null;
         const gitdir = path.resolve(root, match[1]);
-        let commonDir;
-        try { commonDir = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim(); }
-        catch (error) {
-          // Submodules/separate Git dirs need not have a principal checkout.
-          // No declaration there is absence, not a project tracing refusal.
-          return error.code === 'ENOENT' ? undefined : null;
-        }
+        const metadata = readMetadata(path.join(gitdir, 'commondir'), 4096);
+        // Submodules/separate Git dirs need not have a principal checkout.
+        // Only pre-open absence permits fallback; a disappearance is refusal.
+        if (metadata === undefined) return undefined;
+        const commonDir = metadata.trim();
         if (!commonDir) return null;
         const common = path.resolve(gitdir, commonDir);
         return path.basename(common) === '.git' ? runtimeAt(path.dirname(common)) : undefined;
