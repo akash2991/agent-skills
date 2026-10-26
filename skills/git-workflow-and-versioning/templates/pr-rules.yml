@@ -8,8 +8,9 @@ on:
 
 jobs:
   pr-rules:
-    # Bot PRs (Dependabot, Renovate) do not carry trailers or changelog lines; their own tooling reviews them.
-    if: github.event.pull_request.user.type != 'Bot'
+    # Dependency bots do not carry trailers or changelog lines; their own tooling reviews them.
+    # Dependabot and Renovate only; a GitHub App that opens agent PRs is held to the rules.
+    if: ${{ !contains(fromJSON('["dependabot[bot]","renovate[bot]"]'), github.event.pull_request.user.login) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

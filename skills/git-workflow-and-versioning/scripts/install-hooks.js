@@ -12,6 +12,11 @@ const path = require('path');
 const MARKER = '# brain-git-check hook';
 const CHECK = path.join(__dirname, 'brain-git-check.js');
 
+// Single-quote a value for the POSIX shell so nothing in a path is executed.
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 // A checkout that predates the brain pull has no check script: warn and let the commit or push through,
 // instead of failing every command with MODULE_NOT_FOUND.
 function hookBody(name, checkPath) {
@@ -21,7 +26,7 @@ function hookBody(name, checkPath) {
   return [
     '#!/bin/sh', MARKER,
     'ROOT="$(git rev-parse --show-toplevel)"',
-    `CHECK="$ROOT/${checkPath}"`,
+    `CHECK="$ROOT"/${shellQuote(checkPath)}`,
     'if [ ! -f "$CHECK" ]; then echo "brain-git-check: $CHECK not found; skipping" >&2; exit 0; fi',
     run,
     '',
@@ -54,4 +59,4 @@ if (require.main === module) {
   for (const line of install(hooksDir, rel)) console.log(line);
 }
 
-module.exports = { hookBody, install, MARKER };
+module.exports = { hookBody, install, MARKER, shellQuote };

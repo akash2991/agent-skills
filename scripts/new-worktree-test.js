@@ -75,3 +75,17 @@ test('agents created one after another claim disjoint host ports', () => {
   execFileSync('node', [script, 'remove', 'ENG-9-b'], { cwd: repo, encoding: 'utf8' });
   fs.rmSync(parent, { recursive: true, force: true });
 });
+
+test('the port lock admits one holder at a time and releases after the critical section', async () => {
+  const { withLock } = require('../skills/development-setup/scripts/new-worktree');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lock-'));
+  const file = path.join(dir, 'claims.json');
+  const order = [];
+  await Promise.all([
+    withLock(file, async () => { order.push('a-start'); await new Promise(r => setTimeout(r, 150)); order.push('a-end'); }),
+    withLock(file, async () => { order.push('b-start'); order.push('b-end'); }),
+  ]);
+  assert.deepStrictEqual(order, ['a-start', 'a-end', 'b-start', 'b-end']);
+  assert.strictEqual(fs.existsSync(`${file}.lock`), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -27,8 +27,9 @@ function checkCommitMessage(raw, env = process.env) {
   const message = raw.split(/\r?\n/).filter(l => !l.startsWith('#')).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
-  // git's own revert and autosquash subjects carry no trailers; the commit they undo already passed.
-  if (/^(Revert ".*"|fixup! |squash! |amend! )/.test(subject)) return [];
+  // git's own revert subject carries no trailers; the commit it undoes already passed. fixup!/squash! are not exempt:
+  // they must be autosquashed before the PR is merged, so the commit that lands is checked.
+  if (/^Revert ".*"/.test(subject)) return [];
   const errors = [];
   if (/^Merge /.test(subject)) {
     if (!new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
@@ -44,6 +45,7 @@ function checkCommitMessage(raw, env = process.env) {
 }
 
 function checkBranchName(name, env = process.env) {
+  if (name === 'main' || name.startsWith('release/')) return [];
   if (!new RegExp(`^${ticketSource(env)}-[a-z0-9]+(-[a-z0-9]+)*$`).test(name)) {
     return [`branch "${name}" is not <ticket>-<slug>, for example ENG-123-login-form (P5)`];
   }
@@ -74,19 +76,46 @@ function checkSize(files, body = '', env = process.env) {
 }
 
 // A changelog must gain a line; deleting or leaving the file untouched does not satisfy P13.
-function checkChangelog(files) {
-  return files.some(f => CHANGELOG.test(f.path) && f.added > 0) ? [] : ['no added CHANGELOG.md line in this change (P13)'];
+// P13 needs a line in the global changelog and in the changelog of every service the change touches. A service's
+// changelog is the nearest CHANGELOG.md above a changed file. `allChangelogs` is the repository's list of them.
+function requiredChangelogs(changedPaths, allChangelogs) {
+  const required = new Set();
+  const root = allChangelogs.find(c => c === 'CHANGELOG.md');
+  if (root) required.add(root);
+  for (const p of changedPaths) {
+    if (CHANGELOG.test(p)) continue;
+    const dir = p.split('/').slice(0, -1);
+    while (dir.length) {
+      const candidate = [...dir, 'CHANGELOG.md'].join('/');
+      if (allChangelogs.includes(candidate)) { required.add(candidate); break; }
+      dir.pop();
+    }
+  }
+  return [...required];
+}
+
+function checkChangelog(files, allChangelogs = ['CHANGELOG.md']) {
+  // A repository with no changelog cannot satisfy P13 by staying silent.
+  if (!allChangelogs.length) return ['no CHANGELOG.md in this repository, so P13 cannot be met: add one (P13)'];
+  const changed = files.map(f => f.path);
+  const missing = requiredChangelogs(changed, allChangelogs).filter(c => {
+    const entry = files.find(f => f.path === c);
+    return !entry || entry.added < 1;
+  });
+  return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
 
 // The refs git's pre-push hook receives on stdin: "<local ref> <local sha> <remote ref> <remote sha>".
-// Deletions (all-zero local sha), tags, and the protected trunk are not branch names to check.
+// The remote ref is the name that is judged: `git push origin HEAD:name` pushes HEAD under another name.
+// Deletions (all-zero local sha) and tags are not branch updates. Direct pushes to main are refused (P8).
 function checkPushedRefs(stdin, env = process.env) {
   const errors = [];
   for (const line of stdin.split('\n').filter(Boolean)) {
-    const [localRef, localSha] = line.split(' ');
-    if (/^0+$/.test(localSha) || !localRef.startsWith('refs/heads/')) continue;
-    const branch = localRef.slice('refs/heads/'.length);
-    if (branch === 'main' || branch.startsWith('release/')) continue;
+    const [, localSha, remoteRef] = line.split(' ');
+    if (/^0+$/.test(localSha) || !remoteRef || !remoteRef.startsWith('refs/heads/')) continue;
+    const branch = remoteRef.slice('refs/heads/'.length);
+    if (branch === 'main') { errors.push('direct push to main is refused: open a PR (P8)'); continue; }
+    if (branch.startsWith('release/')) continue;
     errors.push(...checkBranchName(branch, env));
   }
   return errors;
@@ -94,6 +123,11 @@ function checkPushedRefs(stdin, env = process.env) {
 
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+}
+
+// Every CHANGELOG.md tracked in the repository; the PR's own checkout is the source of truth.
+function listChangelogs() {
+  return git(['ls-files', '*CHANGELOG.md']).split('\n').filter(Boolean);
 }
 
 function optionValue(argv, flag) {
@@ -138,7 +172,7 @@ function main(argv) {
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files),
+      ...checkChangelog(files, listChangelogs()),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');
@@ -147,4 +181,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, checkPushedRefs, ticketSource };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource };

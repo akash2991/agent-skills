@@ -34,7 +34,7 @@ test('the typical paths in SKILL.md need no skip reason', () => {
 test('a skip is legal only with a reason and names what it passed over', () => {
   assert.strictEqual(checkMove('Todo', 'In Review').ok, false);
   const move = checkMove('Todo', 'In Review', { reason: 'one-shot override' });
-  assert.deepStrictEqual(move, { ok: true, skipped: ['Spec', 'Design', 'Planned', 'In Progress'] });
+  assert.deepStrictEqual(move, { ok: true, skipped: ['In Progress'] });
 });
 
 test('Blocked comes from any live state and returns only to the state it left', () => {
@@ -73,7 +73,7 @@ test('the same input renders the same text', () => {
 
 test('a skip is written into the Change line', () => {
   const { text } = renderUpdate({ ...base, from: 'Todo', to: 'In Review', skipReason: 'user asked for a one-shot' });
-  assert.match(text, /Change: State Todo → In Review \(skipped Spec, Design, Planned, In Progress: user asked for a one-shot\)/);
+  assert.match(text, /Change: State Todo → In Review \(skipped In Progress: user asked for a one-shot\)/);
 });
 
 test('a Blocked update needs the whole blocker block, and only a Blocked update may carry one', () => {
@@ -102,4 +102,9 @@ test('the state field is recognised in any spelling, so a lowercase name cannot 
   assert.match(renderUpdate(illegal).errors[0], /has no way out/);
   const blocked = { ...base, field: 'state', to: 'Blocked' };
   assert.match(renderUpdate(blocked).errors.join(), /a Blocked update needs blockerType/);
+});
+
+test('the states a move jumps over follow the legal path, not the order of the list', () => {
+  assert.deepStrictEqual(checkMove('Triage', 'In Progress', { reason: 'r' }).skipped, ['Todo']);
+  assert.deepStrictEqual(checkMove('In Progress', 'Spec', { reason: 'r' }).skipped, []);
 });

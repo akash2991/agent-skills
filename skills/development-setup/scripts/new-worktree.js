@@ -77,6 +77,25 @@ function readClaims(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
 
+// Parallel agents must not read the same free ports: take an exclusive lock file in the common git dir around
+// read, probe and write. A lock left by a crashed run is removed once it is older than a minute.
+async function withLock(file, fn) {
+  const lock = `${file}.lock`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const fd = fs.openSync(lock, 'wx');
+      fs.closeSync(fd);
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      if (Date.now() - fs.statSync(lock).mtimeMs > 60000) { fs.rmSync(lock, { force: true }); continue; }
+      if (attempt > 600) throw new Error(`port claim file is locked: ${lock}`);
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+  try { return await fn(); } finally { fs.rmSync(lock, { force: true }); }
+}
+
 function optionValue(argv, flag) {
   const i = argv.indexOf(flag);
   return i === -1 ? undefined : argv[i + 1];
@@ -93,9 +112,11 @@ async function main(argv) {
   if (cmd === 'remove') {
     git(['worktree', 'remove', p.worktree], root);
     const file = claimFile(root);
-    const claims = readClaims(file);
-    delete claims[p.name];
-    fs.writeFileSync(file, JSON.stringify(claims, null, 2));
+    await withLock(file, () => {
+      const claims = readClaims(file);
+      delete claims[p.name];
+      fs.writeFileSync(file, JSON.stringify(claims, null, 2));
+    });
     console.log(`removed ${p.worktree}`);
     return;
   }
@@ -113,12 +134,15 @@ async function main(argv) {
     let psOutput = '';
     try { psOutput = execFileSync('docker', ['ps', '--format', '{{.Ports}}'], { encoding: 'utf8' }); } catch { /* docker not running: only the bind test applies */ }
     const file = claimFile(root);
-    const claims = readClaims(file);
-    const claimed = new Set(Object.entries(claims).filter(([k]) => k !== p.name).flatMap(([, v]) => v));
-    ports = await freePorts(count, new Set([...usedHostPorts(psOutput), ...claimed]));
-    if (ports.length < count) throw new Error(`only ${ports.length} of ${count} host ports are free; free some or ask for fewer`);
-    claims[p.name] = ports;
-    fs.writeFileSync(file, JSON.stringify(claims, null, 2));
+    ports = await withLock(file, async () => {
+      const claims = readClaims(file);
+      const claimed = new Set(Object.entries(claims).filter(([k]) => k !== p.name).flatMap(([, v]) => v));
+      const found = await freePorts(count, new Set([...usedHostPorts(psOutput), ...claimed]));
+      if (found.length < count) throw new Error(`only ${found.length} of ${count} host ports are free; free some or ask for fewer`);
+      claims[p.name] = found;
+      if (!rest.includes('--dry-run')) fs.writeFileSync(file, JSON.stringify(claims, null, 2));
+      return found;
+    });
   }
   console.log(`export AGENT_NAME=${shellQuote(p.name)}`);
   console.log(`export WORKTREE=${shellQuote(p.worktree)}`);
@@ -130,4 +154,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).catch(err => { console.error(`new-worktree: ${err.message}`); process.exit(1); });
 }
 
-module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout };
+module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock };

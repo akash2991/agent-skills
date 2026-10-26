@@ -785,13 +785,13 @@
         [
           "Cache source reads before and after",
           "det",
-          "hooks/sdd-cache-pre.sh",
+          null,
           ""
         ],
         [
           "Hide ignored code from simplification",
           "det",
-          "hooks/simplify-ignore.sh",
+          null,
           ""
         ]
       ]

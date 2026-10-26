@@ -12,8 +12,6 @@ const fs = require('fs');
 const path = require('path');
 
 const WORKFLOW = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'workflow.json'), 'utf8'));
-// The order a typical issue travels; used only to name the states a forward skip passed over.
-const PATH_ORDER = ['Triage', 'Backlog', 'Todo', 'Spec', 'Design', 'Planned', 'In Progress', 'In Review', 'QA', 'Merged', 'Done'];
 const BLOCKER_TYPES = ['product ambiguity', 'technical decision', 'dependency', 'environment', 'ownership', 'external service', 'missing access'];
 const REVIEWS = /^(opened|approved|merged|changes requested \(\d+\))$/;
 
@@ -39,9 +37,25 @@ function checkMove(from, to, { reason, left } = {}) {
   }
   if ((WORKFLOW.transitions[from] || []).includes(to)) return { ok: true, skipped: [] };
   if (!reason) return { ok: false, error: `${from} → ${to} skips states or goes off the workflow; record the reason with --reason (M3)` };
-  const a = PATH_ORDER.indexOf(from);
-  const b = PATH_ORDER.indexOf(to);
-  return { ok: true, skipped: a !== -1 && b > a ? PATH_ORDER.slice(a + 1, b) : [] };
+  return { ok: true, skipped: passedOver(from, to) };
+}
+
+// The states a move jumps over: the intermediate states of the shortest legal path from `from` to `to`.
+// A move with no legal path at all (a backwards move) skips nothing and is named as such by the caller.
+function passedOver(from, to) {
+  const prev = new Map([[from, null]]);
+  const queue = [from];
+  while (queue.length) {
+    const here = queue.shift();
+    if (here === to) break;
+    for (const next of WORKFLOW.transitions[here] || []) {
+      if (!prev.has(next)) { prev.set(next, here); queue.push(next); }
+    }
+  }
+  if (!prev.has(to)) return [];
+  const path = [];
+  for (let s = prev.get(to); s !== null && s !== from; s = prev.get(s)) path.unshift(s);
+  return path;
 }
 
 function renderUpdate(f) {
