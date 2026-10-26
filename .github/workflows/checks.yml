@@ -18,7 +18,6 @@ jobs:
       - run: node scripts/validate-reference-links.js
       - run: node scripts/validate-artifact-paths.js
       - run: node scripts/validate-commands.js
-      - run: node scripts/build-flow-map.js --check
       - run: node scripts/run-evals.js --min-rank1 80
       - run: |
           node --test scripts/lib/skill-lint-test.js
@@ -28,8 +27,5 @@ jobs:
           node --test scripts/validate-commands-test.js
           node --test scripts/agent-brain-pull-test.js
           node --test scripts/validate-agents-test.js
-          node --test scripts/flow-map-test.js
           node --test scripts/git-workflow-scripts-test.js
-          node --test scripts/linear-status-test.js
-          node --test scripts/new-worktree-test.js
       - run: node scripts/build-brain.js

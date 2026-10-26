@@ -15,18 +15,5 @@
     { "name": "Done",        "type": "completed", "description": "Deliverable verified: code deployed and exercised where specified (production by default); design-only artifacts committed and user-reviewed. A regression is a new bug." },
     { "name": "Canceled",    "type": "canceled",  "description": "Will not be done." },
     { "name": "Duplicate",   "type": "duplicate", "builtin": true, "description": "Another issue tracks it; related as duplicate." }
-  ],
-  "$transitions": "The moves the Workflow table in SKILL.md allows with no skip to record (M3). Any other move between non-terminal states is a skip and needs a reason. Any state started or unstarted may also move to Blocked, and back only to the state it left; Canceled and Duplicate are reachable from any non-terminal state; Done, Canceled and Duplicate have no way out. scripts/linear-status.js enforces this.",
-  "transitions": {
-    "Triage":      ["Backlog", "Todo", "Spec", "Design"],
-    "Backlog":     ["Todo", "Spec", "Design"],
-    "Todo":        ["In Progress"],
-    "Spec":        ["Design", "Todo"],
-    "Design":      ["Planned"],
-    "Planned":     ["Todo"],
-    "In Progress": ["In Review"],
-    "In Review":   ["Merged", "In Progress", "QA"],
-    "QA":          ["Merged", "Done"],
-    "Merged":      ["Done"]
-  }
+  ]
 }

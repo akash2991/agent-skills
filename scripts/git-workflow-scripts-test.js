@@ -172,7 +172,7 @@ test('the hook skips with a warning when the check script is missing from the ch
 });
 
 test('the script folders are CommonJS even inside an ESM project', () => {
-  for (const d of ['git-workflow-and-versioning', 'linear', 'development-setup']) {
+  for (const d of ['git-workflow-and-versioning']) {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'skills', d, 'scripts', 'package.json'), 'utf8'));
     assert.strictEqual(pkg.type, 'commonjs', d);
   }
@@ -301,4 +301,14 @@ test('a repository with only service changelogs fails P13, and a service changel
 
 test('a branch default with a trailing newline from git is still protected', () => {
   assert.match(checkPushedRefs('refs/heads/release/stable aaaa refs/heads/release/stable 0000000', {}, ['main', 'release/stable'])[0], /direct push to release\/stable/);
+});
+
+test('a change request stays in force after a new push until its reviewer approves or dismisses it', () => {
+  const author = { login: 'agent' };
+  const h2 = 'h2';
+  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid } });
+  assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
+    rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r2', 'APPROVED', h2)] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
+    rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r1', 'APPROVED', h2), rev('r2', 'APPROVED', h2)] }), true);
 });

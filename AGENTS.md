@@ -30,7 +30,6 @@ docs/            anatomies and per-tool setup guides
 | Command parity across tools | `node scripts/validate-commands.js` |
 | Trigger and routing evals | `node scripts/run-evals.js --min-rank1 80` |
 | Assemble the brain from `manifest.json` | `node scripts/build-brain.js` → `build/` |
-| Flow map (which flows are code, agent, or mixed): edit `docs/flow-map.json`, then | `node scripts/build-flow-map.js` → `docs/flow-map.html` |
 
 ## Mandatory double-pass PR review
 

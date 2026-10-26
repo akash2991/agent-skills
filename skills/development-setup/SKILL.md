@@ -45,7 +45,7 @@ What is in place before development starts: an environment that belongs to this 
 
 ## Procedure
 
-1. From the main repository or any worktree, run this skill's `scripts/new-worktree.js create <ticket>-<slug> --ports <n>`: it creates the sibling worktree and branch, and prints the agent name, the lowercase Compose project, and free host ports (`remove` takes the worktree away after the PR is open). It replaces `git worktree add ../<ticket>-<slug>`, so the worktree is the main repository's sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts (DS2).
+1. From the main repository, run `git worktree add ../<ticket>-<slug>` so the worktree is its sibling, not its child. Have the launcher set this main agent's visible runtime name, and every launched subagent's, to exactly the basename of that agent's assigned worktree before work starts (DS2).
 2. Start Docker and LocalStack for the services you touch as the Compose project `<ticket>-<slug>`, lowercased, on free host ports (DS3, DS4); snapshot or seed the database (DS5).
 3. Confirm the API contract, DB model, and every dependency's shape exist for the slice you are about to build (DS7–DS9); if not, that is the first task, not a thing to work around.
 4. Work; run the app and tests inside this environment, and push before every pause (DS1). Build Android here; iOS on EAS only with explicit permission (DS16).

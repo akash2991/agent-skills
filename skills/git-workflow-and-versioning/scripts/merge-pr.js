@@ -47,9 +47,9 @@ function isPending(c) {
   return (c.status && c.status !== 'COMPLETED') || ['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS'].includes(c.state);
 }
 
-// Approved means: branch protection says so, or the newest APPROVED / CHANGES_REQUESTED review of each reviewer other
-// than the author is APPROVED and none is CHANGES_REQUESTED. COMMENTED and other reviews are replies, not verdicts.
-// Only reviews of the current head count: an approval of an earlier commit does not cover the code being merged.
+// Approved means: branch protection says so, or every reviewer's newest verdict (APPROVED or CHANGES_REQUESTED, on any
+// commit) is not a change request, and at least one such verdict is an APPROVED given on the current head. A change
+// request stays in force after a new push until its reviewer approves or dismisses it. COMMENTED reviews are replies.
 function isApproved(view) {
   if (view.reviewDecision === 'APPROVED') return true;
   const newest = new Map();
@@ -57,11 +57,11 @@ function isApproved(view) {
     const login = r.author && r.author.login;
     if (!login || (view.author && login === view.author.login)) continue;
     if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
-    if (!r.commit || r.commit.oid !== view.headRefOid) continue;
-    newest.set(login, r.state);
+    newest.set(login, { state: r.state, oid: r.commit && r.commit.oid });
   }
-  const states = [...newest.values()];
-  return states.includes('APPROVED') && !states.includes('CHANGES_REQUESTED');
+  const verdicts = [...newest.values()];
+  if (verdicts.some(v => v.state === 'CHANGES_REQUESTED')) return false;
+  return verdicts.some(v => v.state === 'APPROVED' && v.oid === view.headRefOid);
 }
 
 // view is the parsed `gh pr view --json title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state` output.
