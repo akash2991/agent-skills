@@ -70,16 +70,24 @@ function checkPrTitle(title, env = process.env) {
 }
 
 // numstat is the output of `git diff --numstat`: "<added>\t<deleted>\t<path>", binary files as "-\t-\t<path>".
+// `git diff -z --numstat` output (NUL-separated, paths unquoted; newline-separated is accepted for tests). Lockfiles
+// stay in the list: they count for P13, and only the size check leaves them out.
 function parseNumstat(numstat) {
-  return numstat.split('\n').filter(Boolean).map(line => {
+  return numstat.split(numstat.includes('\0') ? '\0' : '\n').filter(Boolean).map(line => {
     const [added, deleted, ...rest] = line.split('\t');
     return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
-  }).filter(f => !LOCKFILES.test(f.path));
+  });
+}
+
+// Every path in a tree, unquoted (git quotes non-ASCII names without -z).
+function treeFiles(ref) {
+  return git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', ref]).split('\0').filter(Boolean);
 }
 
 function checkSize(files, body = '', env = process.env) {
   const maxLines = Number(env.BRAIN_PR_MAX_LINES) || 400;
   const maxFiles = Number(env.BRAIN_PR_MAX_FILES) || 10;
+  files = files.filter(f => !LOCKFILES.test(f.path));
   const lines = files.reduce((n, f) => n + f.lines, 0);
   if ((lines <= maxLines && files.length <= maxFiles) || SIZE_EXCEPTION.test(body)) return [];
   return [`PR changes ${lines} lines in ${files.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
@@ -94,7 +102,8 @@ const GLOBAL_CHANGELOGS = ['CHANGELOG.md', 'docs/CHANGELOG.md'];
 // gone from the head entirely (removed or moved, and the move's new changelog is required where it lands).
 function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
   const required = new Set();
-  const global = GLOBAL_CHANGELOGS.find(c => allChangelogs.includes(c));
+  // The global changelog that survives at the head; the base's one if the PR deleted it.
+  const global = (headFiles && GLOBAL_CHANGELOGS.find(c => headFiles.includes(c))) || GLOBAL_CHANGELOGS.find(c => allChangelogs.includes(c));
   if (global) required.add(global);
   for (const p of changedPaths) {
     if (CHANGELOG.test(p) || p.startsWith('templates/')) continue;
@@ -151,8 +160,8 @@ function git(args) {
 // drop its P13 requirement.
 function listChangelogs(base) {
   // ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
-  const here = git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n');
-  const onBase = base ? git(['ls-tree', '-r', '--name-only', base]).split('\n').filter(f => CHANGELOG.test(f)) : [];
+  const here = git(['ls-files', '-z', '--full-name', '--', ':/*CHANGELOG.md']).split('\0');
+  const onBase = base ? treeFiles(base).filter(f => CHANGELOG.test(f)) : [];
   return [...new Set([...here, ...onBase])].filter(f => f && !f.startsWith('templates/'));
 }
 
@@ -215,12 +224,16 @@ function main(argv) {
     const base = optionValue(rest, '--base');
     if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
-    const files = parseNumstat(git(['diff', '--numstat', '--no-renames', `${base}...${head}`]));
+    // Attributes come from the base, so a PR's own .gitattributes (`*.js -diff`) cannot hide its lines from P11.
+    let numstat;
+    try { numstat = git(['--attr-source', base, 'diff', '-z', '--numstat', '--no-renames', `${base}...${head}`]); }
+    catch { numstat = git(['diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
+    const files = parseNumstat(numstat);
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, listChangelogs(base), git(['ls-tree', '-r', '--name-only', head]).split('\n').filter(Boolean)),
+      ...checkChangelog(files, listChangelogs(base), treeFiles(head)),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');

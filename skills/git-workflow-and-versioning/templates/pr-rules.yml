@@ -32,7 +32,8 @@ jobs:
           # Set the repository variable LINEAR_TEAM (e.g. ENG) to accept only that team's ticket ids.
           LINEAR_TEAM: ${{ vars.LINEAR_TEAM }}
         run: |
-          # The checker comes from the base branch, never from the PR: a PR cannot weaken the rules that judge it.
+          # The checker script and the diff attributes come from the base branch, never from the PR. This workflow file
+          # itself runs from the PR, so protect .github/ with CODEOWNERS or a ruleset.
           # So the PR that first adds the brain fails here: merge the brain into the base branch before adding this workflow.
           CHECK_PATH="$(git ls-tree -r --name-only "origin/$BASE_REF" | { grep '/skills/git-workflow-and-versioning/scripts/brain-git-check.js$' || true; } | head -1)"
           test -n "$CHECK_PATH" || { echo "brain-git-check.js is not on $BASE_REF: merge the brain into $BASE_REF before adding this workflow"; exit 1; }
