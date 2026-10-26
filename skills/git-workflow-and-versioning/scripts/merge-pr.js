@@ -8,11 +8,13 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle, extraLongLived, loadDotenv } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, extraLongLived, loadDotenv, checkCommitMessage } = require('./brain-git-check');
 
-// Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 3 merged but P7
+// Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 4 the merge's outcome
+// could not be read (nothing deleted; run merge-pr again to verify and clean up), 3 merged but P7
 // cleanup left to do (reported on stderr).
 const CLEANUP_INCOMPLETE = 3;
+const OUTCOME_UNKNOWN = 4;
 
 function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -70,15 +72,16 @@ function latestRuns(checks) {
   for (const [i, c] of checks.entries()) {
     const producer = c.workflowPath ? `${c.workflowPath}|${c.event}` : runId(c) || (c.workflowName ? `workflow:${c.workflowName}` : `external:${i}`);
     const key = `${producer}/${c.name || c.context}`;
-    // Order by when the workflow run was created (then its attempt), not when this job started: a delayed job of an
-    // older run must not outrank a newer run. Without run metadata the job's start time stands in; a run that has not
-    // started carries the zero time and is newer than anything that finished.
-    const raw = c.runCreated || c.startedAt || c.createdAt || '';
-    const when = (!raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0) + (Number(c.runAttempt) || 0) / 1000;
+    // Order first by when the workflow run was created, so a delayed job of an older run cannot outrank a newer run;
+    // then, within one run (its re-run attempts share the run id), by when this job started. A time that is missing
+    // or zero (a job not started yet) is the newest.
+    const at = raw => (!raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0);
+    const when = [at(c.runCreated || c.startedAt || c.createdAt), at(c.startedAt || c.createdAt)];
     const prev = byKey.get(key);
+    const newer = !prev || when[0] > prev.when[0] || (when[0] === prev.when[0] && when[1] >= prev.when[1]);
     // A newer SKIPPED or NEUTRAL run (a job whose `if:` excluded this event) does not supersede a run that executed.
     const passive = r => ['SKIPPED', 'NEUTRAL'].includes(r.conclusion);
-    if (!prev || (when >= prev.when && !(passive(c) && !passive(prev.run))) || (passive(prev.run) && !passive(c))) byKey.set(key, { when, run: c });
+    if (!prev || (newer && !(passive(c) && !passive(prev.run))) || (passive(prev.run) && !passive(c))) byKey.set(key, { when, run: c });
   }
   return [...byKey.values()].map(v => v.run);
 }
@@ -219,6 +222,18 @@ function hasMergeQueue(repo, base) {
     '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `branch=${base}`]).trim() !== '';
 }
 
+// What is wrong with the merge commit `oid` for head `head`: it must have two parents, one of them the inspected head
+// (P15: a merge commit, not a squash or rebase), and carry the ticket and the P3 trailers. Empty when it is right.
+function mergeCommitProblems(repo, oid, head) {
+  if (!oid) return ['no merge commit is recorded'];
+  const { host, owner, name } = splitRepo(repo);
+  const c = JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/commits/${oid}`, '--jq', '{parents: [.parents[].sha], message: .commit.message}']));
+  const problems = [];
+  if (c.parents.length !== 2 || !c.parents.includes(head)) problems.push(`${oid.slice(0, 8)} is not a merge commit of the inspected head (P15)`);
+  problems.push(...checkCommitMessage(c.message, process.env, { isMerge: true }));
+  return problems;
+}
+
 function main(argv) {
   const opts = parseArgs(argv);
   if (!opts) { console.error(USAGE); process.exit(2); }
@@ -233,7 +248,10 @@ function main(argv) {
     const same = (a, b) => ['host', 'owner', 'name'].every(k => a[k].toLowerCase() === b[k].toLowerCase());
     try { ownRepo = same(splitRepo(originRepo()), splitRepo(repo)); } catch { ownRepo = false; }
   }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
+  // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
+  // on to cleanup only if the merge commit proves P15 and P3.
+  const alreadyMerged = view.state === 'MERGED';
   view.unresolvedThreads = unresolvedThreads(repo, pr);
   runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
@@ -250,8 +268,8 @@ function main(argv) {
   const keep = longLived(view.headRefName, defaultBranch) || isProtected || protectionUnknown;
   const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
   view.writers = writers(repo, [...reviewers]);
-  const { blockers, ticket } = mergeBlockers(view, { reviewOptional: opts.reviewOptional });
-  if (hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
+  const { blockers, ticket } = alreadyMerged ? { blockers: [], ticket: '' } : mergeBlockers(view, { reviewOptional: opts.reviewOptional });
+  if (!alreadyMerged && hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
     process.exit(1);
@@ -260,16 +278,40 @@ function main(argv) {
   // gh deletes no branch here: the remote deletion below is leased to the merged head.
   const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}`;
   let mergeError = '';
-  try {
-    gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`, '--body', body]);
-  } catch (err) { mergeError = String(err.stderr || err.message).trim(); }
-  const state = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state'])).state;
-  if (state !== 'MERGED') {
-    console.error(`merge-pr: PR #${pr} is ${state}, not merged${mergeError ? `: ${mergeError}` : ' (auto-merge or a queue may have taken it)'}`);
+  if (!alreadyMerged) {
+    try {
+      gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`, '--body', body]);
+    } catch (err) { mergeError = String(err.stderr || err.message).trim(); }
+  }
+  let after;
+  try { after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state,mergeCommit'])); } catch (err) {
+    console.error(`merge-pr: could not read PR #${pr} after the merge call (${String(err.stderr || err.message).trim()}); nothing was deleted: run merge-pr again to verify and clean up`);
+    process.exit(OUTCOME_UNKNOWN);
+  }
+  if (after.state !== 'MERGED') {
+    console.error(`merge-pr: PR #${pr} is ${after.state}, not merged${mergeError ? `: ${mergeError}` : ' (auto-merge or a queue may have taken it)'}`);
     process.exit(1);
+  }
+  // Whoever merged it, cleanup runs only when the merge commit is a real merge of the inspected head with the ticket and
+  // trailers; otherwise the branches stay as evidence.
+  let problems;
+  try { problems = mergeCommitProblems(repo, after.mergeCommit && after.mergeCommit.oid, view.headRefOid); } catch (err) {
+    console.error(`merge-pr: PR #${pr} is merged, but its merge commit could not be read (${String(err.stderr || err.message).trim()}); nothing was deleted: run merge-pr again`);
+    process.exit(OUTCOME_UNKNOWN);
+  }
+  if (problems.length) {
+    console.error(`merge-pr: PR #${pr} is merged${mergeError || alreadyMerged ? ', but not by this run' : ''}, and its merge commit does not meet the rules; the branches were kept:`);
+    for (const p of problems) console.error(`merge-pr:   ${p}`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
   }
   if (keep && protectionUnknown && !longLived(view.headRefName, defaultBranch)) {
     console.error(`merge-pr: merged #${pr}; could not read whether ${view.headRefName} is protected, so it was kept: delete it by hand if it is not (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
+  if (keep && !longLived(view.headRefName, defaultBranch)) {
+    console.error(`merge-pr: merged #${pr}; ${view.headRefName} is protected, so it was kept: delete it by hand if it is a ticket branch (P7)`);
     process.exitCode = CLEANUP_INCOMPLETE;
     return;
   }
@@ -286,7 +328,13 @@ function main(argv) {
   // goes to origin's configured URL, the one checked against the repository above, never to a separate pushurl.
   const url = git(['config', '--get', 'remote.origin.url']).trim();
   const remoteRef = `refs/heads/${view.headRefName}`;
-  // A url.*.pushInsteadOf rule would send the push somewhere other than the verified URL: leave the branch then.
+  // A url.*.insteadOf or pushInsteadOf rule would send the push somewhere other than the verified URL: leave the
+  // branch then.
+  if (git(['ls-remote', '--get-url', url]).trim() !== url) {
+    console.error(`merge-pr: merged #${pr}; an insteadOf rule rewrites ${url}, so the remote branch ${view.headRefName} was left: delete it by hand (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
   let rewrites = [];
   try { rewrites = git(['config', '--get-regexp', '^url\\..*\\.pushinsteadof$']).split('\n').filter(Boolean).map(l => l.split(' ').slice(1).join(' ')); } catch { /* none */ }
   if (rewrites.some(prefix => url.startsWith(prefix))) {

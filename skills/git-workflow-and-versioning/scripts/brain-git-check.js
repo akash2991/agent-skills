@@ -7,7 +7,7 @@
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
 //   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
 //   push                         P8       a push to, or deletion of, main or the default branch is refused
-//   pr --base <ref>              P10, P11, P13   title is "<ticket>: <goal>", size within limits, changelog touched
+//   pr --base <ref>              P2, P4, P10, P11, P13   one ticket across branch/title/commits, title "<ticket>: <goal>", size, changelog
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
 // Environment: LINEAR_TEAM narrows the ticket pattern to one team key (read from the repository's .env when unset); BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
 // override 400 and 10; PR_TITLE and PR_BODY supply the title and body (CI passes them without shell quoting).
@@ -63,6 +63,22 @@ function checkBranchName(name, env = process.env) {
     return [`branch "${name}" is not <ticket>-<slug>, for example ENG-123-login-form (P5)`];
   }
   return [];
+}
+
+// One ticket per PR (P2, P4): the branch, the title, and every commit name the same ticket. A commit names its ticket
+// in the subject's [TICKET] (git's merge subjects carry it in the message).
+function checkOneTicket({ branch, title, messages }, env = process.env) {
+  const id = new RegExp(`\\b(${ticketSource(env)})\\b`);
+  const named = new Map();
+  const add = (where, text) => { const m = id.exec(text || ''); if (m) (named.get(m[1]) || named.set(m[1], []).get(m[1])).push(where); };
+  if (branch && !(branch === 'main' || branch.startsWith('release/') || extraLongLived(branch, env))) add('branch', branch);
+  add('title', title);
+  for (const [i, msg] of (messages || []).entries()) {
+    const subject = (msg.split('\n')[0] || '');
+    add(`commit ${i + 1}`, (/\[([^\]]+)\]\s*$/.exec(subject) || [])[1] || msg);
+  }
+  if (named.size <= 1) return [];
+  return [`one ticket per PR: ${[...named].map(([t, w]) => `${t} (${w.join(', ')})`).join(' vs ')} (P2, P4)`];
 }
 
 function checkPrTitle(title, env = process.env) {
@@ -181,10 +197,14 @@ function listChangelogs(base) {
 
 // A key from the repository's .env (LINEAR_TEAM, BRAIN_LONG_LIVED) when the environment lacks it: hooks do not load
 // .env. Never in CI, where the checkout is the PR's own.
+// The .env of this worktree, else of the main checkout: .env is untracked, so a ticket worktree (P6) has none.
 function dotenvValue(key) {
   try {
-    const root = git(['rev-parse', '--show-toplevel']).trim();
-    const line = fs.readFileSync(`${root}/.env`, 'utf8').split('\n').find(l => new RegExp(`^\\s*(export\\s+)?${key}\\s*=`).test(l));
+    const here = git(['rev-parse', '--show-toplevel']).trim();
+    const main = require('path').dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+    const file = [`${here}/.env`, `${main}/.env`].find(f => fs.existsSync(f));
+    if (!file) return '';
+    const line = fs.readFileSync(file, 'utf8').split('\n').find(l => new RegExp(`^\\s*(export\\s+)?${key}\\s*=`).test(l));
     if (!line) return '';
     const value = line.split('=').slice(1).join('=').trim();
     // A quoted value is taken as written; an unquoted one ends at an inline " #" comment.
@@ -217,7 +237,7 @@ function main(argv) {
   loadDotenv();
   const [cmd, ...rest] = argv;
   if (cmd === 'commit-msg') {
-    if (!rest[0]) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
+    if (!rest[0] || !fs.existsSync(rest[0])) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
     return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true }));
   }
   if (cmd === 'branch') {
@@ -240,7 +260,7 @@ function main(argv) {
   }
   if (cmd === 'pr') {
     const base = optionValue(rest, '--base');
-    if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>]'); process.exit(2); }
+    if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>] [--branch <name>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
     // Attributes come from the base, so a PR's own .gitattributes (`*.js -diff`) cannot hide its lines from P11.
     let numstat;
@@ -253,6 +273,11 @@ function main(argv) {
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
+      ...checkOneTicket({
+        branch: optionValue(rest, '--branch') || process.env.HEAD_REF,
+        title: optionValue(rest, '--title') || process.env.PR_TITLE,
+        messages: git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean).map(sha => git(['log', '-1', '--format=%B', sha])),
+      }),
       ...checkSize(sized, body),
       ...checkChangelog(files, listChangelogs(base), treeFiles(head)),
     ]);
@@ -268,4 +293,4 @@ function loadDotenv(env = process.env) {
   for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (!env[key]) { const v = dotenvValue(key); if (v) env[key] = v; }
 }
 
-module.exports = { loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+module.exports = { checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };

@@ -391,12 +391,19 @@ function mergeFixture(view) {
   run(['commit', '-q', '--allow-empty', '-m', 'work'], work);
   run(['push', '-q', 'origin', 'ENG-1-x'], work);
   run(['switch', '-q', '--detach', 'main'], work);
-  // origin names github.com/o/r; insteadOf sends its fetches to the bare repository.
+  // origin names github.com/o/r. A git wrapper on PATH plays the network: it routes that URL to the bare repository,
+  // invisibly to merge-pr's own URL checks (ls-remote --get-url, config), as GitHub would be reached.
   run(['remote', 'set-url', 'origin', 'https://github.com/o/r.git'], work);
-  run(['config', `url.${path.join(root, 'origin.git')}.insteadOf`, 'https://github.com/o/r.git'], work);
   const head = run(['rev-parse', 'ENG-1-x'], work).trim();
   const bin = path.join(root, 'bin');
   fs.mkdirSync(bin);
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+case "$1 $2" in "ls-remote --get-url"|"config --get"|"config --get-regexp") exec "${realGit}" "$@";; esac
+exec "${realGit}" -c "url.${path.join(root, 'origin.git')}.insteadOf=https://github.com/o/r.git" "$@"
+`, { mode: 0o755 });
+  fs.copyFileSync(path.join(bin, 'git'), path.join(bin, 'git-net'));
+  fs.chmodSync(path.join(bin, 'git-net'), 0o755);
   const log = path.join(root, 'gh.log');
   const viewFile = path.join(root, 'view.json');
   fs.writeFileSync(viewFile, JSON.stringify({ headRefOid: head, ...view }));
@@ -405,18 +412,26 @@ const fs = require('fs'); const { execFileSync } = require('child_process');
 const a = process.argv.slice(2); fs.appendFileSync(${JSON.stringify(log)}, a.join(' ') + '\\n');
 if (a[0] === 'api' && a.some(x => x.endsWith('/permission'))) { process.stdout.write(JSON.stringify({ permission: a.some(x => x.includes('/stranger/')) ? 'read' : 'write' })); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('/actions/runs/'))) { process.stdout.write(JSON.stringify({ path: '.github/workflows/ci.yml', event: 'pull_request' })); process.exit(0); }
+if (a[0] === 'api' && a.some(x => x.includes('/commits/'))) {
+  const bare = ${JSON.stringify(path.join(root, 'origin.git'))};
+  const g = args => execFileSync('git', args, { cwd: bare, encoding: 'utf8' });
+  process.stdout.write(JSON.stringify({ parents: g(['rev-list', '--parents', '-n', '1', 'main']).trim().split(' ').slice(1), message: g(['log', '-1', '--format=%B', 'main']) }));
+  process.exit(0);
+}
 if (a[0] === 'api' && a.some(x => x.includes('mergeQueue'))) { process.stdout.write(process.env.FAKE_QUEUE || ''); process.exit(0); }
 if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
 if (a[0] === 'repo' && a[1] === 'view') { process.stdout.write('main'); process.exit(0); }
 if (a[0] === 'pr' && a[1] === 'view') {
   const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
-  process.stdout.write(JSON.stringify(a.includes('state') && a[a.length - 1] === 'state' ? { state: 'MERGED' } : v)); process.exit(0);
+  process.stdout.write(JSON.stringify(a[a.length - 1] === 'state,mergeCommit' ? { state: 'MERGED', mergeCommit: { oid: 'abcdef1234' } } : v)); process.exit(0);
 }
 if (a[0] === 'pr' && a[1] === 'merge') {
   const tmp = fs.mkdtempSync(require('os').tmpdir() + '/m-');
   const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: tmp });
   g(['clone', '-q', '-b', 'main', ${JSON.stringify(path.join(root, 'origin.git'))}, '.']);
-  g(['merge', '-q', '--no-ff', 'origin/ENG-1-x', '-m', 'Merge pull request #1 [ENG-1]']);
+  const val = flag => a[a.indexOf(flag) + 1];
+  // like gh's --match-head-commit, merge exactly the pinned head
+  g(['merge', '-q', '--no-ff', val('--match-head-commit'), '-m', val('--subject'), '-m', val('--body')]);
   g(['push', '-q', 'origin', 'HEAD:main']);
   fs.rmSync(tmp, { recursive: true, force: true });
   process.exit(0);
@@ -578,8 +593,8 @@ test('merge-pr deletes only the verified commit: a branch that moves after the c
   // A git wrapper that advances the branch with an unpublished commit while merge-pr fetches.
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   fs.writeFileSync(path.join(f.root, 'bin', 'git'), `#!/bin/sh
-if [ "$1" = fetch ]; then "${realGit}" "$@" || exit $?; t=$("${realGit}" commit-tree -p ENG-1-x -m late "$("${realGit}" rev-parse ENG-1-x^{tree})"); "${realGit}" update-ref refs/heads/ENG-1-x "$t"; exit 0; fi
-exec "${realGit}" "$@"
+if [ "$1" = fetch ]; then "${path.join(f.root, 'bin', 'git-net')}" "$@" || exit $?; t=$("${realGit}" commit-tree -p ENG-1-x -m late "$("${realGit}" rev-parse ENG-1-x^{tree})"); "${realGit}" update-ref refs/heads/ENG-1-x "$t"; exit 0; fi
+exec "${path.join(f.root, 'bin', 'git-net')}" "$@"
 `, { mode: 0o755 });
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'merge-pr.js');
   const r = require('child_process').spawnSync('node', [script, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }, encoding: 'utf8' });
@@ -752,4 +767,93 @@ test('a pushInsteadOf rewrite of origin leaves the remote branch alone', () => {
   assert.match(r.stderr, /pushInsteadOf/);
   for (const bare of [elsewhere, path.join(f.root, 'origin.git')]) execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: bare, stdio: 'pipe' });
   fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('re-run attempts of one run are ordered by job start, whatever the array order', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'B', status: 'COMPLETED', runCreated: '2026-10-26T10:00:00Z', runAttempt: 2 };
+  const a1 = { ...id, conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' };
+  const a2 = { ...id, conclusion: 'FAILURE', startedAt: '2026-10-26T10:20:00Z' };
+  assert.strictEqual(latestRuns([a1, a2])[0].conclusion, 'FAILURE');
+  assert.strictEqual(latestRuns([a2, a1])[0].conclusion, 'FAILURE');
+});
+
+test('the .env of the main checkout serves a ticket worktree, and a missing message file is bad usage', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dotenv-'));
+  const main = path.join(dir, 'app');
+  fs.mkdirSync(main);
+  const g = (args, cwd = main) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'init']);
+  fs.writeFileSync(path.join(main, '.env'), 'BRAIN_LONG_LIVED=^(staging)$\n');
+  g(['worktree', 'add', '-q', path.join(dir, 'ENG-1-x'), '-b', 'ENG-1-x']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const env = { ...process.env }; delete env.CI; delete env.BRAIN_LONG_LIVED; delete env.LINEAR_TEAM;
+  const r = require('child_process').spawnSync('node', [script, 'branch', 'staging'], { cwd: path.join(dir, 'ENG-1-x'), encoding: 'utf8', env });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'nope')], { encoding: 'utf8' }).status, 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a merge not made by merge-pr, and a protected ticket branch, are reported as incomplete', () => {
+  const f = approvedFixture();
+  patchGh(f, "if (a[0] === 'pr' && a[1] === 'merge') {", "if (a[0] === 'pr' && a[1] === 'merge' && !process.env.FAKE_DONE) { process.stderr.write('auto-merge already enabled'); process.exit(1); }");
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /merged, but not by this run, and its merge commit does not meet the rules; the branches were kept/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('an insteadOf rule that rewrites origin leaves the remote branch alone', () => {
+  const f = approvedFixture();
+  const wrong = path.join(f.root, 'wrong.git');
+  execFileSync('git', ['clone', '-q', '--bare', path.join(f.root, 'origin.git'), wrong]);
+  execFileSync('git', ['config', `url.${wrong}.insteadOf`, 'https://github.com/o/r.git'], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /insteadOf rule rewrites/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: wrong, stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('one ticket per PR: branch, title, and commits must agree', () => {
+  const ok = { branch: 'ENG-1-feature', title: 'ENG-1: feature', messages: ['feat: a [ENG-1]', "Merge branch 'main' into ENG-1-feature\n\nENG-1"] };
+  assert.deepStrictEqual(check.checkOneTicket(ok, {}), []);
+  const mixed = { branch: 'ENG-1-feature', title: 'ENG-3: feature', messages: ['feat: a [ENG-2]', 'fix: b [ENG-4]'] };
+  assert.match(check.checkOneTicket(mixed, {}).join(), /one ticket per PR: ENG-1 \(branch\) vs ENG-3 \(title\) vs ENG-2 \(commit 1\) vs ENG-4 \(commit 2\)/);
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'release/1.4', title: 'ENG-7: backport', messages: ['fix: x [ENG-7]'] }, {}), []);
+});
+
+test('the merge commit is verified before cleanup; a re-run on a merged PR cleans up; an unreadable outcome is exit 4', () => {
+  // first run: the state cannot be read after the merge call
+  const f = approvedFixture();
+  patchGh(f, "if (a[0] === 'pr' && a[1] === 'view') {", "if (a[0] === 'pr' && a[1] === 'view' && a[a.length - 1] === 'state,mergeCommit' && !fs.existsSync(" + JSON.stringify(path.join(f.root, 'ok')) + ")) { process.stderr.write('HTTP 503'); process.exit(1); }");
+  const first = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(first.status, 4, first.stderr);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  // second run: the PR reads as MERGED; the merge commit is verified, then the branches go
+  fs.writeFileSync(path.join(f.root, 'ok'), '');
+  const view = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify({ ...view, state: 'MERGED' }));
+  const second = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(second.status, 0, second.stderr);
+  assert.strictEqual((fs.readFileSync(f.log, 'utf8').match(/^pr merge/gm) || []).length, 1, 'merged once');
+  assert.throws(() => execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' }));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a squash merge (one parent) does not pass as P15, and the branches are kept', () => {
+  const f = approvedFixture();
+  patchGh(f, "if (a[0] === 'pr' && a[1] === 'merge') {", "if (a[0] === 'pr' && a[1] === 'merge') { const tmp = fs.mkdtempSync(require('os').tmpdir() + '/m-'); const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: tmp }); g(['clone', '-q', '-b', 'main', " + JSON.stringify(path.join(f.root, 'origin.git')) + ", '.']); g(['commit', '-q', '--allow-empty', '-m', 'squashed [ENG-1]']); g(['push', '-q', 'origin', 'HEAD:main']); fs.rmSync(tmp, { recursive: true, force: true }); process.exit(0); }");
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /is not a merge commit of the inspected head/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a not-yet-started job of a re-run attempt is newest whatever the array order', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'B', runCreated: '2026-10-26T10:00:00Z' };
+  const done = { ...id, status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' };
+  const queued = { ...id, status: 'QUEUED', startedAt: '0001-01-01T00:00:00Z' };
+  for (const order of [[done, queued], [queued, done]]) assert.ok(isPending(latestRuns(order)[0]));
 });
