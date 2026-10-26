@@ -330,18 +330,31 @@ class ContextStore {
       const now = this.now();
       if (!Number.isFinite(now)) fail();
       let state = { version: 1, sessions: {}, runs: {}, launches: {}, pending: {} };
-      let fd;
-      try {
-        fd = fs.openSync(this.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-        const stat = fs.fstatSync(fd);
-        if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.nlink !== 1 || stat.size > MAX_BYTES) {
-          throw new Error('Unsafe tracing state file');
-        }
-        try { state = JSON.parse(fs.readFileSync(fd, 'utf8')); }
-        catch { throw new Error('Invalid tracing state'); }
-        if (state.version !== 1) fail();
-        for (const kind of Object.keys(LIMIT)) plain(state[kind]);
-      } catch (error) { if (error.code !== 'ENOENT') throw error; } finally { if (fd !== undefined) fs.closeSync(fd); }
+      let fd, before;
+      // Only an absent initial path means empty state. A disappearance or
+      // replacement after inspection must refuse, not publish over the artifact.
+      try { before = fs.lstatSync(this.file); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (before) {
+        const safeState = stat => {
+          if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.nlink !== 1 || stat.size > MAX_BYTES) {
+            throw new Error('Unsafe tracing state file');
+          }
+        };
+        safeState(before);
+        // Precheck avoids unsafe opens; NONBLOCK covers replacement by a FIFO
+        // between lstat/open. Never read from a descriptor of a different inode.
+        fd = fs.openSync(this.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        try {
+          const stat = fs.fstatSync(fd);
+          safeState(stat);
+          if (!sameSnapshot(before, stat)) throw new Error('Unsafe tracing state file');
+          try { state = JSON.parse(fs.readFileSync(fd, 'utf8')); }
+          catch { throw new Error('Invalid tracing state'); }
+          if (state.version !== 1) fail();
+          for (const kind of Object.keys(LIMIT)) plain(state[kind]);
+        } finally { fs.closeSync(fd); }
+      }
       for (const kind of Object.keys(LIMIT)) {
         for (const [key, value] of Object.entries(state[kind])) {
           if (value.expiresAt + (kind === 'launches' ? RETENTION : 0) <= now) delete state[kind][key];

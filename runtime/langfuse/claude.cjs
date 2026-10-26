@@ -101,9 +101,14 @@ function agentRecord(run, now, terminal, actualModel) {
 function scanTranscript(file, cursor, visit) {
   let fd;
   try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    // Native transcripts need not use the private state-file modes or size
+    // limit: scanning is incremental and bounded below. They must be regular
+    // files, and the inspected inode must be the one we actually open.
+    const before = fs.lstatSync(file);
+    if (!before.isFile()) return cursor;
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) return cursor;
+    if (!stat.isFile() || before.dev !== stat.dev || before.ino !== stat.ino) return cursor;
     const resume = cursor?.inode === stat.ino && cursor.offset <= stat.size;
     let offset = resume ? cursor.offset : 0;
     let committed = offset;
