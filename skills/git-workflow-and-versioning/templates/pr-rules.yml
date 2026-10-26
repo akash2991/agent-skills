@@ -1,6 +1,9 @@
 # Copy to .github/workflows/pr-rules.yml in a project. Runs the mechanical git-workflow-and-versioning rules on every PR
 # (P2/P3 commit messages, P5 branch, P2/P4 title, P11 size, P13 changelog); see skills/git-workflow-and-versioning/SKILL.md.
 name: pr-rules
+# The run names its PR: GitHub's pull_requests list on a run holds every open PR with that head, not the one that
+# triggered it, so merge-pr reads this name to tell two PRs from one branch apart. Keep it exactly so.
+run-name: 'pr-rules #${{ github.event.pull_request.number }}'
 
 on:
   pull_request:

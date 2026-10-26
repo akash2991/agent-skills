@@ -185,13 +185,32 @@ function parseNumstatRenames(numstat) {
   return out;
 }
 
-// Lines of a blob that is text apart from NUL bytes; 0 for a real binary or a blob that does not exist.
-function textLines(spec) {
+// A blob's content without NUL bytes when the rest is UTF-8 text; '' for a blob that does not exist; null for a real
+// binary.
+function nulText(spec) {
   let buf;
-  try { buf = execFileSync('git', ['cat-file', 'blob', spec], { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 30 }); } catch { return 0; }
-  let text;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf.filter(b => b !== 0)); } catch { return 0; }
-  return text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0;
+  try { buf = execFileSync('git', ['cat-file', 'blob', spec], { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 30 }); } catch { return ''; }
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf.filter(b => b !== 0)); } catch { return null; }
+}
+
+// Changed lines between two blobs git calls binary, diffed as text with the NULs removed; 0 when either is a real
+// binary.
+function nulTextLines(before, after) {
+  const a = nulText(before);
+  const b = nulText(after);
+  if (a === null || b === null) return 0;
+  const dir = fs.mkdtempSync(require('path').join(require('os').tmpdir(), 'brain-p11-'));
+  try {
+    fs.writeFileSync(`${dir}/a`, a);
+    fs.writeFileSync(`${dir}/b`, b);
+    const r = require('child_process').spawnSync('git', ['diff', '--no-index', '--numstat', '--', `${dir}/a`, `${dir}/b`], { encoding: 'utf8' });
+    const [added, deleted] = (r.stdout || '').split('\t');
+    return (Number(added) || 0) + (Number(deleted) || 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+function currentBranch() {
+  try { const b = git(['rev-parse', '--abbrev-ref', 'HEAD']).trim(); return b === 'HEAD' ? undefined : b; } catch { return undefined; }
 }
 
 // Every path in a tree, unquoted (git quotes non-ASCII names without -z).
@@ -401,6 +420,9 @@ function main(argv) {
     const base = optionValue(rest, '--base');
     if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>] [--branch <name>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
+    // The one-ticket rule needs the PR's branch: named, given by CI, or HEAD's own; never guessed for another head.
+    const prBranch = optionValue(rest, '--branch') || process.env.HEAD_REF || (head === 'HEAD' ? currentBranch() : undefined);
+    if (!prBranch) { console.error('usage: pr needs the PR\'s branch: pass --branch <name> (or HEAD_REF) when checking a detached or explicit --head'); process.exit(2); }
     // Every line counts for P11, whatever any .gitattributes says (`package-lock.json -diff` has no exemption, and a PR's
     // own .gitattributes cannot hide its lines): attributes are read from the empty tree, so none apply.
     const noAttrs = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
@@ -415,12 +437,12 @@ function main(argv) {
     // count such a file's lines from its blobs when it is text apart from NULs (generated or minified output). A real
     // binary (an image) is not valid UTF-8 and stays one file with no lines.
     const mergeBase = git(['merge-base', base, head]).trim();
-    for (const f of sized) if (f.binary) f.lines = textLines(`${head}:${f.path}`) + textLines(`${mergeBase}:${f.from}`);
+    for (const f of sized) if (f.binary) f.lines = nulTextLines(`${mergeBase}:${f.from}`, `${head}:${f.path}`);
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkOneTicket({
-        branch: optionValue(rest, '--branch') || process.env.HEAD_REF,
+        branch: prBranch,
         title: optionValue(rest, '--title') || process.env.PR_TITLE,
         messages: git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean).map(sha => git(['log', '-1', '--format=%B', sha])),
       }),

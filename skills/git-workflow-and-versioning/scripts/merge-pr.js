@@ -175,9 +175,12 @@ function isApproved(view) {
 // An empty check rollup is not green: Actions may not have registered its checks yet.
 // A run of a pull_request workflow belongs to the PRs GitHub lists for it, at the head it ran on. A run that GitHub
 // ties to other PRs only, or to another head, says nothing about this PR: it neither passes nor supersedes.
+// GitHub's PR list on a run is every open PR with that head, not the PR that triggered it: a pr-rules run names its
+// PR in its run name (templates/pr-rules.yml), and one naming another PR, or none, is not this PR's.
 function forThisPr(c, view) {
   if (!c.workflowPath || c.event !== 'pull_request') return true;
   if (c.runHead && view.headRefOid && c.runHead !== view.headRefOid) return false;
+  if ((c.name || c.context) === 'pr-rules' && c.runTitle !== `pr-rules #${Number(view.number)}`) return false;
   return !c.runPrs || !c.runPrs.length || !view.number || c.runPrs.includes(Number(view.number));
 }
 
@@ -253,7 +256,7 @@ function runIdentity(repo, checks) {
     const id = runId(c);
     if (!id) continue;
     if (!runs.has(id)) {
-      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt, prs: [.pull_requests[].number], head: .head_sha, branch: .head_branch}']))); }
+      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt, prs: [.pull_requests[].number], head: .head_sha, branch: .head_branch, title: .display_title}']))); }
       catch { runs.set(id, null); }
     }
     // The job itself, from the Actions API: a check's details URL is chosen by whoever posted the check, so only the
@@ -269,7 +272,7 @@ function runIdentity(repo, checks) {
     // Each job's own attempt: a re-run's jobs share the run id and its current attempt number.
     Object.assign(c, { jobAttempt: Number(j.attempt) || undefined, jobName: j.name, jobConclusion: j.conclusion, jobRun: String(j.run || ''), jobHead: j.head });
     const run = runs.get(id);
-    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runPrs: run.prs || [], runHead: run.head, runBranch: run.branch });
+    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runPrs: run.prs || [], runHead: run.head, runBranch: run.branch, runTitle: run.title });
   }
   return checks;
 }
@@ -609,7 +612,7 @@ function main(argv) {
   }
   console.log(process.exitCode === CLEANUP_INCOMPLETE
     ? `merged #${pr} with a merge commit; cleanup of ${view.headRefName} is incomplete (see above)`
-    : `merged #${pr} with a merge commit; ${view.headRefName} deleted on the remote and locally`);
+    : `merged #${pr} with a merge commit; ${view.headRefName} deleted on the remote${local ? ' and locally' : ' (there was no local branch)'}`);
 }
 
 if (require.main === module) main(process.argv.slice(2));
