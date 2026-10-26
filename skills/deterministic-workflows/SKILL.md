@@ -54,7 +54,7 @@ When unsure, ask: "Can an explicit rule or algorithm produce the output for ever
 
 While classifying, write down every case the current workflow leaves to the model without saying so: two rules that both match, a lookup that finds nothing, input no rule covers. Code has to decide each one; resolve it from the requirements or ask the owner, never guess.
 
-### 4. Pick the lowest rung for each step
+### 4. Choose a deterministic implementation before considering a model
 
 Rungs 1 to 3 are all deterministic; among them, pick by where the work runs, and prefer a check or hook when the rule must be enforced rather than remembered. Go to rung 4 or 5 only when none of them does the job:
 
@@ -93,7 +93,7 @@ Product logic goes in the service's code, in the feature it belongs to. An agent
 
 ### 8. Prove the behavior
 
-For a new feature with no old workflow, verify against the owner-approved requirements and acceptance examples. For a conversion, run the old workflow and the new one on the same inputs: recorded real runs where they exist, plus one input for each case found in step 3. Compare the outputs. Each difference is a bug in the new workflow, fixed now; a decision the old one made inconsistently, recorded with the rule the new one follows; or an owner-approved behavior change, linked to its requirement and covered by an acceptance test. Any other difference is a bug.
+For a new feature with no old workflow, verify against the owner-approved requirements and acceptance examples. For a conversion, run the old workflow and the new one on the same inputs: recorded real runs where they exist, plus one input for each case found in step 3. Compare the outputs. Each difference is a bug in the new workflow, fixed now; a decision the old one made inconsistently, recorded with the rule the new one follows; or an owner-approved behavior change, linked to its requirement and covered by an acceptance test.
 
 ## Common Rationalizations
 
