@@ -104,14 +104,38 @@ function publishPrivate(directory, slot, file, data, maximum) {
     }
   }
 }
+function supportedTruncation(name, bytes, error, revisions) {
+  // A parse error alone is NOT ownership/protocol evidence. Require the exact
+  // current serializer prefix, matching version/trace/span filename identities,
+  // a valid capture revision and an EOF-only native parser classification.
+  // Empty/early-cut/foreign/malformed legacy data remains an offline decision.
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text).equals(bytes)) return false;
+  const head = /^\{"schema":2,"version":"([a-f0-9]{32})","revision":([1-9][0-9]*),"record":\{"id":"([a-f0-9]{16})","traceId":"([a-f0-9]{32})","parentId":(?:null|"[a-f0-9]{16}"),"sessionId":"[A-Za-z0-9_-]{1,128}","nativeSessionId":"([A-Za-z0-9_-]{1,128})",/.exec(text);
+  if (!head || !Number.isSafeInteger(Number(head[2])) || name !== `${head[4]}-${head[3]}-${head[1]}.json`) return false;
+  let projected;
+  try {
+    projected = sanitizeObservation({ id: head[3], traceId: head[4], parentId: null,
+      sessionId: 'outbox-recovery', nativeSessionId: head[5], type: 'GENERATION', startTime: 1, endTime: 1 });
+  } catch { return false; }
+  // Hash only validated metadata identities, never unprojected legacy bytes.
+  if (projected.id !== head[3] || projected.traceId !== head[4] || projected.nativeSessionId !== head[5]) return false;
+  const authority = revisions.entries[revisionKey(projected)];
+  if (!authority || Number(head[2]) > authority.allocated) return false;
+  // Inspect only a closed set of built-in JSON EOF diagnostics, never copy or
+  // export error text (which can otherwise contain caller bytes).
+  return error.message === 'Unexpected end of JSON input'
+    || /^Unterminated string in JSON(?: at position \d+(?: \(line \d+ column \d+\))?)?$/.test(error.message);
+}
 // Called only with exclusive queue ownership. Fixed slots are uncommitted,
-// regardless of their contents. Legacy final names are different: ONLY JSON
-// syntax failures prove an interrupted write. Valid but unsupported/unticketed
-// or noncanonical data is never discarded, repaired or assigned chronology.
+// regardless of their contents. Historical final names require additional
+// supported-publication evidence; syntax failure or a matching name alone is
+// not deletion authority. Complete unsupported/noncanonical data is preserved.
 function recoverQueue(stateDir, directory, deadlineAt) {
   let recovered = recoverSlot(path.join(stateDir, '.revisions-v1.tmp'), REVISION_BYTES)
     + recoverSlot(path.join(directory, OUTBOX_SLOT), MAX_FILE_BYTES);
   const files = [], handle = fs.opendirSync(directory);
+  let recoveryRevisions;
   try {
     for (let count = 0; ; count++) {
       if (Date.now() >= deadlineAt) throw publicationError('recovery_pending');
@@ -123,6 +147,9 @@ function recoverQueue(stateDir, directory, deadlineAt) {
       try { JSON.parse(inspected.bytes.toString('utf8')); }
       catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
+        try { recoveryRevisions ||= readRevisions(stateDir, true); }
+        catch { throw publicationError('legacy_outbox_inspection_required'); }
+        if (!supportedTruncation(entry.name, inspected.bytes, error, recoveryRevisions)) throw publicationError('legacy_outbox_inspection_required');
         discardPrivate(file, MAX_FILE_BYTES, inspected); recovered++; continue;
       }
       files.push({ name: entry.name, file, ...inspected });

@@ -20,6 +20,10 @@ const record = (overrides = {}) => ({ id: '0123456789abcdef', traceId: 'a'.repea
   type: 'GENERATION', startTime: 1700000000000, endTime: 1700000001000,
   model: 'synthetic-model', outcome: 'completed', context: { harness: 'pi' }, ...overrides });
 const finalName = version => `${record().traceId}-${record().id}-${version}.json`;
+const truncatedV2 = (version, revision) => {
+  const bytes = JSON.stringify({ schema: 2, version, revision, record: sanitizeObservation(record()) });
+  return bytes.slice(0, bytes.indexOf('"model":"') + 12);
+};
 const finalNames = dir => fs.readdirSync(path.join(dir, 'outbox')).filter(name => name.endsWith('.json'));
 const phases = ['created', 'partial', 'fsynced', 'preRename', 'renamed'];
 
@@ -37,7 +41,9 @@ if (process.argv[2] === '--worker') {
       const bytes = Buffer.from(JSON.stringify({ schema: 2, version: 'b'.repeat(32), revision: f.revision,
         record: sanitizeObservation(record()) }));
       const fd = fs.openSync(file, 'wx', 0o600); barrier('created');
-      const half = Math.floor(bytes.length / 2);
+      // Keep a complete identity/revision prefix so this historical truncation
+      // has evidence beyond a parse error; early cuts are tested as ambiguous.
+      const half = bytes.indexOf('"model":"') + 12;
       fs.writeSync(fd, bytes, 0, half); barrier('partial');
       fs.writeSync(fd, bytes, half); fs.fsyncSync(fd); barrier('fsynced');
       fs.closeSync(fd); lock.release();
@@ -205,10 +211,13 @@ if (process.argv[2] === '--worker') {
     const f = fixture(t); await killAt(t, f, phase, 'legacy');
     const file = path.join(f.stateDir, 'outbox', finalName('b'.repeat(32)));
     const result = await api.flushOutbox({ ...f, credentials: null });
-    assert.equal(result.recovered, phase === 'fsynced' ? 0 : 1);
-    assert.equal(fs.existsSync(file), phase === 'fsynced');
+    assert.equal(result.recovered ?? 0, phase === 'partial' ? 1 : 0);
+    assert.equal(fs.existsSync(file), phase !== 'partial');
     assert.equal(result.accepted, 0);
-    if (phase === 'fsynced') assert.equal((await flush(f)).accepted, 1);
+    if (phase === 'created') {
+      assert.equal(result.status, 'legacy_outbox_inspection_required');
+      assert.equal(fs.readFileSync(file).length, 0, 'ambiguous historical empty final is not deletion authority');
+    } else if (phase === 'fsynced') assert.equal((await flush(f)).accepted, 1);
     else assert.equal(api.queueObservation(record(), f).queued, true);
   });
 
@@ -284,6 +293,39 @@ if (process.argv[2] === '--worker') {
     fs.writeFileSync(file, '{', { mode: 0o600 });
     assert.equal((await flush(f)).status, 'outbox_inspection_required');
     assert.equal(fs.readFileSync(file, 'utf8'), '{');
+  });
+
+  test('syntax errors alone never authorize historical deletion: ambiguity, mismatches and unallocated tickets remain intact', async t => {
+    const version = 'c'.repeat(32);
+    const variants = ['', '{', 'arbitrary malformed data', '{"schema":1,',
+      truncatedV2('d'.repeat(32), 1), truncatedV2(version, 999),
+      truncatedV2(version, 1).replace(record().id, 'f'.repeat(16)),
+      truncatedV2(version, 1) + '\\q"',
+      truncatedV2(version, 1).replace('"revision":1', '"revision":0')];
+    for (const bytes of variants) {
+      const f = fixture(t), file = path.join(f.stateDir, 'outbox', finalName(version));
+      fs.writeFileSync(file, bytes, { mode: 0o600 });
+      const ledger = fs.readFileSync(path.join(f.stateDir, 'revisions-v1.json'));
+      const result = await api.flushOutbox({ ...f, credentials: null });
+      assert.equal(result.status, 'legacy_outbox_inspection_required');
+      assert.equal(result.accepted, 0);
+      assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+      assert.deepEqual(fs.readFileSync(path.join(f.stateDir, 'revisions-v1.json')), ledger);
+      assert.equal(api.queueObservation(record(), f).reason, 'legacy_outbox_inspection_required');
+    }
+  });
+
+  test('legacy identity literals must pass projection before revision lookup or recovery', async t => {
+    const f = fixture(t), version = 'c'.repeat(32), file = path.join(f.stateDir, 'outbox', finalName(version));
+    const bytes = truncatedV2(version, f.revision);
+    fs.writeFileSync(file, bytes, { mode: 0o600 });
+    const { configurePrivacy } = require('../runtime/langfuse/privacy.cjs');
+    configurePrivacy({ sensitiveLiterals: [record().nativeSessionId] });
+    try {
+      const result = await api.flushOutbox({ ...f, credentials: null });
+      assert.equal(result.status, 'legacy_outbox_inspection_required');
+      assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+    } finally { configurePrivacy(); }
   });
 
   test('missing/corrupt canonical ledger is never silently recreated from orphan or queued data', async t => {
@@ -363,7 +405,10 @@ if (process.argv[2] === '--worker') {
 
   test('bounded legacy partial recovery progresses across scan refusal without deleting valid legacy JSON', async t => {
     const f = fixture(t), dir = path.join(f.stateDir, 'outbox');
-    for (let i = 0; i < api.OUTBOX_LIMITS.scan + 10; i++) fs.writeFileSync(path.join(dir, finalName(i.toString(16).padStart(32, '0'))), '{', { mode: 0o600 });
+    for (let i = 0; i < api.OUTBOX_LIMITS.scan + 10; i++) {
+      const version = i.toString(16).padStart(32, '0');
+      fs.writeFileSync(path.join(dir, finalName(version)), truncatedV2(version, f.revision), { mode: 0o600 });
+    }
     let result = api.queueObservation(record(), f);
     assert.equal(result.reason, 'recovery_pending');
     const remaining = fs.readdirSync(dir).length;
