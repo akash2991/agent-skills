@@ -300,6 +300,9 @@ if (process.argv[2] === '--worker') {
     const variants = ['', '{', 'arbitrary malformed data', '{"schema":1,',
       truncatedV2('d'.repeat(32), 1), truncatedV2(version, 999),
       truncatedV2(version, 1).replace(record().id, 'f'.repeat(16)),
+      truncatedV2(version, 1).replace('"type":"GENERATION"', '"type":"UNSUPPORTED"'),
+      truncatedV2(version, 1).replace('"model":"', '"prompt":"'),
+      truncatedV2(version, 1).replace('"startTime":1700000000000', '"startTime":0'),
       truncatedV2(version, 1) + '\\q"',
       truncatedV2(version, 1).replace('"revision":1', '"revision":0')];
     for (const bytes of variants) {

@@ -104,28 +104,41 @@ function publishPrivate(directory, slot, file, data, maximum) {
     }
   }
 }
-function supportedTruncation(name, bytes, error, revisions) {
-  // A parse error alone is NOT ownership/protocol evidence. Require the exact
-  // current serializer prefix, matching version/trace/span filename identities,
-  // a valid capture revision and an EOF-only native parser classification.
-  // Empty/early-cut/foreign/malformed legacy data remains an offline decision.
+function supportedTruncation(name, bytes, revisions) {
+  // Parse failure alone is NOT deletion authority. These bounded private spool
+  // bytes must be an exact prefix of the current projected metadata serializer,
+  // with matching filename identities and a provable capture ticket. Never
+  // persist/promote the hypothetical completion or inspect parser error text.
   const text = bytes.toString('utf8');
   if (!Buffer.from(text).equals(bytes)) return false;
   const head = /^\{"schema":2,"version":"([a-f0-9]{32})","revision":([1-9][0-9]*),"record":\{"id":"([a-f0-9]{16})","traceId":"([a-f0-9]{32})","parentId":(?:null|"[a-f0-9]{16}"),"sessionId":"[A-Za-z0-9_-]{1,128}","nativeSessionId":"([A-Za-z0-9_-]{1,128})",/.exec(text);
   if (!head || !Number.isSafeInteger(Number(head[2])) || name !== `${head[4]}-${head[3]}-${head[1]}.json`) return false;
-  let projected;
+  const closes = [];
+  let quoted = false, escaped = false;
+  for (const char of text) {
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === '{' || char === '[') {
+      if (closes.length === 32) return false;
+      closes.push(char === '{' ? '}' : ']');
+    } else if (char === '}' || char === ']') {
+      if (closes.pop() !== char) return false;
+    }
+  }
+  if (escaped || !closes.length) return false;
   try {
-    projected = sanitizeObservation({ id: head[3], traceId: head[4], parentId: null,
-      sessionId: 'outbox-recovery', nativeSessionId: head[5], type: 'GENERATION', startTime: 1, endTime: 1 });
+    const envelope = JSON.parse(text + (quoted ? '"' : '') + closes.reverse().join(''));
+    const projected = sanitizeObservation(envelope.record);
+    if (projected.id !== head[3] || projected.traceId !== head[4] || projected.nativeSessionId !== head[5]) return false;
+    const canonical = JSON.stringify({ schema: 2, version: envelope.version, revision: envelope.revision, record: projected });
+    if (!canonical.startsWith(text)) return false;
+    // Hash only projected identities, not legacy bodies or parser diagnostics.
+    const authority = revisions.entries[revisionKey(projected)];
+    return !!authority && Number(head[2]) <= authority.allocated;
   } catch { return false; }
-  // Hash only validated metadata identities, never unprojected legacy bytes.
-  if (projected.id !== head[3] || projected.traceId !== head[4] || projected.nativeSessionId !== head[5]) return false;
-  const authority = revisions.entries[revisionKey(projected)];
-  if (!authority || Number(head[2]) > authority.allocated) return false;
-  // Inspect only a closed set of built-in JSON EOF diagnostics, never copy or
-  // export error text (which can otherwise contain caller bytes).
-  return error.message === 'Unexpected end of JSON input'
-    || /^Unterminated string in JSON(?: at position \d+(?: \(line \d+ column \d+\))?)?$/.test(error.message);
 }
 // Called only with exclusive queue ownership. Fixed slots are uncommitted,
 // regardless of their contents. Historical final names require additional
@@ -149,7 +162,7 @@ function recoverQueue(stateDir, directory, deadlineAt) {
         if (!(error instanceof SyntaxError)) throw error;
         try { recoveryRevisions ||= readRevisions(stateDir, true); }
         catch { throw publicationError('legacy_outbox_inspection_required'); }
-        if (!supportedTruncation(entry.name, inspected.bytes, error, recoveryRevisions)) throw publicationError('legacy_outbox_inspection_required');
+        if (!supportedTruncation(entry.name, inspected.bytes, recoveryRevisions)) throw publicationError('legacy_outbox_inspection_required');
         discardPrivate(file, MAX_FILE_BYTES, inspected); recovered++; continue;
       }
       files.push({ name: entry.name, file, ...inspected });
