@@ -21,7 +21,7 @@ An agentic workflow lets a model decide what happens next. That costs tokens and
 **When NOT to use:**
 
 - A single question answered once, with no workflow around it
-- Making existing code read more simply: that is `code-simplification`
+- Making existing code read more simply, without changing who decides each step: outside this skill
 - Wiring an already deterministic check into CI: that is `ci-cd-and-automation`
 - The user or a slash command orchestrating personas (`/ship`, a review fan-out, the lifecycle commands): that is `../../references/orchestration-patterns.md`
 
@@ -50,7 +50,7 @@ Write the workflow as numbered steps. For each one, write its input, its output,
 | Judgment | The input is open-ended and no rule can be written down | the intent of a free-text message when no routing rule exists, summarizing a document, judging whether a design reads clearly |
 | Human decision | The owner decides; no system should | approving a spend, accepting a risk, choosing between product options |
 
-When unsure, ask: "Could I write a test with fixed expected output for this step?" If yes, it is deterministic. A rule already written down in a prompt ("if the message mentions refund, use billing") is deterministic, however natural-language its input.
+When unsure, ask: "Can an explicit rule or algorithm produce the output for every supported input without model judgment?" If yes, it is deterministic. Example outputs alone don't prove that: a summarizer can have golden examples and still need judgment. A rule already written down in a prompt ("if the message mentions refund, use billing") is deterministic, however natural-language its input.
 
 While classifying, write down every case the current workflow leaves to the model without saying so: two rules that both match, a lookup that finds nothing, input no rule covers. Code has to decide each one; resolve it from the requirements or ask the owner, never guess.
 
@@ -79,7 +79,7 @@ In a multi-agent pipeline built into product code or a script, the code owns the
 Every model call that remains:
 
 - has a typed input and a typed output (an enum, a JSON Schema, a record), never free text that later code parses ad hoc
-- validates its output against that type; a failure takes an explicit branch (reject, route to a human, mark the item `UNKNOWN`) and is not retried automatically; when a retry is warranted is `coding-standards`' call
+- validates its output against that type; a failure takes an explicit branch (reject, route to a human, mark the item `UNKNOWN`); any retry follows `coding-standards`
 - has a fixed prompt kept in the repository, versioned with the code
 - carries a one-line comment or ADR entry saying why this step can't be code
 - is wrapped so tests replace it with a fake that returns fixed outputs
@@ -134,8 +134,8 @@ Run the old workflow and the new one on the same inputs: recorded real runs wher
 
 ## Interaction with other skills
 
-- `code-simplification` makes code read more simply without changing behavior; this skill changes who decides each step.
 - `ci-cd-and-automation` wires deterministic checks into the pipeline; this skill finds which steps become those checks.
 - `adrs` records the reason a step stays agentic.
 - `coding-standards` owns the retry rule a judgment step's failure branch follows.
-- `herdr-fanout` runs independent agents side by side; it is the mechanics of a fan-out, not a reason to keep its control flow agentic.
+- `herdr-fanout` runs parallel coding subagents; that is persona orchestration and out of scope here. A multi-agent pipeline built in product code or a script follows step 5.
+- `security-and-hardening` owns model output as untrusted input and tool permissions; this skill decides which steps a model gets at all.

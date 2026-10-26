@@ -29,7 +29,7 @@ Evaluate every change across these five dimensions:
 - Are module boundaries maintained? Any circular dependencies?
 - Is the abstraction level appropriate (not over-engineered, not too coupled)?
 - Are dependencies flowing in the right direction?
-- Does a model or agent decide a step that fixed code could run (`deterministic-workflows`)?
+- Does a model or agent decide a step that fixed code could run?
 
 ### 4. Security
 - Is user input validated and sanitized at system boundaries?
