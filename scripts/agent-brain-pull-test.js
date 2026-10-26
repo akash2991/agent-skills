@@ -9,7 +9,7 @@ const path = require('path');
 const test = require('node:test');
 
 const { buildBrain, assertSafeOutput, splitFrontmatter } = require('./lib/build-brain');
-const { stripFencedCodeBlocks, frontmatterYamlErrors } = require('./lib/skill-lint');
+const { stripFencedCodeBlocks, frontmatterYamlErrors, parseFrontmatter } = require('./lib/skill-lint');
 const { pullInstall, planInstall, validateRelPath, mergeProjectAgents, STATE_PATH } = require('./lib/pull-install');
 const { labelErrors, nativeTools, nativePersona } = require('./lib/persona-tools');
 
@@ -86,8 +86,12 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   for (const file of personaFiles) {
     const installed = fs.readFileSync(path.join(target, '.pi', 'agents', file), 'utf8');
     const toolsLine = installed.match(/^tools: (.*)$/m);
-    assert.ok(toolsLine, `${file}: installed Pi persona has a native tool allowlist`);
-    assert.equal(toolsLine[1].split(',').map(tool => tool.trim()).filter(tool => tool === 'brain_context').length, 1, `${file}: brain_context appears exactly once`);
+    const declared = parseFrontmatter(fs.readFileSync(path.join(ROOT, 'agents', file), 'utf8')).tools;
+    if (declared === undefined) assert.equal(toolsLine, null, `${file}: preserve the native default loadout, not a context-only restriction`);
+    else {
+      assert.ok(toolsLine, `${file}: installed Pi persona has a native tool allowlist`);
+      assert.equal(toolsLine[1].split(',').map(tool => tool.trim()).filter(tool => tool === 'brain_context').length, 1, `${file}: brain_context appears exactly once`);
+    }
   }
   assert.match(fs.readFileSync(path.join(target, '.claude/commands/brain.md'), 'utf8'), /\.claude\/skills\//);
   assert.match(fs.readFileSync(path.join(target, '.pi/prompts/brain.md'), 'utf8'), /\.pi\/agents\//);
@@ -661,8 +665,7 @@ test('native persona copies carry harness tool names; the labels stay in the sou
   assert.deepEqual(nativeTools('linear', 'claude'), ['Read', 'Glob', 'Grep', 'Skill', 'Edit', 'Write', 'mcp__linear']);
 
   const reviewer = fs.readFileSync(path.join(ROOT, 'agents/code-reviewer.md'), 'utf8');
-  for (const harness of ['claude', 'gemini']) assert.equal(nativePersona(reviewer, harness), reviewer, 'non-Pi copies with no tools line stay unchanged');
-  assert.match(nativePersona(reviewer, 'pi'), /^tools: brain_context$/m, 'Pi metadata bookkeeping is available without application tools');
+  for (const harness of ['claude', 'gemini', 'pi']) assert.equal(nativePersona(reviewer, harness), reviewer, 'absence of an allowlist preserves native defaults, including available extension tools');
 
   const productManager = fs.readFileSync(path.join(ROOT, 'agents/product-manager.md'), 'utf8');
   const claudeProductManager = nativePersona(productManager, 'claude');
@@ -672,8 +675,24 @@ test('native persona copies carry harness tool names; the labels stay in the sou
     const source = fs.readFileSync(path.join(ROOT, 'agents', file), 'utf8');
     for (const harness of ['claude', 'gemini']) assert.doesNotMatch(nativePersona(source, harness), /brain_context/, `${file}: no unknown Pi tool in ${harness}`);
     const pi = nativePersona(source, 'pi');
-    const tools = pi.match(/^tools: (.*)$/m)[1].split(',').map(tool => tool.trim());
-    assert.equal(tools.filter(tool => tool === 'brain_context').length, 1, `${file}: one Pi bookkeeping tool`);
+    const line = pi.match(/^tools: (.*)$/m);
+    const declared = parseFrontmatter(source).tools;
+    if (declared === undefined) {
+      assert.equal(line, null, `${file}: preserve unrestricted native defaults`);
+      assert.equal(pi, source);
+    } else {
+      const tools = line[1].split(',').map(tool => tool.trim());
+      assert.equal(tools.filter(tool => tool === 'brain_context').length, 1, `${file}: one Pi bookkeeping tool`);
+    }
+    // Synthetic loadout contract mirrors Pi's registered-name intersection;
+    // this is not claimed as execution of the installed native SDK.
+    for (const tracingRegistered of [true, false]) {
+      const registered = ['read', 'bash', 'edit', 'write', ...(tracingRegistered ? ['brain_context'] : [])];
+      const requested = line ? line[1].split(',').map(tool => tool.trim()) : registered;
+      const active = requested.filter(tool => registered.includes(tool));
+      assert.equal(active.includes('brain_context'), tracingRegistered, `${file}: bookkeeping follows registration without enabling telemetry`);
+      if (!line) assert.deepEqual(active, registered, `${file}: default application tools are not removed`);
+    }
   }
 
   assert.deepEqual(labelErrors('linear, jira'), ['unknown tool label "jira"; add it to scripts/lib/persona-tools.js']);
