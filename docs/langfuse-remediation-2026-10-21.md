@@ -101,6 +101,14 @@ Fresh server-fetched explicit Pi→Claude trace `1beab33988421677a09cbf74f44b602
 
 Hosted CI still reports no checks and rejects dispatch with the previously recorded HTTP422. These implementation changes require fresh independent Soul/Opus reports and separate Astra synthesis. **Do not merge or deploy while hosted CI or the final-revision review gate remains unresolved.**
 
+## Snapshot-retention correction after the `7b91aaf` reviews
+
+The [fresh Soul report](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6414912023), [scoped Opus report](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6414874812) and [Astra synthesis](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6415018967) verified R1–R4 but required one further P2: interrupted ContextStore transactions could indefinitely retain random full-snapshot temporaries. That candidate was not approved for merge.
+
+The correction uses a single bounded temporary slot and validated recovery under the same exclusive context lock, covering safe legacy random-name orphans as well as future interrupted writes. Canonical state is never replaced by an abandoned snapshot. Unsafe/ambiguous files are preserved with explicit refusal; live/paused publishers remain protected. Legacy cleanup is bounded and may require retry or offline inspection, as documented in the runtime reliability limits. Real subprocess tests cover creation, partial write, fsync, before/after rename, repeated near-capacity crashes, canonical preservation, legacy recovery, paused owners, unsafe file/link/ownership cases and TTL pruning. Foreign-UID cases use injected stat results, not privileged ownership changes; power-loss durability is not experimentally claimed.
+
+The parent inspected the implementation and full new regression file, then ran the combined suite: **278/278 pass**. Fresh final-code native explicit Pi→Claude trace `6854e3b7d18b92e82890b5c0e60a3d18` (**11 nodes**) and Claude→Pi `52d1e6c9bc2a25e8c4f9d6f701e70fb3` (**12**) were server-fetched with explicit observation fields and pass the same lineage/privacy checks. The narrow native control remains separate from process success; both children successfully adopt the declared persona/ticket. These changes still require fresh applicable independent reviews and separate synthesis. Hosted CI remains an external merge blocker; no rollout is authorized by local verification.
+
 ## Remaining acceptance and review
 
 This is not completed final-revision certification. The selected stock-worktree, automatic replay, error/abort and invoked/loaded-skill checks above now have positive server-retrieved evidence. Rerun affected paths if review changes their implementation. Native old-base discovery is a wiring test, not proof that every old branch or standalone third-party exporter is safe. Resume/persistent variants and unsupported native schemas must not be silently included in coverage claims.
