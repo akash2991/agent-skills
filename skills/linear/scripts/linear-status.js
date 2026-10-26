@@ -83,8 +83,12 @@ function renderUpdate(f) {
   }
   if (errors.length) return { errors };
   const change = `${f.field} ${f.from} → ${f.to}`;
-  // The skip note appears only when the move really passed over states; a reason on a clean move is not a skip.
-  const note = skipped.length ? ` (skipped ${skipped.join(', ')}${f.skipReason ? `: ${f.skipReason}` : ''})` : '';
+  // A reason is recorded whenever one was given for a move that is not on the workflow: either states were passed over,
+  // or the move has no forward path at all (a regression). A clean move names no skip.
+  const clean = (WORKFLOW.transitions[f.from] || []).includes(f.to);
+  let note = '';
+  if (skipped.length) note = ` (skipped ${skipped.join(', ')}${f.skipReason ? `: ${f.skipReason}` : ''})`;
+  else if (!clean && f.skipReason) note = ` (off-path move: ${f.skipReason})`;
   const lines = [
     '### Status update',
     `- By: ${f.persona} on ${f.model} / ${f.effort} / ${f.harness}`,

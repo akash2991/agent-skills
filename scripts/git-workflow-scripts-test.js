@@ -188,21 +188,22 @@ test('merge-pr derives the repository from origin, not the default repository', 
 
 test('only the newest run of each check counts: a re-run after a fix clears the old failure', () => {
   const runs = latestRuns([
-    { name: 'pr-rules', conclusion: 'FAILURE', completedAt: '2026-10-26T10:00:00Z' },
-    { name: 'pr-rules', conclusion: 'SUCCESS', completedAt: '2026-10-26T10:05:00Z' },
-    { name: 'checks', conclusion: 'SUCCESS', completedAt: '2026-10-26T10:01:00Z' },
+    { name: 'pr-rules', conclusion: 'FAILURE', startedAt: '2026-10-26T10:00:00Z' },
+    { name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:05:00Z' },
+    { name: 'checks', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' },
   ]);
   assert.strictEqual(runs.length, 2);
   assert.ok(runs.every(r => r.conclusion === 'SUCCESS'));
 });
 
-test('an approval counts from a reviewer other than the author; a later change request blocks it', () => {
+test('an approval counts from a reviewer other than the author, on the current head only', () => {
   const author = { login: 'agent' };
-  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [{ author: { login: 'agent' }, state: 'APPROVED' }] }), false);
-  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [{ author: { login: 'reviewer' }, state: 'APPROVED' }] }), true);
-  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [
-    { author: { login: 'reviewer' }, state: 'APPROVED' }, { author: { login: 'reviewer' }, state: 'CHANGES_REQUESTED' }] }), false);
-  assert.strictEqual(isApproved({ author, reviewDecision: 'APPROVED', reviews: [] }), true);
+  const head = 'h2';
+  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid } });
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('agent', 'APPROVED')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED')] }), true);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED', 'h1')] }), false, 'approval of an older commit');
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED'), rev('r', 'CHANGES_REQUESTED')] }), false);
 });
 
 test('a repository with no changelog fails P13 rather than passing silently', () => {
@@ -233,10 +234,10 @@ test('two workflows with a job of the same name are separate checks: a failing t
 
 test('a COMMENTED review is a reply, not a verdict: it neither approves nor overrides a request for changes', () => {
   const author = { login: 'agent' };
-  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [
-    { author: { login: 'r1' }, state: 'APPROVED' }, { author: { login: 'r1' }, state: 'COMMENTED' }] }), true);
-  assert.strictEqual(isApproved({ author, reviewDecision: '', reviews: [
-    { author: { login: 'r1' }, state: 'APPROVED' }, { author: { login: 'r2' }, state: 'CHANGES_REQUESTED' }, { author: { login: 'r2' }, state: 'COMMENTED' }] }), false);
+  const head = 'h2';
+  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head } });
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r1', 'COMMENTED')] }), true);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r2', 'CHANGES_REQUESTED'), rev('r2', 'COMMENTED')] }), false);
 });
 
 test('an SSH host alias is read as GitHub; a non-GitHub host is refused', () => {
@@ -277,4 +278,17 @@ test('the global changelog is docs/CHANGELOG.md when that is where the project k
 
 test('the commit-msg hook is exempt for fixup only, not for a merge subject without trailers', () => {
   assert.strictEqual(checkCommitMessage('Merge sort for reports [ENG-1]', {}, { allowFixup: true }).length, 4);
+});
+
+test('a queued run is newer than any finished one, so the finished pass cannot hide it', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'ci', name: 'pr-rules', conclusion: '', status: 'QUEUED', startedAt: '0001-01-01T00:00:00Z' },
+  ] };
+  assert.match(mergeBlockers(view).blockers.join(), /still running: pr-rules/);
+});
+
+test('a merge into the branch from the remote default branch needs no trailers, only the ticket', () => {
+  assert.deepStrictEqual(checkCommitMessage("Merge remote-tracking branch 'origin/main' into ENG-1-login", {}), []);
+  assert.ok(checkCommitMessage("Merge remote-tracking branch 'origin/main'", {}).length > 0);
 });

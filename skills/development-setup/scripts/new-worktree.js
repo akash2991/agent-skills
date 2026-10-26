@@ -64,10 +64,11 @@ function mainCheckout() {
 
 // The default base is origin's default branch when it is known; `main` is only the fallback.
 // A fetched origin/<default> is the base: a local main that is days behind would start every ticket branch stale.
-function defaultBase(root) {
+function defaultBase(root, { fetch = true } = {}) {
   let name;
   try { name = git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root).replace(/^origin\//, ''); }
   catch { return 'main'; }
+  if (!fetch) return `origin/${name}`;
   try { git(['fetch', '--quiet', 'origin', name], root); return `origin/${name}`; }
   catch { return name; }
 }
@@ -127,7 +128,7 @@ async function main(argv) {
     console.log(`removed ${p.worktree}`);
     return;
   }
-  const base = optionValue(rest, '--base') || defaultBase(root);
+  const base = optionValue(rest, '--base') || defaultBase(root, { fetch: !dryRun });
   const count = Number(optionValue(rest, '--ports') || 0);
   // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
   let ports = [];
@@ -152,7 +153,8 @@ async function main(argv) {
   } else {
     try {
       const exists = git(['branch', '--list', p.branch], root) !== '';
-      git(exists ? ['worktree', 'add', p.worktree, p.branch] : ['worktree', 'add', '-b', p.branch, p.worktree, base], root);
+      // --no-track: the branch does not track origin/main, so a plain push cannot land on main.
+      git(exists ? ['worktree', 'add', p.worktree, p.branch] : ['worktree', 'add', '--no-track', '-b', p.branch, p.worktree, base], root);
     } catch (err) {
       if (count) {
         const file = claimFile(root);

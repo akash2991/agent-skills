@@ -113,3 +113,8 @@ test('a clean move does not claim to skip states, even when a skip reason is giv
   const { text } = renderUpdate({ ...base, from: 'In Review', to: 'Merged', skipReason: 'none' });
   assert.doesNotMatch(text, /skipped/);
 });
+
+test('a regression with a reason keeps the reason in the update, even with no states to name', () => {
+  const { text } = renderUpdate({ ...base, from: 'Merged', to: 'In Progress', skipReason: 'regression found after merge' });
+  assert.match(text, /\(off-path move: regression found after merge\)/);
+});

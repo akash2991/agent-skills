@@ -34,7 +34,9 @@ function latestRuns(checks) {
   const byKey = new Map();
   for (const c of checks) {
     const key = `${c.workflowName || ''}/${c.name || c.context}`;
-    const when = Date.parse(c.startedAt || c.createdAt || '') || 0;
+    // A run that has not started carries the zero time: it is newer than anything that finished.
+    const raw = c.startedAt || c.createdAt || '';
+    const when = !raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0;
     const prev = byKey.get(key);
     if (!prev || when >= prev.when) byKey.set(key, { when, run: c });
   }
@@ -47,6 +49,7 @@ function isPending(c) {
 
 // Approved means: branch protection says so, or the newest APPROVED / CHANGES_REQUESTED review of each reviewer other
 // than the author is APPROVED and none is CHANGES_REQUESTED. COMMENTED and other reviews are replies, not verdicts.
+// Only reviews of the current head count: an approval of an earlier commit does not cover the code being merged.
 function isApproved(view) {
   if (view.reviewDecision === 'APPROVED') return true;
   const newest = new Map();
@@ -54,6 +57,7 @@ function isApproved(view) {
     const login = r.author && r.author.login;
     if (!login || (view.author && login === view.author.login)) continue;
     if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
+    if (!r.commit || r.commit.oid !== view.headRefOid) continue;
     newest.set(login, r.state);
   }
   const states = [...newest.values()];

@@ -17,7 +17,7 @@ const fs = require('fs');
 
 const TYPES = 'feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert';
 // git's own merge subjects: "Merge pull request #n ..." and "Merge branch ...". Anything else starting "Merge " is a commit.
-const GIT_MERGE = /^Merge (pull request #\d+|branch )/;
+const GIT_MERGE = /^Merge (pull request #\d+|branch |remote-tracking branch )/;
 const LOCKFILES = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|go\.sum|composer\.lock|Gemfile\.lock)$/;
 const CHANGELOG = /(^|\/)CHANGELOG\.md$/;
 const SIZE_EXCEPTION = /^Size-exception:[ \t]*\S/m;
@@ -135,7 +135,8 @@ function git(args) {
 
 // Every CHANGELOG.md tracked in the repository; the PR's own checkout is the source of truth.
 function listChangelogs() {
-  return git(['ls-files', '*CHANGELOG.md']).split('\n').filter(f => f && !f.startsWith('templates/'));
+  // ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
+  return git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n').filter(f => f && !f.startsWith('templates/'));
 }
 
 // The repository's default branch, as far as this checkout knows it. Pushes to it are refused like pushes to main.
@@ -182,7 +183,7 @@ function main(argv) {
     const base = optionValue(rest, '--base');
     if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
-    const files = parseNumstat(git(['diff', '--numstat', `${base}...${head}`]));
+    const files = parseNumstat(git(['diff', '--numstat', '--no-renames', `${base}...${head}`]));
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
