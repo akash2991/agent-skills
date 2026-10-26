@@ -88,7 +88,7 @@ Every model call that remains:
 
 Product logic goes in the service's code, in the feature it belongs to. An agent's own repeated procedure goes in a script:
 
-- **In a project:** the project's `scripts/`. Installed skills are copies the next brain update overwrites, so the script does not go in them; write a `workaround` note in `docs/LEARNINGS.md` naming the skill whose steps the script replaces.
+- **In a project:** the project's `scripts/`. Installed skills are copies the next brain update overwrites, so the script does not go in them; when the script replaces steps a skill describes, write a `workaround` note in `docs/LEARNINGS.md` naming that skill; a procedure no skill covers needs only the script and the ticket.
 - **In the brain repository:** `skills/<skill>/scripts/` when a skill owns the procedure. The skill then says "run the script", not "do these steps", and the prose steps the script replaced are deleted.
 
 ### 8. Prove the conversion keeps the behavior
