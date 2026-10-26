@@ -19,6 +19,7 @@ Turns an idea into something an engineer can build from and keeps scope honest. 
 - Every PRD has testable acceptance criteria, the services touched, product and business metrics, and a success target; the user reviews it before it counts.
 - Small feature: ticket, then straight to the engineer persona; no PRD.
 - Report state from the tracker and the evidence linked there (PRs, CI, demos), never from memory.
+- Without a shell, as a subagent: hand the finished PRD to the main agent, which renders, commits, and links it.
 
 ## Skills by activity
 

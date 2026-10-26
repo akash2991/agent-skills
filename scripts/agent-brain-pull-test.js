@@ -634,19 +634,21 @@ test('source frontmatter accepts CRLF and rejects missing metadata', () => {
 test('native persona copies carry harness tool names; the labels stay in the source', () => {
   const scout = fs.readFileSync(path.join(ROOT, 'agents/scout.md'), 'utf8');
   const claude = nativePersona(scout, 'claude');
-  assert.match(claude, /^tools: Read, Bash, mcp__linear__extract_images, .*mcp__linear__get_issue, /m);
+  assert.match(claude, /^tools: Read, Glob, Grep, Skill, Bash, mcp__linear__extract_images, .*mcp__linear__get_issue, /m);
   assert.doesNotMatch(claude, /^tools:.*\b(Edit|Write|mcp__linear__save_issue)\b/m, 'a read-only persona gets no write tools');
-  assert.match(claude, /^skills: brownfield-adoption/m);
-  assert.match(claude, /^# Scout\n\nTools: shell \(read-only\), linear \(read\), grafana\. Reach grafana through the shell\.\n\n## Role/m);
+  assert.doesNotMatch(claude, /^skills:/m, 'Claude Code would load every listed skill at start');
+  assert.match(claude, /^Skills \(load each as the work needs it with the Skill tool\): brownfield-adoption, /m);
+  assert.match(claude, /^# Scout\n\nTools: shell \(read-only\), linear \(read\), grafana\. Reach grafana through the shell\.\nSkills \(load each as the work needs it with the Skill tool\): brownfield-adoption, debugging-and-error-recovery, context-engineering\.\n\n## Role/m);
 
   const gemini = nativePersona(scout, 'gemini');
   assert.match(gemini, /^tools: \[read_file, .*run_shell_command, .*mcp_linear_get_issue, /m);
   assert.doesNotMatch(gemini, /^skills:/m, "Gemini's agent schema is strict");
-  assert.match(gemini, /^Skills \(load with activate_skill\): brownfield-adoption, /m);
+  assert.match(gemini, /^Skills \(load each as the work needs it with activate_skill\): brownfield-adoption, /m);
+  assert.doesNotMatch(nativePersona(scout, 'pi'), /^skills:/m, 'pi-herdr-agents would send /skill: for each at launch');
 
   assert.match(nativePersona(scout, 'pi'), /^tools: read, grep, find, ls, bash, mcp, codemode, mcp__linear__extract_images, .*mcp__linear__get_issue, /m);
   assert.doesNotMatch(nativePersona(scout, 'pi'), /mcp__linear__\*|tool_search|save_issue/);
-  assert.deepEqual(nativeTools('linear', 'claude'), ['Read', 'Edit', 'Write', 'mcp__linear']);
+  assert.deepEqual(nativeTools('linear', 'claude'), ['Read', 'Glob', 'Grep', 'Skill', 'Edit', 'Write', 'mcp__linear']);
 
   const reviewer = fs.readFileSync(path.join(ROOT, 'agents/code-reviewer.md'), 'utf8');
   for (const harness of ['claude', 'gemini', 'pi']) assert.equal(nativePersona(reviewer, harness), reviewer, 'no tools line, no change');
@@ -660,7 +662,12 @@ test('the installer reads persona frontmatter the way the validator does', () =>
   const persona = tools => `---\nname: p\ndescription: "P. Use when testing."\nskills: linear\n${tools}\n---\n\n# P\n\n## Role\n`;
   const expected = nativePersona(persona('tools: linear, shell'), 'claude');
   for (const quoted of ['tools: "linear, shell"', "tools: 'linear, shell'"]) assert.equal(nativePersona(persona(quoted), 'claude'), expected);
-  assert.equal(nativePersona(persona('tools: linear, shell').replace('\n---\n\n#', '\n--- \n\n#'), 'claude').includes('tools: Read, Edit, Write, mcp__linear, Bash'), true, 'a closing fence with trailing space is still transformed');
+  // A closing fence with trailing space fails the build's stricter reader, which validate-agents now applies too.
+  const fenceSource = sourceFixture();
+  const pmFile = path.join(fenceSource, 'agents/product-manager.md');
+  fs.writeFileSync(pmFile, fs.readFileSync(pmFile, 'utf8').replace(/\n---\n/, '\n--- \n'));
+  assert.throws(() => pullInstall({ sourceRoot: fenceSource, target: tmpDir('fence-target') }), /requires name and description/);
+  assert.throws(() => splitFrontmatter(persona('tools: linear, shell').replace('\n---\n\n#', '\n--- \n\n#')), /requires name and description/);
   assert.throws(() => nativePersona(persona('tools:\n  - linear'), 'claude'), /continues a value/);
   assert.deepEqual(labelErrors(''), ['`tools` must be an inline comma-separated list']);
 
@@ -672,6 +679,8 @@ test('the installer reads persona frontmatter the way the validator does', () =>
   for (const copy of [crlf, nativePersona(reviewerCrlf, 'pi')]) assert.match(copy, /^---\n[\s\S]*?\n---/);
   assert.throws(() => nativePersona(persona('tools: linear,\n  shell'), 'gemini'), /continues a value/);
   assert.deepEqual(labelErrors('linear, constructor'), ['unknown tool label "constructor"; add it to scripts/lib/persona-tools.js']);
+  const fenced = nativePersona('---\nname: p\ndescription: d\ntools: linear\n---\n```bash\n# run this\n```\n\n# P\n\nBody\n', 'pi');
+  assert.match(fenced, /```bash\n# run this\n```\n\n# P\n\nTools: linear\.\n/, 'the note goes under the first H1 outside a code block');
   const headless = nativePersona('---\nname: p\ndescription: d\ntools: linear\n---\nBody.\n', 'pi');
   assert.match(headless, /^---\n[\s\S]*\n---\n\nTools: linear\.\nBody\.\n$/);
 

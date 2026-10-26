@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const { parseFrontmatter, frontmatterYamlErrors } = require('./lib/skill-lint');
 const { HARNESSES, labelErrors, nativePersona } = require('./lib/persona-tools');
+const { splitFrontmatter } = require('./lib/build-brain');
 
 const ROOT = path.resolve(__dirname, '..');
 const AGENTS_DIR = path.join(ROOT, 'agents');
@@ -54,6 +55,8 @@ function main() {
     const content = fs.readFileSync(path.join(AGENTS_DIR, file), 'utf8');
     const fm = parseFrontmatter(content);
     if (!fm) { errors.push(`${where}: missing frontmatter`); continue; }
+    // The build reads frontmatter more strictly; fail here, not at install.
+    try { splitFrontmatter(content); } catch (err) { errors.push(`${where}: ${err.message}`); }
     if (!KEBAB.test(name)) errors.push(`${where}: file name is not kebab-case`);
     if (fm.name !== name) errors.push(`${where}: frontmatter name "${fm.name}" != file name "${name}"`);
     if (!fm.description) errors.push(`${where}: missing description`);

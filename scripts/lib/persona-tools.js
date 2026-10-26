@@ -13,7 +13,9 @@ const HARNESSES = ['claude', 'gemini', 'pi'];
 
 // Every persona reads; one with a read-only shell does not write files.
 const READ = {
-  claude: ['Read'],
+  // Claude Code drops Glob and Grep when Bash is listed; without Bash they
+  // are a shell-less persona's only way to list and search files.
+  claude: ['Read', 'Glob', 'Grep', 'Skill'],
   gemini: ['read_file', 'read_many_files', 'grep_search', 'glob', 'list_directory', 'activate_skill'],
   pi: ['read', 'grep', 'find', 'ls'],
 };
@@ -112,16 +114,25 @@ function nativePersona(source, harness) {
   const loose = lines.find(l => l.trim() && !/^[A-Za-z0-9_-]+[ \t]*:/.test(l));
   if (loose !== undefined) throw new Error(`frontmatter line "${loose.trim()}" continues a value; write each key on one line`);
   const native = nativeTools(tools, harness);
-  const kept = lines.filter(l => !/^tools[ \t]*:/.test(l) && !(harness === 'gemini' && /^skills[ \t]*:/.test(l)));
-  // Gemini's schema is strict: `tools` is a YAML list and `skills` is unknown.
+  // `skills:` goes too: Claude Code and pi-herdr-agents load every listed
+  // skill in full at start, Gemini rejects the key, and the persona fetches
+  // skills as the activity needs them. Gemini's `tools` is a YAML list.
+  const kept = lines.filter(l => !/^(tools|skills)[ \t]*:/.test(l));
   kept.push(harness === 'gemini' ? `tools: [${native.join(', ')}]` : `tools: ${native.join(', ')}`);
   const labels = splitLabels(tools);
   const viaShell = labels.filter(l => LABELS[l].viaShell);
   const note = [`Tools: ${labels.join(', ')}.${viaShell.length ? ` Reach ${viaShell.join(', ')} through the shell.` : ''}`];
-  if (harness === 'gemini' && skills) note.push(`Skills (load with activate_skill): ${skills}.`);
+  const loader = { claude: ' with the Skill tool', gemini: ' with activate_skill', pi: '' }[harness];
+  if (skills) note.push(`Skills (load each as the work needs it${loader}): ${skills}.`);
   let body = content.slice(match[0].length);
-  const heading = /^# .*\r?\n/m.exec(body);
-  const at = heading ? heading.index + heading[0].length : 0;
+  // The first H1 outside a fenced code block.
+  let at = 0, fence = null, pos = 0;
+  for (const line of body.split('\n')) {
+    const f = /^(`{3,}|~{3,})/.exec(line);
+    if (f && (!fence || line.startsWith(fence))) fence = fence ? null : f[1];
+    else if (!fence && /^# /.test(line)) { at = pos + line.length + 1; break; }
+    pos += line.length + 1;
+  }
   body = `${body.slice(0, at)}\n${note.join('\n')}\n${body.slice(at)}`;
   return `---\n${kept.join('\n')}\n---\n${body}`;
 }
