@@ -438,7 +438,8 @@ if (a[0] === 'variable' && a[1] === 'get' && a[2] === 'LINEAR_TEAM' && !process.
 if (a[0] === 'variable' && a[1] === 'get') { if (process.env.FAKE_LONG_LIVED !== undefined) { process.stdout.write(process.env.FAKE_LONG_LIVED); process.exit(0); } process.stderr.write('variable ' + a[2] + ' was not found'); process.exit(1); }
 if (a[0] === 'pr' && a[1] === 'view') {
   const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
-  process.stdout.write(JSON.stringify(a[a.length - 1] === 'state,mergeCommit' ? { state: 'MERGED', mergeCommit: { oid: 'abcdef1234' } } : v)); process.exit(0);
+  if (a.includes('--jq') && a[a.length - 1] === '.baseRefName') { process.stdout.write(process.env.FAKE_RETARGET || v.baseRefName); process.exit(0); }
+  process.stdout.write(JSON.stringify(a[a.length - 1] === 'state,mergeCommit,baseRefName' ? { state: 'MERGED', mergeCommit: { oid: 'abcdef1234' }, baseRefName: process.env.FAKE_MERGED_BASE || v.baseRefName } : v)); process.exit(0);
 }
 if (a[0] === 'pr' && a[1] === 'merge') {
   const tmp = fs.mkdtempSync(require('os').tmpdir() + '/m-');
@@ -839,7 +840,7 @@ test('one ticket per PR: branch, title, and commits must agree', () => {
 test('the merge commit is verified before cleanup; a re-run on a merged PR cleans up; an unreadable outcome is exit 4', () => {
   // first run: the state cannot be read after the merge call
   const f = approvedFixture();
-  patchGh(f, "if (a[0] === 'pr' && a[1] === 'view') {", "if (a[0] === 'pr' && a[1] === 'view' && a[a.length - 1] === 'state,mergeCommit' && !fs.existsSync(" + JSON.stringify(path.join(f.root, 'ok')) + ")) { process.stderr.write('HTTP 503'); process.exit(1); }");
+  patchGh(f, "if (a[0] === 'pr' && a[1] === 'view') {", "if (a[0] === 'pr' && a[1] === 'view' && a[a.length - 1] === 'state,mergeCommit,baseRefName' && !fs.existsSync(" + JSON.stringify(path.join(f.root, 'ok')) + ")) { process.stderr.write('HTTP 503'); process.exit(1); }");
   const first = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
   assert.strictEqual(first.status, 4, first.stderr);
   execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
@@ -1477,4 +1478,65 @@ test('the commits check reads a stored commit as stored; the hook still drops ed
   fs.writeFileSync(path.join(dir, 'msg'), 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n# Please enter the commit message\n');
   assert.strictEqual(require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, env, encoding: 'utf8' }).status, 0);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a tie in run creation time goes to the higher run id', () => {
+  const run = (id, conclusion) => ({ name: 'test', conclusion, status: 'COMPLETED', detailsUrl: `https://github.com/o/r/actions/runs/${id}/job/1`,
+    workflowPath: '.github/workflows/ci.yml', event: 'push', runBranch: 'ENG-1-x', runCreated: '2026-10-26T10:00:00Z' });
+  assert.deepStrictEqual(latestRuns([run(7, 'SUCCESS'), run(8, 'FAILURE')]).map(c => c.conclusion), ['FAILURE']);
+  assert.deepStrictEqual(latestRuns([run(8, 'FAILURE'), run(7, 'SUCCESS')]).map(c => c.conclusion), ['FAILURE']);
+});
+
+test('a symlinked default .git/hooks outside the repository is refused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dhs-'));
+  const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  fs.mkdirSync(path.join(dir, 'shared-hooks'));
+  fs.rmSync(path.join(repo, '.git', 'hooks'), { recursive: true, force: true });
+  fs.symlinkSync(path.join(dir, 'shared-hooks'), path.join(repo, '.git', 'hooks'));
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.ok(!fs.existsSync(path.join(dir, 'shared-hooks', 'commit-msg')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a PR retargeted after the checks is not merged; one merged into another base keeps its branches', () => {
+  const f = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_RETARGET: 'release/1.0' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /now targets release\/1\.0, not main/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /^pr merge/m);
+  const m = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_MERGED_BASE: 'release/1.0' }, encoding: 'utf8' });
+  assert.strictEqual(m.status, 3, m.stderr);
+  assert.match(m.stderr, /merged into release\/1\.0, not main/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('BRAIN_LONG_LIVED matches whole names, and an invalid pattern is reported', () => {
+  const env = { BRAIN_LONG_LIVED: 'staging|develop', LINEAR_TEAM: 'ENG' };
+  assert.ok(check.isLongLived('develop', env));
+  assert.ok(!check.isLongLived('ENG-12-develop-login', env));
+  assert.ok(check.checkBranchName('my-develop-hack', env).length > 0);
+  assert.ok(check.isLongLived('main', { BRAIN_LONG_LIVED: '^(staging|develop)$' }));
+  assert.ok(check.isLongLived('staging', { BRAIN_LONG_LIVED: '^(staging|develop)$' }));
+  assert.match(check.longLivedPatternError({ BRAIN_LONG_LIVED: '^(staging' }), /not a valid regular expression/);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'branch', 'staging'], { encoding: 'utf8', env: { ...process.env, BRAIN_LONG_LIVED: '^(staging', LINEAR_TEAM: 'ENG' } });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /BRAIN_LONG_LIVED is not a valid regular expression/);
+});
+
+test('the commit-msg hook ignores the verbose diff below the scissors line', () => {
+  const msg = 'Revert "feat(a): x"\n\nModel: m\nThinking-effort: h\nHarness: c\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+feat(a): y [ENG-9]\n';
+  assert.ok(check.checkCommitMessage(msg, { LINEAR_TEAM: 'ENG' }).some(e => /revert commit/.test(e)));
+});
+
+test('a tie in creation time keeps a newer pending run in front of an older pass', () => {
+  const run = (id, status, conclusion) => ({ name: 'test', status, conclusion, detailsUrl: `https://github.com/o/r/actions/runs/${id}/job/1`,
+    workflowPath: '.github/workflows/ci.yml', event: 'push', runBranch: 'ENG-1-x', runCreated: '2026-10-26T10:00:00Z' });
+  for (const order of [[run(7, 'COMPLETED', 'SUCCESS'), run(8, 'QUEUED', null)], [run(8, 'QUEUED', null), run(7, 'COMPLETED', 'SUCCESS')]]) {
+    assert.deepStrictEqual(latestRuns(order).map(c => c.status), ['QUEUED']);
+  }
 });

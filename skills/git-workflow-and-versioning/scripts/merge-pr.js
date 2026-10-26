@@ -8,7 +8,7 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle, loadDotenv, checkCommitMessage, checkOneTicket, isTicketBranch, isLongLived } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, loadDotenv, checkCommitMessage, checkOneTicket, isTicketBranch, isLongLived, longLivedPatternError } = require('./brain-git-check');
 
 // Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 4 the merge's outcome
 // could not be read (nothing deleted; run merge-pr again to verify and clean up), 3 merged but P7
@@ -98,11 +98,12 @@ function latestRuns(checks) {
     const runs = new Map();
     for (const m of members) {
       const id = runId(m.c) || m.c.runCreated || `job:${m.i}`;
-      const run = runs.get(id) || { created: at(m.c.runCreated || m.c.startedAt || m.c.createdAt), jobs: [] };
+      const run = runs.get(id) || { created: at(m.c.runCreated || m.c.startedAt || m.c.createdAt), id: Number(runId(m.c)) || 0, jobs: [] };
       run.jobs.push(m.c);
       runs.set(id, run);
     }
-    const ordered = [...runs.values()].sort((a, b) => b.created - a.created);
+    // Creation times have one-second precision: on a tie the higher run id, which GitHub assigns in order, is newer.
+    const ordered = [...runs.values()].sort((a, b) => (b.created - a.created) || (b.id - a.id));
     // The newest attempt stands in for the run only when it re-ran every job of that name: a partial re-run of one of
     // two same-named jobs cannot say which earlier job it replaces, so then every job of the run counts.
     const latestAttempt = jobs => {
@@ -402,6 +403,7 @@ function main(argv) {
   // The merge commit must meet P3 and P15 before it exists: check the planned message.
   if (!alreadyMerged) for (const p of checkCommitMessage(`Merge pull request #${pr} [${ticket || ''}]\n\nModel: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}`, process.env, { isMerge: true })) blockers.push(`planned merge commit: ${p}`);
   // As in CI: the generic ticket pattern also matches UTF-8 or SHA-256, so the team's must be known.
+  if (!alreadyMerged && longLivedPatternError()) blockers.push(longLivedPatternError());
   if (!alreadyMerged && !process.env.LINEAR_TEAM) blockers.push('LINEAR_TEAM is not set (environment, .env, or the repository variable) (P4)');
   if (!alreadyMerged && hasMergeQueue(repo, view.baseRefName)) blockers.push(`${view.baseRefName} has a merge queue, which merge-pr does not support: the queue would choose the merge method (P15)`);
   if (blockers.length) {
@@ -414,12 +416,19 @@ function main(argv) {
   const body = `Model: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}${opts.reviewOptional ? '\nReview: optional (per the ticket)' : ''}`;
   let mergeError = '';
   if (!alreadyMerged) {
+    // gh pins the head but not the base: a PR retargeted since the checks would merge into a base nothing checked.
+    let base;
+    try { base = gh(['pr', 'view', pr, '--repo', repo, '--json', 'baseRefName', '--jq', '.baseRefName']).trim(); } catch { base = ''; }
+    if (base !== view.baseRefName) {
+      console.error(`merge-pr: PR #${pr} now targets ${base || 'an unreadable base'}, not ${view.baseRefName} as checked; run merge-pr again`);
+      process.exit(1);
+    }
     try {
       gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`, '--body', body]);
     } catch (err) { mergeError = String(err.stderr || err.message).trim(); }
   }
   let after;
-  try { after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state,mergeCommit'])); } catch (err) {
+  try { after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state,mergeCommit,baseRefName'])); } catch (err) {
     console.error(`merge-pr: could not read PR #${pr} after the merge call (${String(err.stderr || err.message).trim()}); nothing was deleted: run merge-pr again to verify and clean up`);
     process.exit(OUTCOME_UNKNOWN);
   }
@@ -434,6 +443,7 @@ function main(argv) {
     console.error(`merge-pr: PR #${pr} is merged, but its merge commit could not be read (${String(err.stderr || err.message).trim()}); nothing was deleted: run merge-pr again`);
     process.exit(OUTCOME_UNKNOWN);
   }
+  if (after.baseRefName && after.baseRefName !== view.baseRefName) problems.push(`it was merged into ${after.baseRefName}, not ${view.baseRefName} as checked`);
   if (problems.length) {
     console.error(`merge-pr: PR #${pr} is merged${mergeError || alreadyMerged ? ', but not by this run' : ''}, and its merge commit does not meet the rules; the branches were kept:`);
     for (const p of problems) console.error(`merge-pr:   ${p}`);

@@ -33,7 +33,10 @@ function ticketSource(env = process.env) {
 // stripComments: only for the commit-msg hook, where git has not yet removed the editor's # lines; a stored commit
 // (CI, merge verification) is checked exactly as it is.
 function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerge, stripComments = true } = {}) {
-  const message = raw.split(/\r?\n/).filter(l => !(stripComments && l.startsWith('#'))).join('\n').trim();
+  // git commit -v appends the diff below a scissors line, which git removes with everything after it.
+  const lines = raw.split(/\r?\n/);
+  const scissors = stripComments ? lines.indexOf('# ------------------------ >8 ------------------------') : -1;
+  const message = (scissors >= 0 ? lines.slice(0, scissors) : lines).filter(l => !(stripComments && l.startsWith('#'))).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
   // A git revert keeps the subject shape of git's own "Revert \"…\"", but still needs its ticket and trailers (P2, P3).
@@ -53,10 +56,17 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerg
   return errors;
 }
 
-// BRAIN_LONG_LIVED: a regular expression for further long-lived branches P16 allows (e.g. ^(staging|develop)$).
+// BRAIN_LONG_LIVED: a regular expression for further long-lived branches P16 allows (e.g. staging|develop). It must
+// match the whole name, so `develop` never covers `ENG-12-develop-login`. An invalid pattern counts every branch as
+// long-lived (nothing is deleted) and is reported by longLivedPatternError, which each mode checks first.
 function extraLongLived(name, env = process.env) {
   if (!env.BRAIN_LONG_LIVED) return false;
-  try { return new RegExp(env.BRAIN_LONG_LIVED).test(name); } catch { return false; }
+  try { return new RegExp(`^(?:${env.BRAIN_LONG_LIVED})$`).test(name); } catch { return true; }
+}
+
+function longLivedPatternError(env = process.env) {
+  if (!env.BRAIN_LONG_LIVED) return null;
+  try { new RegExp(env.BRAIN_LONG_LIVED); return null; } catch (err) { return `BRAIN_LONG_LIVED is not a valid regular expression (${err.message}) (P16)`; }
 }
 
 // The repository's default branch: DEFAULT_BRANCH (pr-rules passes it) or origin/HEAD.
@@ -295,6 +305,7 @@ function report(errors) {
 function main(argv) {
   loadDotenv();
   const [cmd, ...rest] = argv;
+  if (cmd !== 'commit-msg' && longLivedPatternError()) return report([longLivedPatternError()]);
   // In CI the ticket pattern must be the team's: the generic one also matches tokens such as UTF-8 or SHA-256.
   if (process.env.CI && !process.env.LINEAR_TEAM && ['commits', 'pr', 'branch'].includes(cmd)) {
     console.error('brain-git-check: LINEAR_TEAM is not set; set it as a repository variable for pr-rules.yml (P4)');
@@ -375,4 +386,4 @@ function loadDotenv(env = process.env) {
   }
 }
 
-module.exports = { isTicketBranch, isLongLived, checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+module.exports = { isTicketBranch, isLongLived, longLivedPatternError, checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
