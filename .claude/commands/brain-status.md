@@ -16,7 +16,7 @@ Print the current state of the agents in this session, the main agent (you) firs
 
 ```
 Agent: main | subagent <id>
-Runtime Name: <exact worktree basename or ->
+Runtime Name: <the name the harness shows, normally `<ticket>-<slug> (<persona>)` or `<ticket> <scope> (<persona>)`; - if none>
 Worktree: <path or ->
 Persona: <name>
 Skills: <loaded, in load order>

@@ -51,10 +51,10 @@
       "id": 1,
       "kind": "dialogue",
       "prompt": "You are the main agent starting backend ticket PROJ-42 (add a webhook endpoint), while a frontend subagent starts ticket PROJ-43 (consume that endpoint) in parallel. Set up and name both agents' environments, say what must exist before you can work in parallel, and describe what you will remove when done.",
-      "expected_output": "Each agent gets a worktree beside the main repository at <workspace-root>/<ticket>-<slug>, sharing <workspace-root> with <workspace-root>/<repo-name> and never nested inside the repository; each main agent and subagent has the exact visible runtime name of its own worktree basename so its ticket is apparent during parallel work; own Docker containers and LocalStack for the touched services, a database snapshot or seed, the API contract written first so the frontend mocks it while the backend returns labelled mock data, dependency shapes resolved before code, the app and tests run inside that environment, and the worktree, containers and snapshot removed after the PR is opened",
+      "expected_output": "Each agent gets a worktree beside the main repository at <workspace-root>/<ticket>-<slug>, sharing <workspace-root> with <workspace-root>/<repo-name> and never nested inside the repository; each main agent and subagent has the visible runtime name `<ticket>-<slug> (<persona>)`, its own worktree basename followed by its persona, so its ticket and persona are apparent during parallel work; own Docker containers and LocalStack for the touched services, a database snapshot or seed, the API contract written first so the frontend mocks it while the backend returns labelled mock data, dependency shapes resolved before code, the app and tests run inside that environment, and the worktree, containers and snapshot removed after the PR is opened",
       "expectations": [
         "Each agent's git worktree is created beside the main repository so both share the same parent directory; it is never nested inside the repository or a harness directory",
-        "The main agent and every subagent have a visible runtime name exactly matching their own worktree basename, <ticket>-<slug>; persona, role, and harness id remain separate",
+        "The main agent and every subagent have the visible runtime name <ticket>-<slug> (<persona>): their own worktree basename followed by their persona; the harness id remains separate",
         "Docker containers and LocalStack are started for the services touched and not reused from another agent",
         "The database is snapshotted or seeded for this agent",
         "The API contract is written before frontend and backend work in parallel; the frontend mocks it and the backend returns labelled mock data",
@@ -76,6 +76,17 @@
         "Works in its own worktree, Compose project, and host ports without touching the other agent's directory, containers, or ports",
         "Copies no AWS credentials into the environment; a local Android build signs in with the project's EXPO_TOKEN from .env",
         "Does not mention or depend on which machine it runs on (EC2, sandbox, or laptop)"
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "dialogue",
+      "prompt": "You are the main agent in Pi with pi-herdr-agents, on ticket PROJ-42. Its subagent tool tells you to name each child <task>-<role>[-n] from a fixed role list. Start a read-only scout subagent to survey the auth module, without a worktree. Say how you name it.",
+      "expected_output": "The subagent is started with the scout persona and the name `PROJ-42 auth survey (scout)`, the DS2 no-worktree form, not an extension-style name such as `proj42-research`; the brain's naming rule overrides the extension's guidance, and Pi's free-text name carries it as given.",
+      "expectations": [
+        "Names the subagent <ticket> <scope> (<persona>), for example PROJ-42 auth survey (scout)",
+        "Does not use the extension's <task>-<role> form or replace the persona with one of its roles",
+        "Says the brain's DS2 naming rule takes precedence over the harness's naming guidance"
       ]
     }
   ]

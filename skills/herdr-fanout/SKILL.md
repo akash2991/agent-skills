@@ -45,8 +45,9 @@ or three well-scoped agents usually beat eight thin ones — prefer fewer, each
 with a real slice.
 
 Decide the slices before spawning anything. Write them down as a roster: for
-each, a **role label**, a **self-contained brief** (a cold agent sees only what
-you type), and **what it must return**.
+each, a **persona**, a **label** (the agent's visible runtime name,
+`development-setup` DS2), a **self-contained brief** (a cold agent sees only
+what you type), and **what it must return**.
 
 ## Spawn one sub-agent per tab
 
@@ -55,19 +56,17 @@ straight from the response — `result.root_pane.pane_id`:
 
 ```bash
 out=$(herdr tab create --workspace "$HERDR_WORKSPACE_ID" \
-      --cwd "$PWD" --label "reviewer:auth" --no-focus)
+      --cwd "$PWD" --label "PROJ-42 auth review (code-reviewer)" --no-focus)
 pane=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')
 ```
 
 - **`--no-focus`** always, so the user's focus stays in your pane. The tab bar
   still shows the new tab.
-- **`--label`** every tab with its role (`reviewer:auth`, `design:mvp`,
-  `research:pricing`) — the labels are your at-a-glance dashboard.
-- **`--cwd "$PWD"`** shares this checkout. For agents that will *write* in
-  parallel and could collide, give each its own git worktree instead and use
-  that worktree's exact basename as the agent's visible runtime name
-  (`development-setup` DS2) — `herdr-worktree-agent` supplies the worktree
-  procedure; read-only reviewers can safely share.
+- **`--label`** every tab with the agent's visible runtime name
+  (`development-setup` DS2). The labels are your at-a-glance dashboard.
+- **`--cwd "$PWD"`** shares this checkout, for read-only slices only. Every
+  agent that writes gets its own worktree, `--cwd` set to it, and a name built
+  from its basename (`development-setup` DS1, DS2).
 
 If first-party brain tracing is enabled for Pi/Claude, start through the exact-lineage helper rather than assuming the daemon inherits your environment:
 
@@ -87,14 +86,19 @@ can launch the next slice while this one works. **Address the agent by its pane
 id**, not a custom name:
 
 ```bash
-herdr agent start "$(basename "$pane")" --kind claude --pane "$pane"   # returns when ready
+herdr agent start "proj-42-auth" --kind claude --pane "$pane"   # returns when ready
 herdr agent prompt "$pane" "<the self-contained brief for this slice>"
 ```
 
 - **Target by pane id.** A name set at `agent start` is cleared when the agent
   re-registers during init (Claude does this), so a later `agent prompt <name>`
-  fails with `agent_not_found`. The pane id is the stable handle; the name arg is
-  required but you don't rely on it.
+  fails with `agent_not_found`. The pane id is the stable handle. The name arg
+  is required and must be a legal Herdr agent name, `[a-z][a-z0-9_-]{0,31}` (a
+  pane id such as `w1:p2` is not) and unique among live agents on the Herdr
+  server, across workspaces, so derive it from the ticket and the slice
+  (`proj-42-auth`), add a round number for a second fan-out on the same ticket
+  (`proj-42-auth-2`), and check `herdr agent list` first. The tab label, not the
+  agent name, carries the visible runtime name.
 - `agent start` returns once Herdr detects the agent ready for input. Omitting
   `--wait` on `agent prompt` submits the task and returns; you collect later. Use
   the `--kind` matching the requested agent (`claude`, `codex`, `pi`, `gemini`,
@@ -104,17 +108,22 @@ herdr agent prompt "$pane" "<the self-contained brief for this slice>"
   the agent quits and its tab vanishes before you can read it.
 
 Keep a table as you go — `{label, tab_id, pane_id}` — parsed from each response,
-never guessed.
+never guessed, and check each label with `herdr tab get <tab_id>`: they are the
+agents' visible names.
 
 ## Dispatch briefs that survive cold context
 
 Each sub-agent has none of your conversation. A one-line instruction gets
-one-line-quality work. Every brief states: the exact files/paths and how to see
-them; what the slice is and the properties that must hold; what it may **not** do
-(e.g. "do not modify files"); and the exact **return shape** you'll collect
-(ranked findings with file:line, or a decision with rationale). Tell each agent
-to end with a clear, self-contained summary — that final message is what you
-read back.
+one-line-quality work. Every brief starts with the persona to adopt, the same
+one the tab label shows: `/brain <persona>` in a harness whose project install
+carries the brain command (Claude, Gemini, Pi), otherwise "Read
+`.agents/agents/<persona>.md`, adopt it, and declare before working", as for
+Codex, whose prompts are a manual global install. It then
+states: the exact files/paths and how to see them; what the slice is and the
+properties that must hold; what it may **not** do (e.g. "do not modify files");
+and the exact **return shape** you'll collect (ranked findings with file:line,
+or a decision with rationale). Tell each agent to end with a clear,
+self-contained summary — that final message is what you read back.
 
 ## Wait, collect, synthesize
 

@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { buildBrain } = require('./build-brain');
 const { lstatIfPresent, isWithin, canonicalPath, validateManagedRelPath } = require('./install-paths');
+const { nativePersona } = require('./persona-tools');
 
 const STATE_DIR = '.agent-brain';
 const STATE_PATH = '.agent-brain/install-state.json';
@@ -139,6 +140,13 @@ function collectBuildFiles(buildRoot) {
     ));
     return { ...info, content, sha256: sha256Buffer(content) };
   }
+  // A harness that reads `tools:` as its own allowlist gets native tool names.
+  function nativeCopy(host, info) {
+    const harness = { '.claude': 'claude', '.gemini': 'gemini', '.pi': 'pi' }[host];
+    if (!harness) return info;
+    const content = Buffer.from(nativePersona(info.content.toString('utf8'), harness));
+    return { ...info, content, sha256: sha256Buffer(content) };
+  }
   function route(text, host) {
     const skillHost = host === '.claude' ? '.claude' : '.agents';
     return text.replace(/(?<![\w./-])skills\//g, `${skillHost}/skills/`)
@@ -158,7 +166,7 @@ function collectBuildFiles(buildRoot) {
       continue;
     }
     if (relative.startsWith('agents/')) {
-      for (const host of personaHosts) add(`${host}/${relative}`, relocateSharedLinks(relative, info));
+      for (const host of personaHosts) add(`${host}/${relative}`, nativeCopy(host, relocateSharedLinks(relative, info)));
       continue;
     }
     let host;

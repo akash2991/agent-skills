@@ -38,7 +38,7 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 
 - Root `AGENTS.md`, `SOUL.md`, and `.env.example`.
 - Shared skill copies in `.agents/skills/` for Pi, Codex, Gemini, and Hermes; native copies in `.claude/skills/` for Claude. Both come from the same `skills/` source, selected by `manifest.json`.
-- Full persona copies in `.agents/agents/`, `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`.
+- Full persona copies in `.agents/agents/`, `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`. The `.claude/`, `.gemini/`, and `.pi/` copies carry native tool names in place of the labels ([harness layout](harness-layout.md#persona-tools-labels-in-the-source-native-names-in-harness-copies)).
 - One root `references/` and `templates/` directory. Installed Markdown links to those shared files gain the extra `../` needed for the tool directory; source Markdown is unchanged. Skill-local references/templates stay with their skill, and per-project runtime scripts are copied with it. Account-wide Terraform provisioning sources, generated state, local tfvars, and provider caches are excluded.
 - Skill/persona anatomy guides are source-repository authoring documentation and are not installed. Project documents are not generated from templates automatically.
 - `/brain` and `/brain-status` commands for the supported tools.
