@@ -179,9 +179,19 @@ function parseNumstatRenames(numstat) {
     if (!parts[i]) continue;
     const [added, deleted, path] = parts[i].split('\t');
     const name = path === '' ? parts[(i += 2)] : path;
-    out.push({ path: name, added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) });
+    const from = path === '' ? parts[i - 1] : path;
+    out.push({ path: name, from, binary: added === '-', added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) });
   }
   return out;
+}
+
+// Lines of a blob that is text apart from NUL bytes; 0 for a real binary or a blob that does not exist.
+function textLines(spec) {
+  let buf;
+  try { buf = execFileSync('git', ['cat-file', 'blob', spec], { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 30 }); } catch { return 0; }
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf.filter(b => b !== 0)); } catch { return 0; }
+  return text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0;
 }
 
 // Every path in a tree, unquoted (git quotes non-ASCII names without -z).
@@ -295,17 +305,19 @@ function dotenvValue(key, { skipEmpty = false } = {}) {
     const first = git(['worktree', 'list', '--porcelain']).split('\n\n')[0];
     const main = /^bare$/m.test(first) ? null : (/^worktree (.+)$/m.exec(first) || [])[1];
     const pattern = new RegExp(`^\\s*(export\\s+)?${key}\\s*=`);
-    let line;
+    // A quoted value is taken as written; an unquoted one ends at an inline " #" comment. Emptiness is judged on the
+    // parsed value, so LINEAR_TEAM="" is as unset as LINEAR_TEAM=.
+    const parse = l => {
+      const value = l.split('=').slice(1).join('=').trim();
+      const quoted = /^(['"])(.*?)\1/.exec(value);
+      return quoted ? quoted[2] : value.replace(/(^|\s+)#.*$/, '').trim();
+    };
     for (const file of [`${here}/.env`, ...(main ? [`${main}/.env`] : [])]) {
       if (!fs.existsSync(file)) continue;
-      line = fs.readFileSync(file, 'utf8').split('\n').find(l => pattern.test(l) && !(skipEmpty && /=\s*(#.*)?$/.test(l)));
-      if (line) break;
+      const line = fs.readFileSync(file, 'utf8').split('\n').find(l => pattern.test(l) && !(skipEmpty && parse(l) === ''));
+      if (line) return parse(line);
     }
-    if (!line) return null;
-    const value = line.split('=').slice(1).join('=').trim();
-    // A quoted value is taken as written; an unquoted one ends at an inline " #" comment.
-    const quoted = /^(['"])(.*?)\1/.exec(value);
-    return quoted ? quoted[2] : value.replace(/\s+#.*$/, '').trim();
+    return null;
   } catch { return null; }
 }
 
@@ -392,14 +404,18 @@ function main(argv) {
     // Every line counts for P11, whatever any .gitattributes says (`package-lock.json -diff` has no exemption, and a PR's
     // own .gitattributes cannot hide its lines): attributes are read from the empty tree, so none apply.
     const noAttrs = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
-    // Without --attr-source (git before 2.40) the PR's own .gitattributes would apply: refuse rather than count wrong.
+    // Without --attr-source (git before 2.41) the PR's own .gitattributes would apply: refuse rather than count wrong.
     let numstat;
     try { numstat = git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '--no-renames', '--text', `${base}...${head}`]); }
-    catch (err) { return report([`git ${git(['--version']).trim().replace(/^git version /, '')} cannot count lines independently of .gitattributes (needs --attr-source, git 2.40 or later): ${String(err.stderr || err.message).trim().split('\n')[0]}`]); }
+    catch (err) { return report([`git ${git(['--version']).trim().replace(/^git version /, '')} cannot count lines independently of .gitattributes (needs --attr-source, git 2.41 or later): ${String(err.stderr || err.message).trim().split('\n')[0]}`]); }
     const files = parseNumstat(numstat);
     // P11 counts a rename as one file with its own line changes; P13 keeps the rename-free list above.
-    let sized;
-    sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '-M', '--text', `${base}...${head}`]));
+    const sized = parseNumstatRenames(git(['--attr-source', noAttrs, 'diff', '-z', '--numstat', '-M', '--text', `${base}...${head}`]));
+    // git reports a file with a NUL in its first 8000 bytes as binary, with no line counts, --text notwithstanding:
+    // count such a file's lines from its blobs when it is text apart from NULs (generated or minified output). A real
+    // binary (an image) is not valid UTF-8 and stays one file with no lines.
+    const mergeBase = git(['merge-base', base, head]).trim();
+    for (const f of sized) if (f.binary) f.lines = textLines(`${head}:${f.path}`) + textLines(`${mergeBase}:${f.from}`);
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),

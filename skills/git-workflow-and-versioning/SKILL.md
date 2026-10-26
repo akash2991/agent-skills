@@ -158,10 +158,11 @@ Paths are as installed by `agent-brain pull` (`.agents/skills/…`; Claude's cop
 
 **Limits to know.**
 - `BRAIN_LONG_LIVED` must match a whole branch name (`staging|develop` matches `staging` but not `ENG-12-develop-login`); an invalid pattern stops every check except `commit-msg`, and merge-pr.
-- A promotion PR (a long-lived head into the default branch) is checked like any other: every commit it brings must meet P3, and a promotion over the P11 limits needs the user's `Size-exception:`. The size check needs git 2.40 or later and fails, rather than counting wrong, on older git.
+- A promotion PR (a long-lived head into the default branch) is checked like any other: every commit it brings must meet P3, and a promotion over the P11 limits needs the user's `Size-exception:`. The size check needs git 2.41 or later and fails, rather than counting wrong, on older git.
 - `release/*` and branches matching `BRAIN_LONG_LIVED` are trusted by name: pushes to them are not refused, and as a PR head they promote several tickets under one title. Creating one, or widening the pattern, is a reviewer-visible decision (P16).
 - The pre-push hook refuses a push to `main` or the remote's default branch on every remote, a deploy remote (Heroku, Dokku) included: push a deploy with `--no-verify`, or deploy from CI.
 - The `commit-msg` hook recognises an amended merge only while its subject is unchanged. To reword a merge's subject, amend with `--no-verify`, then run `brain-git-check.js commits --base origin/<base>` to check the stored merge as CI will (by its parents).
+- `git revert`, `git cherry-pick`, and a non-interactive rebase do not run the `commit-msg` hook, and pre-push checks branch names, not commits: add the trailers with `git commit --amend` (or `git rebase -i` with `reword`) and check with `scripts/brain-git-check.js commits --base origin/<base>` before pushing, or `pr-rules` refuses them.
 - Commits GitHub's web UI writes ("Update branch" merges, committed review suggestions) carry no trailers and fail `pr-rules`: update the branch locally or with the rebase variant of Update branch, and edit a suggestion's commit message before committing it.
 
 ## The Save Point Pattern

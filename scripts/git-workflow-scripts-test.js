@@ -1804,7 +1804,7 @@ test('P11 fails closed when git cannot read attributes from the empty tree', () 
   const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
   const r = require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: x', '--branch', 'ENG-1-x'], { cwd: repo, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /needs --attr-source, git 2\.40/);
+  assert.match(r.stderr, /needs --attr-source, git 2\.41/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -1959,4 +1959,46 @@ test('a check whose details URL names another job can neither pass nor hide a ne
   assert.match(r.stderr, /CI is not green: test/);
   assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /^pr merge/m);
   fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a quoted-empty LINEAR_TEAM in the worktree .env falls back to the main checkout\'s', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qe-'));
+  const main = path.join(dir, 'main');
+  const g = (args, cwd) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  fs.mkdirSync(main); g(['init', '-q', '-b', 'main'], main); g(['commit', '-q', '--allow-empty', '-m', 'x'], main);
+  g(['worktree', 'add', '-q', '-b', 'ENG-1-x', path.join(dir, 'wt')], main);
+  fs.writeFileSync(path.join(main, '.env'), 'LINEAR_TEAM=ENG\n');
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  for (const empty of ['LINEAR_TEAM=""', "LINEAR_TEAM=''", 'LINEAR_TEAM= # none']) {
+    fs.writeFileSync(path.join(dir, 'wt', '.env'), `${empty}\n`);
+    const out = require('child_process').spawnSync('node', ['-e', `const c=require(${JSON.stringify(script)});const e={};c.loadDotenv(e);process.stdout.write(JSON.stringify(e))`], { cwd: path.join(dir, 'wt'), encoding: 'utf8', env: { ...process.env, CI: '' } });
+    assert.match(out.stdout, /"LINEAR_TEAM":"ENG"/, empty);
+  }
+  // An empty BRAIN_LONG_LIVED still means none: it is not replaced by the main checkout's.
+  fs.writeFileSync(path.join(main, '.env'), 'LINEAR_TEAM=ENG\nBRAIN_LONG_LIVED=staging\n');
+  fs.writeFileSync(path.join(dir, 'wt', '.env'), 'BRAIN_LONG_LIVED=""\n');
+  const ll = require('child_process').spawnSync('node', ['-e', `const c=require(${JSON.stringify(script)});const e={};c.loadDotenv(e);process.stdout.write(JSON.stringify(e))`], { cwd: path.join(dir, 'wt'), encoding: 'utf8', env: { ...process.env, CI: '' } });
+  assert.match(ll.stdout, /"BRAIN_LONG_LIVED":""/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('P11 counts the lines of a text file git calls binary, but not an image', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nul-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# c\n'); g(['add', '-A']); g(['commit', '-q', '-m', 'init']);
+  g(['switch', '-q', '-c', 'ENG-1-x']);
+  fs.writeFileSync(path.join(dir, 'big.js'), '// \0\n' + 'x();\n'.repeat(2000));
+  fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '- x\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const run = () => require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: x', '--branch', 'ENG-1-x'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+  const r = run();
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /P11/);
+  g(['reset', '-q', '--hard', 'main']);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0xff, 0xfe, ...Array(3000).fill(0x0a), 0xc3, 0x28]);
+  fs.writeFileSync(path.join(dir, 'logo.png'), png); fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), '- logo\n');
+  g(['add', '-A']); g(['commit', '-q', '-m', 'feat(a): logo [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  assert.strictEqual(run().status, 0, 'an image is one file with no lines');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
