@@ -210,6 +210,114 @@ test('reserved native session/resources/permission flags are refused in split, e
   }
 });
 
+test('bounded native grammar rejects overrides, aliases, clusters and ambiguous forms before any flow or spawn', async t => {
+  const f = fixture(t);
+  const canary = 'PRIVATE_OPTION_VALUE --token=CANARY';
+  const common = ['--cwd', '-C', '--session-id', '--session', '--session-dir', '--continue', '-c', '--resume', '-r', '--fork', '--no-session', '--settings', '--setting-sources', '--plugin-dir', '--disable-hooks', '--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', '--permission-mode', '--api-key',
+    '--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--permission-prompt-tool', '--permission-prompts', '--add-dir', '--mcp-config', '--strict-mcp-config', '--plugin-url'];
+  const specific = {
+    pi: ['-e', '--extension', '-ne', '--no-extensions', '--brain-tracing', '--export', '--approve', '-a', '--no-approve', '-na', '--skill', '--prompt-template', '--theme', '--use-theme'],
+    claude: ['--fork-session', '--no-session-persistence', '--bare', '--remote', '--teleport', '--from-pr', '--resume-session-at', '--worktree', '-w', '--tmux', '--agent-id', '--agent', '--agents', '--safe-mode', '--restricted', '--bg', '--background', '--cloud', '--environment', '--remote-control', '--desktop', '--chrome', '--ide']
+  };
+  const ambiguous = ['-pc', '-pr', '-pw', '-pcrw', '-pv', '-nprompt', '-n=prompt', '-cOTHER', '-rOTHER', '-wOTHER', '-eother.js', '-p=prompt', '-unknown', '--unknown', '--allowedT=Read', '--print=true'];
+  const snapshot = fs.readFileSync(path.join(f.env.BRAIN_TRACE_STATE_DIR, 'context-v1.json'), 'utf8');
+  const entries = fs.readdirSync(f.env.BRAIN_TRACE_STATE_DIR).sort();
+  let spawned = 0, touchedFlow = 0;
+  const options = { cwd: f.cwd, env: f.env, spawn: () => { spawned++; throw new Error('must not spawn'); },
+    flow: new Proxy({}, { get() { touchedFlow++; throw new Error('must not touch flow'); } }) };
+  for (const harness of ['pi', 'claude']) {
+    for (const flag of [...common, ...specific[harness], ...ambiguous]) {
+      for (const args of [[flag, canary], [`${flag}=${canary}`], ['--model', 'safe/model', flag, canary], ['safe prompt', flag, canary]]) {
+        await assert.rejects(exec(argsFor(f, harness, ...args).slice(1), options), error => {
+          assert.match(error.message, /override|unsupported/i);
+          assert.ok(!error.message.includes(canary));
+          return true;
+        }, `${harness}: ${flag}`);
+      }
+    }
+    // Even a real router invocation emits no native output or sensitive value.
+    const result = f.run(argsFor(f, harness, '--allowedTools', canary));
+    assert.equal(result.status, 1); assert.equal(result.stdout, '');
+    assert.equal(result.stderr, 'Brain tracing operation unavailable or invalid; no context was guessed.\n');
+  }
+  assert.equal(spawned, 0); assert.equal(touchedFlow, 0);
+  assert.equal(fs.readFileSync(path.join(f.env.BRAIN_TRACE_STATE_DIR, 'context-v1.json'), 'utf8'), snapshot);
+  assert.deepEqual(fs.readdirSync(f.env.BRAIN_TRACE_STATE_DIR).sort(), entries);
+  for (const name of ['.claude', '.pi', '.agent-brain']) assert.equal(fs.existsSync(path.join(f.target, name)), false);
+});
+
+test('native option arity and harness-specific forms preserve values without scanning prompt text', () => {
+  const prefix = harness => ['--actor', 'a'.repeat(43), '--harness', harness, '--'];
+  const accepted = {
+    pi: [
+      ['--provider', 'synthetic', '--model', 'synthetic/model', '--models', 'a,b', '--thinking', 'low', '--mode', 'json', '--tui-mode', 'regular'],
+      ['--no-tools', '-nt', '--no-builtin-tools', '-nbt', '--no-mcp', '--no-skills', '-ns', '--no-prompt-templates', '-np', '--no-context-files', '-nc', '--no-themes', '--offline', '--verbose'],
+      ['--tools', 'read,brain_context', '-t', 'read', '--exclude-tools', 'bash', '-xt', 'write', '--name', 'auth', '-n', 'plugin'],
+      ['-p', '---literal -pc --allowedTools', '--append-system-prompt', 'c r w e', '--system-prompt', '--session-id'],
+      ['--print', 'safe prompt', '--help', '-h', '--version', '-v']
+    ],
+    claude: [
+      ['--model=synthetic/model', '--fallback-model', 'synthetic/fallback', '--effort=low', '--max-turns', '4', '--max-budget-usd=0.10', '--name', 'auth', '-n', 'plugin'],
+      ['--print', '-p', '--verbose', '--output-format=stream-json', '--input-format', 'text', '--include-partial-messages', '--include-hook-events', '--replay-user-messages', '--forward-subagent-text', '--disable-slash-commands'],
+      ['--json-schema', '{"properties":{"-pc":{"const":"--allowedTools"}}}', '--system-prompt=--resume', '--append-system-prompt', '-pc -pr -pw', '--help', '-h', '--version', '-v'],
+      ['--tools', 'Bash,Read', '--output-format', 'json', 'safe prompt'],
+      ['--tools=Read', 'safe prompt'], ['--tools', '', '--', 'literal prompt']
+    ]
+  };
+  for (const harness of ['pi', 'claude']) {
+    for (const args of accepted[harness]) assert.deepEqual(parse([...prefix(harness), ...args]).args, args);
+    for (const value of ['--session-id', '--allowedTools', '-pc', '-pr', '-pw', '--', '', 'auth']) {
+      const args = ['--system-prompt', value, 'a prompt mentioning --resume and -pc'];
+      assert.deepEqual(parse([...prefix(harness), ...args]).args, args);
+    }
+    for (const args of [['--model'], ['-n'], ['--system-prompt'], ['--tools']]) assert.throws(() => parse([...prefix(harness), ...args]), /value required/);
+    // Required-value -- is not a boundary. The following override stays live.
+    assert.throws(() => parse([...prefix(harness), '--system-prompt', '--', '--allowedTools', 'Read']), /override/);
+    const literal = ['--', '-pc', '-pr', '-pw', '--allowedTools=Read', '--mcp-config', '--session-id', 'auth', '', 'PRIVATE literal prompt'];
+    assert.deepEqual(parse([...prefix(harness), ...literal]).args, literal);
+    for (const bad of [null, 1, 'bad\0value']) assert.throws(() => parse([...prefix(harness), '--', bad]), /Invalid native argument/);
+  }
+  for (const args of [['--model=synthetic'], ['--mode', '--resume'], ['--tui-mode', '--resume'], ['--mode', '--'], ['--tui-mode', 'unknown']]) assert.throws(() => parse([...prefix('pi'), ...args]), /override|Unsupported/);
+  for (const args of [['--tools', 'Read', 'Bash'], ['--tools', 'Read', 'would-be prompt']]) assert.throws(() => parse([...prefix('claude'), ...args]), /Ambiguous native tool/);
+});
+
+test('administrative first bare words after known options cannot escape the session grammar', async () => {
+  let spawned = false;
+  for (const harness of ['pi', 'claude']) {
+    for (const command of ['auth', 'mcp', 'install', 'remove', 'uninstall', 'update', 'config', 'list', 'plugin', 'plugins', 'doctor', 'setup-token', 'help', 'agents', 'attach', 'auto-mode', 'gateway', 'import', 'logs', 'purge', 'respawn', 'rm', 'stop', 'kill', 'ultrareview', 'upgrade']) {
+      const prefix = ['--actor', 'a'.repeat(43), '--harness', harness, '--'];
+      for (const options of [[], ['--model', 'auth'], ['--name', 'mcp', '--verbose'], ['-p']]) {
+        await assert.rejects(exec([...prefix, ...options, command, 'PRIVATE_COMMAND_VALUE'], { spawn: () => { spawned = true; } }), /session invocation/);
+      }
+      assert.deepEqual(parse([...prefix, '--name', command, '--', command]).args, ['--name', command, '--', command]);
+      assert.deepEqual(parse([...prefix, 'a literal prompt mentioning mcp and --allowedTools', command]).args, ['a literal prompt mentioning mcp and --allowedTools', command]);
+    }
+  }
+  assert.equal(spawned, false);
+});
+
+test('safe native probe arguments and flag-looking literal prompts reach the synthetic child byte-for-byte', t => {
+  const f = fixture(t);
+  const cases = {
+    pi: ['--no-context-files', '--no-skills', '--no-prompt-templates', '--tools', 'read,brain_context', '--model', 'synthetic/model', '--thinking', 'low', '--mode', 'json', '-p'],
+    claude: ['--print', '--model', 'synthetic/model', '--effort', 'low', '--max-turns', '4', '--tools', 'Bash,Read', '--output-format', 'stream-json', '--verbose']
+  };
+  for (const harness of ['pi', 'claude']) {
+    const args = [...cases[harness], '--system-prompt', '--allowedTools', '--', '-pc', '-pr', '-pw', '--session-id', '--allowed-tools=Read', 'mcp', ''];
+    const result = f.run(argsFor(f, harness, ...args), { input: 'preserved stdin\n' });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.args.slice(harness === 'pi' ? 5 : 4), args);
+    assert.equal(output.input, 'preserved stdin\n'); assert.equal(result.stderr, 'native-stderr\n');
+    if (harness === 'claude') {
+      const settings = JSON.parse(output.args[3]);
+      assert.deepEqual(Object.keys(settings).sort(), ['enabledPlugins', 'hooks']);
+      assert.ok(!JSON.stringify(settings).includes('permission'));
+    }
+  }
+  for (const name of ['.claude', '.pi', '.agent-brain']) assert.equal(fs.existsSync(path.join(f.target, name)), false);
+});
+
 test('exec mirrors native exit, child signal and spawn failure; forwards wrapper signals without extra stdout', async t => {
   const f = fixture(t);
   assert.equal(f.run(argsFor(f, 'pi'), { env: { ...f.env, TEST_MODE: 'exit' } }).status, 23);

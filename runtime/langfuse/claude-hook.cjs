@@ -2,7 +2,8 @@
 'use strict';
 
 // This CLI accepts stdin JSON only. No payload (including parse errors) is ever
-// logged, and the only stdout is a native Bash input update when one is needed.
+// logged. Supported actor additionalContext is the only stdout; ordinary Bash
+// input and native permission decisions are never changed.
 const { handleClaudeHook } = require('./claude.cjs');
 const MAX_INPUT_BYTES = 1024 * 1024;
 
