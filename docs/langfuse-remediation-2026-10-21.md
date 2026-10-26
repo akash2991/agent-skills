@@ -81,6 +81,22 @@ Current main was merged into the isolated PR checkout, resolving the build/pull 
 
 The paused WIP has been completed; final-revision independent reviews and Astra synthesis are still required before merge. Slop main remains unconfigured by this task.
 
+## R1–R4 correction cycle after the `46c7452` reviews
+
+The [Soul review](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6405063589), [scoped Opus review](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6405056534), and [Astra synthesis](https://github.com/akash2991/agent-skills/pull/11#issuecomment-6405093377) did **not** approve that candidate for merge. All four required corrections are now implemented, pending new final-revision reviews:
+
+- **R1:** native session selection, ownership publication and empty unresolved holds commit atomically. Readers recover missing/stale adapter checkpoints from authoritative context rather than exporting provisional roots. Barrier-controlled competing hooks and actual SIGKILL/restart tests cover create/before-checkpoint/after-checkpoint/rebase boundaries, recovery descendants, late exact binding, stable observation IDs and duplicate-hook capabilities. Ownerless incomplete legacy publications remain deferred, not guessed.
+- **R2:** skill lists retain bounded evidence with replay-stable `filtered`/`truncated`/`refused` status enums. Actual capture/store/queue/pending replay regressions cover both lists at 32/33/128 and overflow, privacy literals, repeated projection and the 16 KiB record budget.
+- **R3/R4:** exec now accepts an explicit bounded Pi/Claude grammar, refuses ambiguous selector clusters and permission/resource controls before spawn, consumes known option values by arity, and preserves literal arguments after native `--`. Administrative-command guarding and the stale hook stdout comment are also corrected. No ordinary Bash mutation, hidden native grant or global permission setting is introduced.
+
+The combined parent suite passes **243/243**. Repository **120/120**, validators, routing evals and build pass. Soul's earlier aggregate GC-test failure is retained as a real failed run: its single-flush full-reclamation expectation depended on a bounded deadline. The revised test deterministically exhausts that budget and proves real capacity-triggered expired-file/byte reclamation, rather than merely increasing a timeout. The grammar worker additionally ran fixture installer tests that were not forced offline; that run is not represented as proven network-free.
+
+Fresh native Claude 2.1.310 control/traced narrow-printf parity again passes with **zero permission denials**. Final-code explicit Claude→Pi trace `b0a7cc088e51320db521e98f8c95f048` has **12 unique nodes**, correct parentage and no content/canaries/configured credential literal, retrieved with `basic,io,usage,model,metadata` fields (the API's default basic fields alone would not prove privacy).
+
+**Additional native acceptance blocker:** the new marker-absent Pi→Claude fixture launches with correct lineage, but Claude denies the child's explicit context command under its ordinary native authorization, leaving persona unknown. This is **not a successful persona/permission acceptance** or waived by process exit 0. Synthetic project-policy and authorized folder-trust setup probes did not resolve it; no broad allow rule or helper override was added. Further fixture/native-policy diagnosis or ordinary user approval is needed before that path is called fully verified. Earlier pre-refusal traces above are historical evidence, not proof that this final grammar passes every native acceptance path.
+
+Hosted CI still reports no checks and rejects dispatch with the previously recorded HTTP422. These implementation changes require fresh independent Soul/Opus reports and separate Astra synthesis. **Do not merge or deploy while either acceptance blocker or the review gate is unresolved.**
+
 ## Remaining acceptance and review
 
 This is not completed final-revision certification. The selected stock-worktree, automatic replay, error/abort and invoked/loaded-skill checks above now have positive server-retrieved evidence. Rerun affected paths if review changes their implementation. Native old-base discovery is a wiring test, not proof that every old branch or standalone third-party exporter is safe. Resume/persistent variants and unsupported native schemas must not be silently included in coverage claims.
