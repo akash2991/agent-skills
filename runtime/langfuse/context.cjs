@@ -313,7 +313,8 @@ class ContextStore {
     const session = state.sessions[sessionKey];
     const unresolved = state.runs[run.runId]?.unresolved || (session?.run.runId === run.runId && session.unresolved);
     state.runs[run.runId] = { run, expiresAt: now + TTL.runs,
-      ...(unresolved ? { unresolved: true } : {}), ...(state.runs[run.runId]?.drained ? { drained: true } : {}) };
+      ...(unresolved ? { unresolved: true } : {}), ...(state.runs[run.runId]?.drained ? { drained: true } : {}),
+      ...(state.runs[run.runId]?.publication ? { publication: state.runs[run.runId].publication } : {}) };
     // Historical metadata/rebases may refresh the selected run, never select
     // another turn. Selection and persistence share this one transaction.
     if (select || session?.run.runId === run.runId) {
@@ -330,6 +331,25 @@ class ContextStore {
   getRun(runId) {
     runId = uuid(runId);
     return this._transaction(state => state.runs[runId]?.run || null);
+  }
+
+  // Adapter files are recoverable caches, not the authority for whether a
+  // newly selected native session owns resolved lineage. Publication survives
+  // death immediately after createRun and cannot be cleared by stale saves.
+  getPublication(runId) {
+    runId = uuid(runId);
+    return this._transaction(state => {
+      const item = state.runs[runId];
+      if (!item) return null;
+      const pending = state.pending[hash(runId)];
+      const publication = item.publication;
+      const savedParent = publication?.parent;
+      const parent = Object.values(state.runs).find(value => value.run.traceId === item.run.traceId
+        && value.run.rootSpanId === item.run.parentSpanId)?.run ||
+        (savedParent?.traceId === item.run.traceId && savedParent?.rootSpanId === item.run.parentSpanId ? savedParent : null);
+      return { run: item.run, unresolved: !!item.unresolved, published: !!publication,
+        identity: publication?.identity || (pending ? { reference: pending.aliases } : null), parent };
+    });
   }
 
   _current(state, run) {
@@ -374,6 +394,9 @@ class ContextStore {
   createRun(options) {
     plain(options);
     if (options.reuseSession !== undefined && typeof options.reuseSession !== 'boolean') fail();
+    if (options.publication !== undefined && options.publication !== true) fail();
+    const publicationIdentity = options.publicationIdentity ? this.referenceLaunch(options.publicationIdentity) : null;
+    if (publicationIdentity && !options.publication) fail();
     const info = project(options.cwd);
     const native = nativeId(options.nativeSessionId);
     const parent = options.parent ? safeRun(options.parent) : null;
@@ -389,13 +412,21 @@ class ContextStore {
       // Selection and creation must be one transaction, not get-then-create.
       if (options.reuseSession === true && previous) return previous;
       const linkedParent = parent ? this._current(state, parent) : null;
-      return this._save(state, safeRun({ ...info, harness: options.harness, nativeSessionId: native,
+      const run = this._save(state, safeRun({ ...info, harness: options.harness, nativeSessionId: native,
         traceId: linkedParent?.traceId || randomHex(16), rootSpanId: randomHex(8), parentSpanId: linkedParent?.rootSpanId || null,
         sessionId: linkedParent?.sessionId || previous?.sessionId || crypto.randomUUID(), runId: crypto.randomUUID(),
         ...(linkedParent ? { parentSessionId: linkedParent.nativeSessionId } : {}),
         runtimeName: options.runtimeName ?? info.runtimeName, agentName: options.agentName,
         persona: options.persona, ticketId, ticketSource, requestedModel: options.requestedModel,
         requestedEffort: options.requestedEffort, skillsInvoked: [], skillsLoaded: [], startedAt: now }), now, true);
+      if (options.publication) {
+        state.runs[run.runId].publication = { identity: publicationIdentity, parent: linkedParent };
+        // Selection, ownership identity and the empty unresolved hold commit
+        // together. Even already-bound launches start held until exact claim
+        // reconciliation; no reader can observe a provisional resolved root.
+        if (publicationIdentity) this._hold(state, now, identity(publicationIdentity), run, []);
+      }
+      return run;
     });
   }
 
@@ -519,29 +550,31 @@ class ContextStore {
     }
     const payload = JSON.stringify(normalized);
     if (Buffer.byteLength(payload) > 256 * 1024) throw new Error('Tracing pending capacity exceeded');
-    return this._transaction((state, now) => {
-      // A completed run is held once. Equal retries are harmless; differing
-      // retries are rejected. An early empty marker can be finalized once.
-      const id = hash(safe.runId);
-      const previous = state.pending[id];
-      const digest = hash(JSON.stringify({ aliases: [...aliases].sort(), run: safe, records: normalized }));
-      if (previous) {
-        if (previous.digest === digest) return { pending: true };
-        if (previous.records.length || !normalized.length || previous.run.traceId !== safe.traceId ||
-            previous.run.rootSpanId !== safe.rootSpanId || previous.run.sessionId !== safe.sessionId ||
-            JSON.stringify([...previous.aliases].sort()) !== JSON.stringify([...aliases].sort())) {
-          throw new Error('Mismatched tracing replay');
-        }
+    return this._transaction((state, now) => this._hold(state, now, aliases, safe, normalized));
+  }
+
+  _hold(state, now, aliases, safe, normalized) {
+    // A completed run is held once. Equal retries are harmless; differing
+    // retries are rejected. An early empty marker can be finalized once.
+    const id = hash(safe.runId);
+    const previous = state.pending[id];
+    const digest = hash(JSON.stringify({ aliases: [...aliases].sort(), run: safe, records: normalized }));
+    if (previous) {
+      if (previous.digest === digest) return { pending: true };
+      if (previous.records.length || !normalized.length || previous.run.traceId !== safe.traceId ||
+          previous.run.rootSpanId !== safe.rootSpanId || previous.run.sessionId !== safe.sessionId ||
+          JSON.stringify([...previous.aliases].sort()) !== JSON.stringify([...aliases].sort())) {
+        throw new Error('Mismatched tracing replay');
       }
-      const stored = state.runs[safe.runId];
-      if (stored?.drained) return { pending: false };
-      state.pending[id] = { aliases, run: safe, records: normalized, digest, expiresAt: now + TTL.pending };
-      this._save(state, safe, now);
-      state.runs[safe.runId].unresolved = true;
-      const session = state.sessions[this._sessionKey(safe.harness, safe.nativeSessionId)];
-      if (session?.run.runId === safe.runId) session.unresolved = true;
-      return { pending: true };
-    });
+    }
+    const stored = state.runs[safe.runId];
+    if (stored?.drained) return { pending: false };
+    state.pending[id] = { aliases, run: safe, records: normalized, digest, expiresAt: now + TTL.pending };
+    this._save(state, safe, now);
+    state.runs[safe.runId].unresolved = true;
+    const session = state.sessions[this._sessionKey(safe.harness, safe.nativeSessionId)];
+    if (session?.run.runId === safe.runId) session.unresolved = true;
+    return { pending: true };
   }
 
   takePending(input) {
@@ -584,7 +617,13 @@ class ContextStore {
           changed = before !== roots.size;
         }
         const descendant = run => run.traceId === oldTrace && run.sessionId === oldSession && roots.has(run.rootSpanId);
-        for (const value of Object.values(state.runs)) if (descendant(value.run)) value.run = rebase(value.run);
+        for (const value of Object.values(state.runs)) if (descendant(value.run)) {
+          value.run = rebase(value.run);
+          if (value.publication?.parent && descendant(value.publication.parent)) {
+            value.publication.parent = rebase(value.publication.parent);
+          }
+        }
+        if (state.runs[run.runId].publication) state.runs[run.runId].publication.parent = resolved.parent;
         for (const value of Object.values(state.sessions)) if (descendant(value.run)) value.run = rebase(value.run);
         for (const value of Object.values(state.launches)) if (descendant(value.parent)) value.parent = rebase(value.parent);
         this._save(state, run, now);

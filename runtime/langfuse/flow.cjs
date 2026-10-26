@@ -265,8 +265,31 @@ function createFlow(options = {}) {
     if (!run || seen.has(run.rootSpanId) || seen.size > 32) return null;
     actor = run;
     seen.add(run.rootSpanId);
-    const entry = readState(`run:${run.rootSpanId}`);
-    if (!entry) return run;
+    const cached = readState(`run:${run.rootSpanId}`);
+    let entry = cached;
+    const publication = store.getPublication(run.runId);
+    // Missing/incomplete adapter publication is never evidence of a resolved
+    // root. Recover from the same authoritative transaction that selected the
+    // session, including its exact ownership identity and pending hold.
+    if (!entry && !publication?.published) {
+      // An interrupted pre-publication-protocol run has no recoverable owner.
+      // Keep this refusal through metadata updates/duplicate hooks instead of
+      // letting their newly written cache turn it into evidence of a root.
+      if (publication?.run) remember(publication.run, { publicationBlocked: true });
+      return null;
+    }
+    if (entry?.publicationBlocked && !publication?.published) return null;
+    if (publication?.published) {
+      entry = { ...entry, run: publication.run, parent: publication.parent,
+        ...(publication.identity ? publication.unresolved
+          ? { pendingIdentity: publication.identity, launchIdentity: null }
+          : { pendingIdentity: null, launchIdentity: publication.identity } : {}) };
+    }
+    if (publication?.unresolved && !entry?.pendingIdentity) return null;
+    // Rebuild even an unresolved cache before returning: a terminal hook may
+    // retain observations now, then a parent-only flush must find them later.
+    if (!cached) remember(entry.run, { parent: entry.parent,
+      pendingIdentity: entry.pendingIdentity, launchIdentity: entry.launchIdentity });
     let parent = entry.parent || null;
     let child = {};
     let resolvedHint;
@@ -284,9 +307,18 @@ function createFlow(options = {}) {
       parent = binding.parent;
       child = binding.child || {};
     }
-    if (entry.launchIdentity && !store.claimLaunch(entry.launchIdentity,
-      { claimId: `${entry.run.harness}:${entry.run.nativeSessionId}` })) return null;
-    if (!parent) { actor = entry.run; return entry.run; }
+    if (entry.launchIdentity) {
+      const binding = store.claimLaunch(entry.launchIdentity,
+        { claimId: `${entry.run.harness}:${entry.run.nativeSessionId}` });
+      if (!binding) return null;
+      parent = binding.parent;
+      child = binding.child || {};
+    }
+    if (!parent) {
+      if (entry.run.parentSpanId) return null;
+      actor = entry.run;
+      return entry.run;
+    }
     const currentParent = resolvedHint || resolve(parent, seen);
     if (!currentParent) return null;
     const updated = {
@@ -303,7 +335,7 @@ function createFlow(options = {}) {
     // ContextStore checks the active selector inside the persistence lock.
     const changed = JSON.stringify(updated) !== JSON.stringify(entry.run);
     const saved = changed ? store.saveRun(updated) : entry.run;
-    if (changed || entry.pendingIdentity) remember(saved, { parent: currentParent, pendingIdentity: null,
+    if (changed || entry.pendingIdentity || !cached) remember(saved, { parent: currentParent, pendingIdentity: null,
       ...(entry.pendingIdentity ? { launchIdentity: entry.pendingIdentity } : {}) });
     actor = saved;
     return saved;
@@ -318,7 +350,9 @@ function createFlow(options = {}) {
       || (!opts.parent ? (savedLaunch ? { nonce: savedLaunch.nonce } : inboundIdentity || savedIdentity) : savedIdentity);
     if (!identity && !opts.parent) {
       const exact = { launchId: `brain:${harness}:${opts.nativeSessionId}` };
-      if (store.resolveLaunch(exact)) identity = exact;
+      // Exact identity exists even when its parent is still provisional.
+      // Resolved-only lookup would misclassify recovery descendants as roots.
+      if (store.inspectLaunch(exact)) identity = exact;
     }
     let binding = identity ? store.resolveLaunch(identity) : null;
     const boundNonce = identity?.nonce || identity?.capability || binding?.nonce;
@@ -333,21 +367,23 @@ function createFlow(options = {}) {
     // unauthorized pane must not poison the legitimate child's capability.
     if (identity) binding = store.claimLaunch(identity, { claimId: `${harness}:${opts.nativeSessionId}` });
     const parent = binding?.parent || opts.parent || null;
-    const run = store.createRun({ ...opts, harness, parent,
+    const run = store.createRun({ ...opts, harness, parent, publication: true, publicationIdentity: identity,
       persona: opts.persona || binding?.child?.persona,
       agentName: binding?.child?.agentName || opts.agentName,
       ticketId: opts.ticketId || binding?.child?.ticketId });
-    if (identity && !binding) store.hold({ identity, run, records: [] });
-    remember(run, { ...(parent ? { parent } : {}), ...(identity ? binding
-      ? { launchIdentity: identity } : { pendingIdentity: identity } : {}) });
-    if (identity) writeState(`native-identity:${harness}:${opts.nativeSessionId}`, { identity: store.referenceLaunch(identity) });
+    // A racing duplicate may have won createRun/reuseSession. Never replace
+    // its authoritative publication with this caller's pre-create snapshot.
+    const publication = store.getPublication(run.runId);
+    remember(publication?.run || run, { ...(publication?.parent ? { parent: publication.parent } : {}),
+      ...(publication?.identity ? { pendingIdentity: publication.identity } : {}) });
+    if (publication?.identity) writeState(`native-identity:${harness}:${opts.nativeSessionId}`, { identity: publication.identity });
     if (boundNonce && binding) {
       const scope = readState(`pane:${boundNonce}`);
       if (scope) writeState(`pane:${boundNonce}`, { ...scope, nativeSessionHash: hash(opts.nativeSessionId) });
       writeState(`launch-ack:${boundNonce}`, { nativeSessionId: run.nativeSessionId, rootSpanId: run.rootSpanId, harness,
         ...(env.HERDR_PANE_ID ? { paneId: env.HERDR_PANE_ID } : {}), acknowledgedAt: clock(), phase: 'adapter-started' });
     }
-    return run;
+    return resolve(run) || run;
   }
 
   function acknowledgeSession(nativeSessionId) {

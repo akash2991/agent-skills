@@ -341,17 +341,30 @@ test('aggregate checkpoint file and byte limits refuse safely, then reclaim expi
   flow.writeState('delivery', { verified: false });
   flow.writeState('checkpoint:0', { completedAt: 2 });
   assert.ok(usage().files <= ADAPTER_LIMITS.files);
-  f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow(); await flow.flush();
+  f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow();
+  // A bounded flush may spend its whole slice scanning under load. Zero is a
+  // deterministic exhausted slice: it must not reclaim or pretend to finish.
+  await flow.flush({ timeoutMs: 0 });
+  assert.deepEqual(flow.readState('checkpoint:0'), { completedAt: 2 });
+  // Capacity admission uses the real collector without a transfer deadline.
+  // Force pressure at the known full directory, proving eventual reclamation
+  // rather than assuming 2048 filesystem entries fit one timed flush slice.
+  flow.writeState('reclaimed-file-slot', { completedAt: 3 });
   assert.equal(flow.readState('checkpoint:0'), null);
   assert.deepEqual(flow.readState('health'), { captureFailureObserved: true }, 'loss diagnostics must not expire with ordinary checkpoints');
-  assert.ok(usage().files <= 2);
+  assert.ok(usage().files <= 3);
+  assert.deepEqual(flow.readState('reclaimed-file-slot'), { completedAt: 3 });
   const block = Array(110).fill('a'.repeat(8192));
   for (let i = 0; i < 37; i++) flow.writeState(`large:${i}`, { counters: block });
   assert.throws(() => flow.writeState('over-byte-limit', { counters: block }), /capacity/);
   assert.ok(usage().bytes <= ADAPTER_LIMITS.bytes);
-  f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow(); await flow.flush();
+  f.advance(ADAPTER_LIMITS.retentionMs + 1); flow = f.flow();
+  await flow.flush({ timeoutMs: 0 });
+  assert.ok(flow.readState('large:0'));
+  flow.writeState('reclaimed-byte-slot', { counters: block });
   assert.equal(flow.readState('large:0'), null);
-  assert.ok(usage().bytes < 4096);
+  assert.deepEqual(flow.readState('reclaimed-byte-slot'), { counters: block });
+  assert.ok(usage().bytes < 1024 * 1024, 'only the new admitted block and diagnostics remain');
 });
 
 test('checkpoint expiry preserves live sessions, unresolved descendants and outbox replay dependencies', async t => {
