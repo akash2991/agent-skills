@@ -34,9 +34,9 @@
       "expected_output": "A roster of three read-only reviewer slices, each spawned in its own tab without focus and labeled <ticket> <scope> (<persona>), briefed cold with paths, constraints, and a return shape, collected by pane id and synthesized with claims verified",
       "expectations": [
         "Checks HERDR_ENV before spawning anything",
-        "Writes the roster (label, self-contained brief, return shape) before creating any tab",
+        "Writes the roster (persona, label, self-contained brief, return shape) before creating any tab",
         "Creates one tab per slice with --no-focus and a --label of the form <ticket> <scope> (<persona>), such as a code-reviewer persona, reading the pane id from the response rather than guessing it",
-        "Each brief names the paths, says not to modify files, and states the return shape; none tells the agent to exit",
+        "Each brief starts with the persona to adopt, the same one its tab label shows, names the paths, says not to modify files, and states the return shape; none tells the agent to exit",
         "Starts each agent with a lowercase Herdr handle derived from the ticket, such as proj-42-1, never the label or a pane id, and does not try to give the Herdr agent the label as its name",
         "Confirms with herdr tab list or tab get that each tab shows its PROJ-42 <scope> (<persona>) label",
         "Prompts without --wait, then waits and reads each agent by pane id",

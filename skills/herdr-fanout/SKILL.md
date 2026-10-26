@@ -45,8 +45,9 @@ or three well-scoped agents usually beat eight thin ones — prefer fewer, each
 with a real slice.
 
 Decide the slices before spawning anything. Write them down as a roster: for
-each, a **label** (the agent's visible runtime name, `development-setup` DS2), a **self-contained brief** (a cold agent sees only what
-you type), and **what it must return**.
+each, a **persona**, a **label** (the agent's visible runtime name,
+`development-setup` DS2), a **self-contained brief** (a cold agent sees only
+what you type), and **what it must return**.
 
 ## Spawn one sub-agent per tab
 
@@ -102,9 +103,11 @@ visible names.
 ## Dispatch briefs that survive cold context
 
 Each sub-agent has none of your conversation. A one-line instruction gets
-one-line-quality work. Every brief states: the exact files/paths and how to see
-them; what the slice is and the properties that must hold; what it may **not** do
-(e.g. "do not modify files"); and the exact **return shape** you'll collect
+one-line-quality work. Every brief starts with the persona to adopt
+(`/brain <persona>`), the same one the tab label shows, then states: the exact
+files/paths and how to see them; what the slice is and the properties that must
+hold; what it may **not** do (e.g. "do not modify files"); and the exact
+**return shape** you'll collect
 (ranked findings with file:line, or a decision with rationale). Tell each agent
 to end with a clear, self-contained summary — that final message is what you
 read back.
