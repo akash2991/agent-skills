@@ -17,6 +17,9 @@ const TTL = { sessions: 7 * 24 * HOUR, runs: 7 * 24 * HOUR, launches: 24 * HOUR,
 const RETENTION = 24 * HOUR; // Expired aliases remain tombstones; never silently rebind a stale pane.
 const LIMIT = { sessions: 1024, runs: 2048, launches: 4096, pending: 256 };
 const MAX_BYTES = 8 * 1024 * 1024;
+const SNAPSHOT_SLOT = '.context-v1.tmp';
+const LEGACY_SNAPSHOT = /^\.context-[a-f0-9]{32}\.tmp$/;
+const SNAPSHOT_SCAN = 256;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUN_KEYS = new Set(['traceId', 'rootSpanId', 'parentSpanId', 'sessionId', 'nativeSessionId', 'runId',
   'projectId', 'projectName', 'worktreeId', 'branch', 'runtimeName', 'agentName', 'persona', 'ticketId',
@@ -243,6 +246,65 @@ function prepareAncestor(dir) {
   checkDir(dir, false);
 }
 
+function snapshotError(code) {
+  const error = new Error(code === 'CONTEXT_SNAPSHOT_RECOVERY_PENDING'
+    ? 'Tracing snapshot recovery incomplete; retry for bounded cleanup, or stop all controllers and inspect state offline'
+    : 'Unsafe tracing snapshot; preserved for offline inspection after stopping all controllers');
+  error.code = code;
+  return error;
+}
+function safeSnapshot(stat) {
+  if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.nlink !== 1 || stat.size > MAX_BYTES) {
+    throw snapshotError('CONTEXT_SNAPSHOT_UNSAFE');
+  }
+}
+const sameSnapshot = (a, b) => a.dev === b.dev && a.ino === b.ino;
+function inspectSnapshot(file) {
+  // lstat first avoids opening devices/FIFOs; NONBLOCK also covers replacement
+  // by a FIFO between lstat/open. No bytes (including partial JSON) are trusted.
+  const before = fs.lstatSync(file);
+  safeSnapshot(before);
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    safeSnapshot(stat);
+    if (!sameSnapshot(before, stat)) throw snapshotError('CONTEXT_SNAPSHOT_UNSAFE');
+    return stat;
+  } finally { fs.closeSync(fd); }
+}
+function discardSnapshot(file, expected) {
+  const current = inspectSnapshot(file);
+  if (!sameSnapshot(current, expected)) throw snapshotError('CONTEXT_SNAPSHOT_UNSAFE');
+  fs.unlinkSync(file);
+}
+function recoverSnapshots(stateDir, deadline) {
+  // Upgrade contract: stop older controllers before replacing the runtime. All
+  // supported old random-name publishers use this same context lock. Exclusive
+  // ownership, NOT age/mtime or valid JSON, proves these are abandoned writes.
+  // Never promote one, even when the canonical file is absent.
+  // Inspect at most 256 root entries (+ one EOF lookahead) per attempt. Safe
+  // legacy files are removed before refusing admission, so ordinary backlogs make
+  // bounded progress across retries without allocating another snapshot. A
+  // root flooded with unrelated entries can require offline operator cleanup;
+  // no successful transaction bypasses a full inventory of the snapshot names.
+  const entries = fs.opendirSync(stateDir);
+  try {
+    for (let count = 0; ; count++) {
+      if (Date.now() >= deadline) throw snapshotError('CONTEXT_SNAPSHOT_RECOVERY_PENDING');
+      const entry = entries.readSync();
+      if (!entry) return;
+      if (count >= SNAPSHOT_SCAN) throw snapshotError('CONTEXT_SNAPSHOT_RECOVERY_PENDING');
+      if (entry.name === SNAPSHOT_SLOT || LEGACY_SNAPSHOT.test(entry.name)) {
+        const file = path.join(stateDir, entry.name);
+        discardSnapshot(file, inspectSnapshot(file));
+      } else if (entry.name.startsWith('.context-') && entry.name.endsWith('.tmp')) {
+        // Unknown snapshot naming/ownership is not permission to delete it.
+        throw snapshotError('CONTEXT_SNAPSHOT_UNSAFE');
+      }
+    }
+  } finally { entries.closeSync(); }
+}
+
 class ContextStore {
   constructor({ stateDir, now = Date.now } = {}) {
     if (typeof now !== 'function') fail();
@@ -262,8 +324,9 @@ class ContextStore {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
     } catch (error) { lock.release(); throw error; }
-    let temporary;
+    let temporary, published;
     try {
+      recoverSnapshots(this.stateDir, deadline);
       const now = this.now();
       if (!Number.isFinite(now)) fail();
       let state = { version: 1, sessions: {}, runs: {}, launches: {}, pending: {} };
@@ -290,15 +353,22 @@ class ContextStore {
       }
       const data = JSON.stringify(state);
       if (Buffer.byteLength(data) > MAX_BYTES) throw new Error('Tracing state capacity exceeded');
-      temporary = path.join(this.stateDir, `.context-${randomHex(16)}.tmp`);
+      temporary = path.join(this.stateDir, SNAPSHOT_SLOT);
       fd = fs.openSync(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
-      try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      try {
+        published = fs.fstatSync(fd);
+        safeSnapshot(published);
+        fs.writeFileSync(fd, data);
+        fs.fsyncSync(fd);
+      } finally { fs.closeSync(fd); }
+      const current = inspectSnapshot(temporary);
+      if (!sameSnapshot(current, published) || current.size !== Buffer.byteLength(data)) throw snapshotError('CONTEXT_SNAPSHOT_UNSAFE');
       fs.renameSync(temporary, this.file);
       const dirFd = fs.openSync(this.stateDir, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
       try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
       return result == null ? result : clone(result);
     } finally {
-      try { if (temporary) { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } } }
+      try { if (published) { try { discardSnapshot(temporary, published); } catch (error) { if (error.code !== 'ENOENT') throw error; } } }
       finally { lock.release(); }
     }
   }
