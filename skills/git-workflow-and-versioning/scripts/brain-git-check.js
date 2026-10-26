@@ -32,16 +32,17 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false } = {})
   const message = raw.split(/\r?\n/).filter(l => !l.startsWith('#')).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
-  // git's own revert subject carries no trailers; the commit it undoes already passed. fixup!/squash! are not exempt:
-  // they must be autosquashed before the PR is merged, so the commit that lands is checked.
-  if (/^Revert ".*"/.test(subject)) return [];
+  // A git revert keeps the subject shape of git's own "Revert \"…\"", but still needs its ticket and trailers (P2, P3).
+  // fixup!/squash! are not exempt: they must be autosquashed before the PR is merged, so the commit that lands is checked.
+  const revert = /^Revert ".*"/.test(subject);
   const errors = [];
+  if (revert && !new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('revert commit: name the ticket id it belongs to (P2)');
   if (allowFixup && /^(fixup! |squash! )/.test(subject)) return [];
   if (GIT_MERGE.test(subject)) {
     if (!new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
     return errors;
   }
-  if (!new RegExp(`^(${TYPES})(\\([a-z0-9._/,-]+\\))?!?: \\S.* \\[${ticket}\\]$`).test(subject)) {
+  if (!revert && !new RegExp(`^(${TYPES})(\\([a-z0-9._/,-]+\\))?!?: \\S.* \\[${ticket}\\]$`).test(subject)) {
     errors.push(`subject must be "<type>(<scope>): <what changed> [<TICKET-ID>]", type one of ${TYPES.split('|').join(', ')} (P2, P3): got "${subject}"`);
   }
   for (const trailer of ['Model', 'Thinking-effort', 'Harness']) {
@@ -103,8 +104,10 @@ function requiredChangelogs(changedPaths, allChangelogs) {
 }
 
 function checkChangelog(files, allChangelogs = ['CHANGELOG.md']) {
-  // A repository with no changelog cannot satisfy P13 by staying silent.
-  if (!allChangelogs.length) return ['no CHANGELOG.md in this repository, so P13 cannot be met: add one (P13)'];
+  // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
+  if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
+    return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
+  }
   const changed = files.map(f => f.path);
   const missing = requiredChangelogs(changed, allChangelogs).filter(c => {
     const entry = files.find(f => f.path === c);
@@ -142,7 +145,7 @@ function listChangelogs() {
 // The repository's default branch, as far as this checkout knows it. Pushes to it are refused like pushes to main.
 function protectedBranches() {
   const names = new Set(['main']);
-  try { names.add(git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).replace(/^origin\//, '')); } catch { /* no origin/HEAD */ }
+  try { names.add(git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim().replace(/^origin\//, '')); } catch { /* no origin/HEAD */ }
   return [...names];
 }
 

@@ -132,8 +132,10 @@ test('a dependency bot is exempt by login only; a GitHub App that opens agent PR
   assert.doesNotMatch(yml, /user\.type != 'Bot'/);
 });
 
-test('a git revert subject is exempt; fixup and squash commits are checked before they can land', () => {
-  assert.deepStrictEqual(checkCommitMessage('Revert "feat(x): y [ENG-1]"', {}), []);
+test('a revert keeps the ticket and trailers; fixup and squash commits are checked before they can land', () => {
+  const trailers = '\n\nModel: m\nThinking-effort: h\nHarness: c';
+  assert.deepStrictEqual(checkCommitMessage('Revert "feat(x): y [ENG-1]"' + trailers, {}), []);
+  assert.ok(checkCommitMessage('Revert "feat(x): y"', {}).length >= 4);
   assert.ok(checkCommitMessage('fixup! feat(x): y [ENG-1]', {}).length > 0);
   assert.ok(checkCommitMessage('squash! does not exist', {}).length > 0);
 });
@@ -291,4 +293,12 @@ test('a queued run is newer than any finished one, so the finished pass cannot h
 test('a merge into the branch from the remote default branch needs no trailers, only the ticket', () => {
   assert.deepStrictEqual(checkCommitMessage("Merge remote-tracking branch 'origin/main' into ENG-1-login", {}), []);
   assert.ok(checkCommitMessage("Merge remote-tracking branch 'origin/main'", {}).length > 0);
+});
+
+test('a repository with only service changelogs fails P13, and a service changelog does not stand in for the global one', () => {
+  assert.match(check.checkChangelog(check.parseNumstat('1\t0\tservices/api/CHANGELOG.md\n1\t0\tREADME.md'), ['services/api/CHANGELOG.md'])[0], /no global changelog/);
+});
+
+test('a branch default with a trailing newline from git is still protected', () => {
+  assert.match(checkPushedRefs('refs/heads/release/stable aaaa refs/heads/release/stable 0000000', {}, ['main', 'release/stable'])[0], /direct push to release\/stable/);
 });

@@ -149,6 +149,10 @@ async function main(argv) {
   if (dryRun) {
     console.error(`would run: git worktree add ${git(['branch', '--list', p.branch], root) ? '' : `-b ${p.branch} `}${p.worktree} ${base}`);
   } else if (fs.existsSync(p.worktree)) {
+    // Reuse only this repository's worktree on this branch; any other directory with the name is someone else's.
+    const listed = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
+    const onBranch = listed && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
+    if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
     console.error(`reusing existing worktree ${p.worktree}`);
   } else {
     try {

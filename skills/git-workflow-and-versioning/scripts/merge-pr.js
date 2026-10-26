@@ -87,7 +87,7 @@ function main(argv) {
   const flag = argv.indexOf('--repo');
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state']));
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
   const { blockers, ticket } = mergeBlockers(view, { reviewOptional: argv.includes('--review-optional') });
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
@@ -95,6 +95,11 @@ function main(argv) {
   }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
   gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--delete-branch', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
+  // gh deletes the head branch only when it lives in the repository merged into; a fork's branch stays and P7 is not complete.
+  if (view.isCrossRepository) {
+    console.error(`merge-pr: branch ${view.headRefName} lives in the fork and was not deleted; delete it in the fork (P7)`);
+    process.exitCode = 1;
+  }
   // The local branch may be checked out in another worktree (P6) or hold unpushed work: report it, do not hide it.
   try { git(['branch', '-d', view.headRefName]); } catch (err) {
     console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete: delete it by hand from the worktree that holds it`);
