@@ -19,6 +19,10 @@ Review the installed resources before granting project trust. Start a new pi ses
 /brain-status
 ```
 
+## Subagent names
+
+pi-herdr-agents tells the model to name each child `<task>-<role>[-n]` from a fixed list of roles. The brain's rule takes precedence: a subagent's name is `<ticket>-<slug> (<persona>)`, or `<ticket> <scope> (<persona>)` without a worktree (`development-setup` DS2). Pi's subagent name is free text, so the name is passed as given.
+
 ## Automatic Langfuse tracing
 
 Opt in when importing the brain into each consuming repository:

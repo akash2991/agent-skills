@@ -67,7 +67,7 @@ pane=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdi
   at-a-glance dashboard.
 - **`--cwd "$PWD"`** shares this checkout. For agents that will *write* in
   parallel and could collide, give each its own git worktree instead and use
-  that worktree's basename in the name — `herdr-worktree-agent` supplies the
+  that worktree's basename in the name — `development-setup` DS2 gives the
   worktree procedure; read-only reviewers can safely share.
 
 Then start an agent in that pane and **fire the brief without `--wait`**, so you
@@ -75,7 +75,7 @@ can launch the next slice while this one works. **Address the agent by its pane
 id**, not a custom name:
 
 ```bash
-herdr agent start "slice-1" --kind claude --pane "$pane"   # returns when ready
+herdr agent start "proj-42-1" --kind claude --pane "$pane"   # returns when ready
 herdr agent prompt "$pane" "<the self-contained brief for this slice>"
 ```
 
@@ -83,9 +83,10 @@ herdr agent prompt "$pane" "<the self-contained brief for this slice>"
   re-registers during init (Claude does this), so a later `agent prompt <name>`
   fails with `agent_not_found`. The pane id is the stable handle. The name arg is
   required and must be a legal Herdr agent name, `[a-z][a-z0-9_-]{0,31}` (a pane
-  id such as `w1:p2` is not) and unique among live agents, so pass a handle such
-  as `slice-1`, `slice-2`; the tab label, not the agent name, carries the
-  visible runtime name.
+  id such as `w1:p2` is not) and unique among live agents on the Herdr server,
+  across workspaces, so derive it from the ticket and the slice: `proj-42-1`,
+  `proj-42-2`. The tab label, not the agent name, carries the visible runtime
+  name.
 - `agent start` returns once Herdr detects the agent ready for input. Omitting
   `--wait` on `agent prompt` submits the task and returns; you collect later. Use
   the `--kind` matching the requested agent (`claude`, `codex`, `pi`, `gemini`,

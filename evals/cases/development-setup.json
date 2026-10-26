@@ -77,6 +77,17 @@
         "Copies no AWS credentials into the environment; a local Android build signs in with the project's EXPO_TOKEN from .env",
         "Does not mention or depend on which machine it runs on (EC2, sandbox, or laptop)"
       ]
+    },
+    {
+      "id": 3,
+      "kind": "dialogue",
+      "prompt": "You are the main agent in Pi with pi-herdr-agents, on ticket PROJ-42. Its subagent tool tells you to name each child <task>-<role>[-n] from a fixed role list. Start a read-only scout subagent to survey the auth module, without a worktree. Say how you name it.",
+      "expected_output": "The subagent is started with the scout persona and the name `PROJ-42 auth survey (scout)`, the DS2 no-worktree form, not an extension-style name such as `proj42-research`; the brain's naming rule overrides the extension's guidance, and Pi's free-text name carries it as given.",
+      "expectations": [
+        "Names the subagent <ticket> <scope> (<persona>), for example PROJ-42 auth survey (scout)",
+        "Does not use the extension's <task>-<role> form or replace the persona with one of its roles",
+        "Says the brain's DS2 naming rule takes precedence over the harness's naming guidance"
+      ]
     }
   ]
 }
