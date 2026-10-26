@@ -45,7 +45,7 @@ or three well-scoped agents usually beat eight thin ones — prefer fewer, each
 with a real slice.
 
 Decide the slices before spawning anything. Write them down as a roster: for
-each, a **role label**, a **self-contained brief** (a cold agent sees only what
+each, a **label** (the agent's visible runtime name, `development-setup` DS2), a **self-contained brief** (a cold agent sees only what
 you type), and **what it must return**.
 
 ## Spawn one sub-agent per tab
@@ -75,16 +75,17 @@ can launch the next slice while this one works. **Address the agent by its pane
 id**, not a custom name:
 
 ```bash
-herdr agent start "$(basename "$pane")" --kind claude --pane "$pane"   # returns when ready
-herdr agent rename "$pane" "PROJ-42 auth review (code-reviewer)"        # the visible name, after init
+herdr agent start "slice-1" --kind claude --pane "$pane"   # returns when ready
 herdr agent prompt "$pane" "<the self-contained brief for this slice>"
 ```
 
 - **Target by pane id.** A name set at `agent start` is cleared when the agent
   re-registers during init (Claude does this), so a later `agent prompt <name>`
-  fails with `agent_not_found`. The pane id is the stable handle; the name arg is
-  required but you don't rely on it. Set the visible name with `agent rename`
-  once `agent start` has returned, so init does not clear it.
+  fails with `agent_not_found`. The pane id is the stable handle. The name arg is
+  required and must be a legal Herdr agent name, `[a-z][a-z0-9_-]{0,31}` (a pane
+  id such as `w1:p2` is not) and unique among live agents, so pass a handle such
+  as `slice-1`, `slice-2`; the tab label, not the agent name, carries the
+  visible runtime name.
 - `agent start` returns once Herdr detects the agent ready for input. Omitting
   `--wait` on `agent prompt` submits the task and returns; you collect later. Use
   the `--kind` matching the requested agent (`claude`, `codex`, `pi`, `gemini`,
@@ -94,7 +95,8 @@ herdr agent prompt "$pane" "<the self-contained brief for this slice>"
   the agent quits and its tab vanishes before you can read it.
 
 Keep a table as you go — `{label, tab_id, pane_id}` — parsed from each response,
-never guessed.
+never guessed, and check the labels with `herdr tab list`: they are the agents'
+visible names.
 
 ## Dispatch briefs that survive cold context
 
