@@ -37,7 +37,8 @@ const LINEAR_READ = [
 
 // Pi reaches MCP through pi-mcp-adapter's `mcp` proxy, or, with its built-in
 // MCP, through `codemode` limited to the `mcp__` entries; names a setup lacks
-// are ignored. `tool_search` is left out: it loads MCP tools no entry matches.
+// are ignored. `codemode` reaches the permitted MCP tools whatever their
+// exposure, so `tool_search` is not needed.
 const PI_MCP = ['mcp', 'codemode'];
 function server(name) {
   return { claude: [`mcp__${name}`], gemini: [`mcp_${name}_*`], pi: [...PI_MCP, `mcp__${name}__*`] };
@@ -75,9 +76,10 @@ function labelErrors(tools) {
   if (tools === '') return ['`tools` must be an inline comma-separated list'];
   const labels = splitLabels(tools);
   const errors = [];
-  const hasShell = labels.some(l => LABELS[l] && LABELS[l].claude && LABELS[l].claude.includes('Bash'));
+  const known = l => Object.hasOwn(LABELS, l);
+  const hasShell = labels.some(l => known(l) && (LABELS[l].claude || []).includes('Bash'));
   for (const label of labels) {
-    if (!LABELS[label]) errors.push(`unknown tool label "${label}"; add it to scripts/lib/persona-tools.js`);
+    if (!known(label)) errors.push(`unknown tool label "${label}"; add it to scripts/lib/persona-tools.js`);
     else if (LABELS[label].viaShell && !hasShell) errors.push(`tool label "${label}" is reached through the shell, which the persona does not list`);
   }
   return errors;
@@ -96,15 +98,19 @@ function nativeTools(tools, harness) {
 
 // The installed copy of a persona for one harness. Frontmatter is not shown
 // to the agent, so the labels, and for Gemini the skills, move into the body.
-// It reads frontmatter with the validator's parser, so the two agree.
+// It reads frontmatter with the validator's parser, so the two agree, and
+// writes LF, which pi-herdr-agents' parser requires.
 function nativePersona(source, harness) {
-  const crlf = source.includes('\r\n');
-  const content = crlf ? source.replace(/\r\n/g, '\n') : source;
+  const content = source.replace(/\r\n/g, '\n');
   const match = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*\n/.exec(content);
-  if (!match) return source;
+  if (!match) return content;
   const lines = match[1].split('\n');
   const { tools, skills } = parseFrontmatter(content);
-  if (tools === undefined) return source;
+  if (tools === undefined) return content;
+  // One `key: value` per line: a wrapped value would be read in part and
+  // its continuation left behind in the copy.
+  const loose = lines.find(l => l.trim() && !/^[A-Za-z0-9_-]+[ \t]*:/.test(l));
+  if (loose !== undefined) throw new Error(`frontmatter line "${loose.trim()}" continues a value; write each key on one line`);
   const native = nativeTools(tools, harness);
   const kept = lines.filter(l => !/^tools[ \t]*:/.test(l) && !(harness === 'gemini' && /^skills[ \t]*:/.test(l)));
   // Gemini's schema is strict: `tools` is a YAML list and `skills` is unknown.
@@ -117,8 +123,7 @@ function nativePersona(source, harness) {
   const heading = /^# .*\r?\n/m.exec(body);
   const at = heading ? heading.index + heading[0].length : 0;
   body = `${body.slice(0, at)}\n${note.join('\n')}\n${body.slice(at)}`;
-  const out = `---\n${kept.join('\n')}\n---\n${body}`;
-  return crlf ? out.replace(/\n/g, '\r\n') : out;
+  return `---\n${kept.join('\n')}\n---\n${body}`;
 }
 
 module.exports = { HARNESSES, LABELS, labelErrors, nativeTools, nativePersona };
