@@ -59,13 +59,23 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerg
   if (!revert && !merge && !new RegExp(`^(${TYPES})(\\([a-z0-9._/,-]+\\))?!?: \\S.* \\[${ticket}\\]$`).test(subject)) {
     errors.push(`subject must be "<type>(<scope>): <what changed> [<TICKET-ID>]", type one of ${TYPES.split('|').join(', ')} (P2, P3): got "${subject}"`);
   }
-  // Trailers are git's: the last paragraph of the message, where `git interpret-trailers` and %(trailers) find them.
-  const paragraphs = message.split(/\n[ \t]*\n/);
-  const trailerBlock = paragraphs.length > 1 ? paragraphs[paragraphs.length - 1] : '';
+  // Trailers are what git reads as trailers (`git interpret-trailers --parse`, %(trailers)): a final paragraph of
+  // "Key: value" lines, with no prose among them. Without git, the same paragraph rule is applied strictly.
+  const trailerBlock = gitTrailers(message);
   for (const trailer of ['Model', 'Thinking-effort', 'Harness']) {
-    if (!new RegExp(`^${trailer}:[ \\t]*\\S`, 'm').test(trailerBlock)) errors.push(`missing trailer "${trailer}: <value>" in the message's last paragraph (P3)`);
+    if (!new RegExp(`^${trailer}:[ \\t]*\\S`, 'm').test(trailerBlock)) errors.push(`missing trailer "${trailer}: <value>" in the message's trailer block, its last paragraph (P3)`);
   }
   return errors;
+}
+
+function gitTrailers(message) {
+  try {
+    return execFileSync('git', ['interpret-trailers', '--parse', '--no-divider'], { input: `${message}\n`, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+  } catch {
+    const paragraphs = message.split(/\n[ \t]*\n/);
+    const last = paragraphs.length > 1 ? paragraphs[paragraphs.length - 1] : '';
+    return last.split('\n').every(l => /^[A-Za-z0-9][A-Za-z0-9-]*:[ \t]/.test(l) || /^[ \t]+\S/.test(l)) ? last : '';
+  }
 }
 
 // BRAIN_LONG_LIVED: a regular expression for further long-lived branches P16 allows (e.g. staging|develop). It must
@@ -281,10 +291,12 @@ function listChangelogs(base) {
 function dotenvValue(key, { skipEmpty = false } = {}) {
   try {
     const here = git(['rev-parse', '--show-toplevel']).trim();
-    const main = require('path').dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+    // The main checkout is the first worktree git lists; a bare repository has none, so only this worktree counts.
+    const first = git(['worktree', 'list', '--porcelain']).split('\n\n')[0];
+    const main = /^bare$/m.test(first) ? null : (/^worktree (.+)$/m.exec(first) || [])[1];
     const pattern = new RegExp(`^\\s*(export\\s+)?${key}\\s*=`);
     let line;
-    for (const file of [`${here}/.env`, `${main}/.env`]) {
+    for (const file of [`${here}/.env`, ...(main ? [`${main}/.env`] : [])]) {
       if (!fs.existsSync(file)) continue;
       line = fs.readFileSync(file, 'utf8').split('\n').find(l => pattern.test(l) && !(skipEmpty && /=\s*(#.*)?$/.test(l)));
       if (line) break;

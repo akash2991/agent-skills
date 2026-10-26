@@ -1731,7 +1731,7 @@ test('an origin path with extra components is not inferred', () => {
   execFileSync('git', ['remote', 'set-url', 'origin', 'https://github.com/a/b/c.git'], { cwd: f.work });
   const r = require('child_process').spawnSync('node', [mergeScript, '1', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
   assert.notStrictEqual(r.status, 0);
-  assert.match(r.stderr, /not a github\.com remote/);
+  assert.match(r.stderr, /does not name a host\/owner\/name repository|not a github\.com remote/);
   const { originRepo } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
   const cwd = process.cwd();
   try {
@@ -1807,5 +1807,83 @@ test('a reworded merge subject fails the hook (documented) but passes the stored
   assert.strictEqual(require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, env, encoding: 'utf8' }).status, 1);
   g(['commit', '-q', '--amend', '--no-verify', '-F', path.join(dir, 'msg')]);
   assert.strictEqual(require('child_process').spawnSync('node', [script, 'commits', '--base', 'base'], { cwd: dir, env, encoding: 'utf8' }).status, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('git trailer semantics: prose inside the last paragraph means no trailers', () => {
+  const msg = 'feat(x): y [ENG-1]\n\nModel: m\nThinking-effort: high\nHarness: h\nThis is prose, not a trailer.';
+  assert.strictEqual(check.checkCommitMessage(msg, { LINEAR_TEAM: 'ENG' }).filter(e => /missing trailer/.test(e)).length, 3);
+  const co = 'feat(x): y [ENG-1]\n\nModel: m\nThinking-effort: high\nHarness: h\nCo-Authored-By: A <a@b>';
+  assert.deepStrictEqual(check.checkCommitMessage(co, { LINEAR_TEAM: 'ENG' }), []);
+});
+
+test('an already-merged PR whose merge commit names another ticket keeps its branches', () => {
+  const f = approvedFixture();
+  patchGh(f, "if (a[0] === 'pr' && a[1] === 'view') {", "if (a[0] === 'api' && a.some(x => /\\/commits\\/abcdef1234$/.test(x))) { process.stdout.write(JSON.stringify({ parents: ['p0', " + JSON.stringify(f.head) + "], message: 'Merge pull request #1 [ENG-999]\\n\\nModel: m\\nThinking-effort: h\\nHarness: c' })); process.exit(0); }");
+  const v = JSON.parse(fs.readFileSync(path.join(f.root, 'view.json'), 'utf8'));
+  fs.writeFileSync(path.join(f.root, 'view.json'), JSON.stringify({ ...v, state: 'MERGED', mergeCommit: { oid: 'abcdef1234' } }));
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /does not name this PR's ticket ENG-1/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: path.join(f.root, 'origin.git'), stdio: 'pipe' });
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('cleanup never fetches through a symbolic origin/<base> onto a local branch', () => {
+  const f = approvedFixture();
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: f.work, encoding: 'utf8' });
+  g(['branch', 'private-work', f.head]);
+  g(['commit', '-q', '--allow-empty', '-m', 'private']);
+  const tip = g(['rev-parse', 'HEAD']).trim();
+  g(['update-ref', 'refs/heads/private-work', tip]);
+  g(['reset', '-q', '--hard', 'HEAD~1']);
+  g(['update-ref', '-d', 'refs/remotes/origin/main']);
+  g(['symbolic-ref', 'refs/remotes/origin/main', 'refs/heads/private-work']);
+  const wt = path.join(f.root, 'private-wt');
+  g(['worktree', 'add', '-q', wt, 'private-work']);
+  require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(g(['rev-parse', 'refs/heads/private-work']).trim(), tip);
+  assert.strictEqual(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: wt, encoding: 'utf8' }).trim(), tip);
+  assert.strictEqual(g(['for-each-ref', 'refs/merge-pr/']).trim(), '', 'the scratch ref is gone');
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('an explicit GitHub Enterprise --repo that origin names exactly can clean up', () => {
+  const f = approvedFixture();
+  execFileSync('git', ['remote', 'set-url', 'origin', 'https://github.enterprise.example/o/r.git'], { cwd: f.work });
+  const { originRepo } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const cwd = process.cwd();
+  try { process.chdir(f.work); assert.throws(() => originRepo(), /not a github\.com remote/); } finally { process.chdir(cwd); }
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'github.enterprise.example/o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.match(r.stderr + r.stdout, /merged #1/, r.stderr);
+  assert.doesNotMatch(r.stderr, /not in origin.s repository/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a bare repository\'s parent .env is never read from its worktrees', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bare-'));
+  const bare = path.join(dir, 'app.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+  const seed = path.join(dir, 'seed');
+  execFileSync('git', ['clone', '-q', bare, seed]);
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: seed });
+  execFileSync('git', ['push', '-q', 'origin', 'HEAD:main'], { cwd: seed });
+  execFileSync('git', ['worktree', 'add', '-q', path.join(dir, 'ENG-1-x'), 'main'], { cwd: bare });
+  fs.writeFileSync(path.join(dir, '.env'), 'LINEAR_TEAM=OTHERPROJ\nBRAIN_LONG_LIVED=\n');
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const out = require('child_process').spawnSync('node', ['-e', `const c=require(${JSON.stringify(script)});const e={};c.loadDotenv(e);process.stdout.write(JSON.stringify(e))`], { cwd: path.join(dir, 'ENG-1-x'), encoding: 'utf8', env: { ...process.env, CI: '' } });
+  assert.strictEqual(out.stdout, '{}', 'neither key comes from outside the checkouts');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the stored-commit check (CI) applies git trailer semantics too', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trc-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'a']); g(['switch', '-q', '-c', 'ENG-1-x']);
+  g(['commit', '-q', '--allow-empty', '-m', 'feat(x): y [ENG-1]\n\nModel: m\nThinking-effort: high\nHarness: h\nThis is prose, not a trailer.']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const r = require('child_process').spawnSync('node', [script, 'commits', '--base', 'main'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG' } });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /missing trailer "Model/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

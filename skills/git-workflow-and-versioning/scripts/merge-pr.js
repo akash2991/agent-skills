@@ -30,6 +30,15 @@ function git(args) {
 // included, is refused rather than guessed, so gh never acts on a same-named repository elsewhere: pass
 // --repo <host>/<owner>/<name> for it (and for a fork's PR, which lives on upstream).
 function originRepo() {
+  const { url, host, owner, name } = originParts();
+  if (resolvedHost(host, url) !== 'github.com') {
+    throw new Error(`origin (${url}) is not a github.com remote; pass --repo <host>/<owner>/<name>`);
+  }
+  return `${owner}/${name}`;
+}
+
+// origin's single URL split into host, owner, and name, for any host (an explicit --repo may name GitHub Enterprise).
+function originParts() {
   // The URL as configured, before any url.*.insteadOf rewrite: that is the repository the user named.
   // One URL only: with several, git fetches from the first while `config --get` returns the last, so the repository
   // is ambiguous; refuse rather than pick one.
@@ -45,10 +54,8 @@ function originRepo() {
   // The path must be exactly owner/name: https://github.com/a/b/c.git names no repository a/b or b/c.
   const repoPath = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+\//i, '').replace(/^[^@/]+@[^:/]+:/, '').replace(/^[^@/:]+:(?!\/)/, '');
   const repo = /^([^/:]+)\/([^/]+?)(?:\.git)?\/?$/.exec(repoPath);
-  if (!repo || resolvedHost(host, url) !== 'github.com') {
-    throw new Error(`origin (${url}) is not a github.com remote; pass --repo <host>/<owner>/<name>`);
-  }
-  return `${repo[1]}/${repo[2]}`;
+  if (!repo || !host) throw new Error(`origin (${url}) does not name a host/owner/name repository; pass --repo <host>/<owner>/<name>`);
+  return { url, host, owner: repo[1], name: repo[2] };
 }
 
 function resolvedHost(host, url) {
@@ -321,13 +328,17 @@ function hasMergeQueue(repo, base) {
 
 // What is wrong with the merge commit `oid` for head `head`: it must have two parents, one of them the inspected head
 // (P15: a merge commit, not a squash or rebase), and carry the ticket and the P3 trailers. Empty when it is right.
-function mergeCommitProblems(repo, oid, head) {
+// ticket: this PR's own ticket, from its title; the merge commit must name it, not merely some ticket (P15).
+function mergeCommitProblems(repo, oid, head, ticket) {
   if (!oid) return ['no merge commit is recorded'];
   const { host, owner, name } = splitRepo(repo);
   const c = JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/commits/${oid}`, '--jq', '{parents: [.parents[].sha], message: .commit.message}']));
   const problems = [];
   if (c.parents.length !== 2 || !c.parents.includes(head)) problems.push(`${oid.slice(0, 8)} is not a merge commit of the inspected head (P15)`);
   problems.push(...checkCommitMessage(c.message, process.env, { isMerge: true, stripComments: false }));
+  const subject = c.message.split('\n')[0];
+  if (!ticket) problems.push(`the PR title names no ticket, so the merge commit cannot be tied to one (P15)`);
+  else if (!new RegExp(`\\[${ticket}\\]`).test(subject)) problems.push(`${oid.slice(0, 8)} does not name this PR's ticket ${ticket} in its subject (P15)`);
   return problems;
 }
 
@@ -348,7 +359,9 @@ function main(argv) {
   if (!ownRepo) {
     // Compare [host/]owner/name by parts, case-insensitively: github.com/o/r names the same repository as o/r.
     const same = (a, b) => ['host', 'owner', 'name'].every(k => a[k].toLowerCase() === b[k].toLowerCase());
+    // github.com through inference (SSH aliases included); any other host only when origin names it exactly.
     try { ownRepo = same(splitRepo(originRepo()), splitRepo(repo)); } catch { ownRepo = false; }
+    if (!ownRepo) { try { const o = originParts(); ownRepo = same(o, splitRepo(repo)); } catch { ownRepo = false; } }
   }
   // The origin URL as verified now; cleanup uses this one and stops if origin is changed meanwhile.
   let verifiedUrl = '';
@@ -412,7 +425,8 @@ function main(argv) {
   if (!alreadyMerged && keep && !isProtected && !view.isCrossRepository) {
     let autoDelete = true;
     try { autoDelete = gh(['api', '--hostname', h, `repos/${o}/${n}`, '--jq', '.delete_branch_on_merge']).trim() !== 'false'; } catch { /* unknown: assume it deletes */ }
-    if (autoDelete) blockers.push(`${view.headRefName} must be kept but is not known to be protected, and the repository deletes head branches on merge (or that could not be read): protect it first (P16)`);
+    if (autoDelete && longLivedUnknown && isTicketBranch(view.headRefName)) blockers.push(`the repository variable BRAIN_LONG_LIVED could not be read, so ${view.headRefName} cannot be shown to be a ticket branch, and the repository deletes head branches on merge: set BRAIN_LONG_LIVED in .env (empty if there are no long-lived branches) or give the token read access to variables (P16)`);
+    else if (autoDelete) blockers.push(`${view.headRefName} must be kept but is not known to be protected, and the repository deletes head branches on merge (or that could not be read): protect it first (P16)`);
   }
   // The merge commit must meet P3 and P15 before it exists: check the planned message.
   if (!alreadyMerged) for (const p of checkCommitMessage(`Merge pull request #${pr} [${ticket || ''}]\n\nModel: ${opts.model}\nThinking-effort: ${opts.effort}\nHarness: ${opts.harness}`, process.env, { isMerge: true })) blockers.push(`planned merge commit: ${p}`);
@@ -467,7 +481,8 @@ function main(argv) {
   // Whoever merged it, cleanup runs only when the merge commit is a real merge of the inspected head with the ticket and
   // trailers; otherwise the branches stay as evidence.
   let problems;
-  try { problems = mergeCommitProblems(repo, after.mergeCommit && after.mergeCommit.oid, view.headRefOid); } catch (err) {
+  const prTicket = ticket || ((new RegExp(`^(${ticketSource()}): `).exec(view.title || '') || [])[1] || '');
+  try { problems = mergeCommitProblems(repo, after.mergeCommit && after.mergeCommit.oid, view.headRefOid, prTicket); } catch (err) {
     console.error(`merge-pr: PR #${pr} is merged, but its merge commit could not be read (${String(err.stderr || err.message).trim()}); nothing was deleted: run merge-pr again`);
     process.exit(OUTCOME_UNKNOWN);
   }
@@ -559,8 +574,11 @@ function main(argv) {
   } else if (local) {
     try {
       // From the verified URL, not the origin remote, which may have changed.
-      git(['fetch', '--quiet', url, `+refs/heads/${view.baseRefName}:refs/remotes/origin/${view.baseRefName}`]);
-      git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
+      // Into a ref of merge-pr's own, never origin/<base>: a symbolic remote ref there would carry the fetch onto a branch.
+      const scratch = `refs/merge-pr/${process.pid}/base`;
+      git(['fetch', '--quiet', '--no-write-fetch-head', url, `+refs/heads/${view.baseRefName}:${scratch}`]);
+      try { git(['merge-base', '--is-ancestor', local, scratch]); }
+      finally { try { git(['update-ref', '--no-deref', '-d', scratch]); } catch { /* already gone */ } }
       const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
       if (checkedOut) throw new Error('it is checked out in a worktree: remove that worktree (or detach it), then delete the branch');
       git(['update-ref', '--no-deref', '-d', `refs/heads/${view.headRefName}`, local]);
