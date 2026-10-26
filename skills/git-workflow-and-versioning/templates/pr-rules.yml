@@ -37,7 +37,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # Required: the repository variable LINEAR_TEAM (e.g. ENG), the team whose ticket ids are accepted.
           LINEAR_TEAM: ${{ vars.LINEAR_TEAM }}
-          # Set BRAIN_LONG_LIVED (e.g. ^(staging|develop)$) for the long-lived branches P16 allows besides main and release/*.
+          # Set BRAIN_LONG_LIVED (e.g. staging|develop; it must match the whole name) for the long-lived branches P16 allows besides main and release/*.
           BRAIN_LONG_LIVED: ${{ vars.BRAIN_LONG_LIVED }}
         run: |
           # The checker script comes from the base branch, never from the PR; it counts lines with no .gitattributes applied. This workflow file

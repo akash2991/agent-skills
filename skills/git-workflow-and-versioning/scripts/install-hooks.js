@@ -63,6 +63,12 @@ if (require.main === module) {
   const root = git(['rev-parse', '--show-toplevel']);
   const hooksDir = path.resolve(git(['rev-parse', '--git-path', 'hooks']));
   const rel = path.relative(root, CHECK).split(path.sep).join('/');
+  // The hook finds the checker relative to each worktree's root, so it must be this repository's own copy (the one
+  // agent-brain pull installs): a path outside would resolve elsewhere from another worktree and skip every check.
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    console.error(`install-hooks: ${CHECK} is outside this repository; run the copy installed in it (.agents/skills/git-workflow-and-versioning/scripts/install-hooks.js)`);
+    process.exit(1);
+  }
   // A hook directory outside this repository (a global or shared core.hooksPath, ../shared-hooks, or a .git/hooks
   // symlinked elsewhere) would install these hooks for other repositories too: the resolved, canonical directory must
   // lie in this worktree or its git dir, or nothing is written.

@@ -250,15 +250,17 @@ function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
       continue;
     }
     const dir = p.split('/').slice(0, -1);
-    while (dir.length) {
-      const candidate = [...dir, 'CHANGELOG.md'].join('/');
-      // A global location (docs/CHANGELOG.md) is never a service changelog: the global requirement covers it, even
-      // after the PR moves the global changelog to the other location.
-      if (GLOBAL_CHANGELOGS.includes(candidate)) break;
-      if (allChangelogs.includes(candidate)) {
-        const serviceDir = `${dir.join('/')}/`;
-        if (!headFiles || headFiles.some(f => f.startsWith(serviceDir))) required.add(candidate);
-        break;
+    // The nearest service changelog above the file: <service>/CHANGELOG.md or <service>/docs/CHANGELOG.md.
+    service: while (dir.length) {
+      for (const candidate of [[...dir, 'CHANGELOG.md'].join('/'), [...dir, 'docs', 'CHANGELOG.md'].join('/')]) {
+        // A global location (docs/CHANGELOG.md) is never a service changelog: the global requirement covers it, even
+        // after the PR moves the global changelog to the other location.
+        if (GLOBAL_CHANGELOGS.includes(candidate)) break service;
+        if (allChangelogs.includes(candidate)) {
+          const serviceDir = `${dir.join('/')}/`;
+          if (!headFiles || headFiles.some(f => f.startsWith(serviceDir))) required.add(candidate);
+          break service;
+        }
       }
       dir.pop();
     }

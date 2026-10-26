@@ -9,6 +9,14 @@ const path = require('path');
 const check = require('../skills/git-workflow-and-versioning/scripts/brain-git-check');
 const { mergeBlockers } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 const { install, MARKER } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
+
+// install-hooks runs only from the copy inside the repository it installs for, as agent-brain pull puts it there.
+function hooksIn(root) {
+  const dest = path.join(root, '.agents', 'skills', 'git-workflow-and-versioning', 'scripts');
+  fs.mkdirSync(dest, { recursive: true });
+  for (const f of ['install-hooks.js', 'brain-git-check.js', 'package.json']) fs.copyFileSync(path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', f), path.join(dest, f));
+  return path.join(dest, 'install-hooks.js');
+}
 const { checkCommitMessage } = check;
 
 // The suite is independent of the caller's shell: a project's .env loaded there must not change the results.
@@ -1144,7 +1152,7 @@ test('a push never deletes a long-lived branch; install-hooks notes a relative h
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-'));
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: dir });
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(dir);
   const out = execFileSync('node', [script], { cwd: dir, encoding: 'utf8' });
   assert.match(out, /relative, so these hooks cover this worktree only/);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1185,15 +1193,12 @@ test('with a relative hooksPath, a linked worktree gets its own hooks from insta
   const g = (args, cwd = main) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
   g(['init', '-q', '-b', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'init']);
   g(['config', 'core.hooksPath', '.githooks']);
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
-  // the installed hooks look for the checker at its path in the checkout
-  const checker = path.join(main, 'skills', 'git-workflow-and-versioning', 'scripts');
-  fs.mkdirSync(checker, { recursive: true });
-  execFileSync('node', [script], { cwd: main, encoding: 'utf8' });
+  // the installed hooks look for the checker at its path in each checkout
+  execFileSync('node', [hooksIn(main)], { cwd: main, encoding: 'utf8' });
   const wt = path.join(dir, 'ENG-1-x');
   g(['worktree', 'add', '-q', wt, '-b', 'ENG-1-x']);
   assert.ok(!fs.existsSync(path.join(wt, '.githooks', 'commit-msg')), 'a new worktree starts without hooks');
-  const out = execFileSync('node', [script], { cwd: wt, encoding: 'utf8' });
+  const out = execFileSync('node', [hooksIn(wt)], { cwd: wt, encoding: 'utf8' });
   assert.match(out, /relative, so these hooks cover this worktree only/);
   assert.ok(fs.existsSync(path.join(wt, '.githooks', 'commit-msg')));
   fs.rmSync(dir, { recursive: true, force: true });
@@ -1250,7 +1255,7 @@ test('install-hooks refuses an absolute hooksPath outside the repository', () =>
   const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'core.hooksPath', path.join(dir, 'global-hooks')], { cwd: repo });
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
   assert.strictEqual(r.status, 1);
   assert.ok(!fs.existsSync(path.join(dir, 'global-hooks', 'commit-msg')));
@@ -1297,7 +1302,7 @@ test('install-hooks refuses a global core.hooksPath (isolated global config)', (
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const globalCfg = path.join(dir, 'gitconfig');
   fs.writeFileSync(globalCfg, `[core]\n\thooksPath = ${path.join(dir, 'shared-hooks')}\n`);
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: globalCfg } });
   assert.strictEqual(r.status, 1, r.stdout);
   assert.match(r.stderr, /outside this repository|global git config/);
@@ -1337,7 +1342,7 @@ test('a relative hooksPath that leaves the repository is refused', () => {
   const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'core.hooksPath', '../shared-hooks'], { cwd: repo });
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
   assert.strictEqual(r.status, 1);
   assert.ok(!fs.existsSync(path.join(dir, 'shared-hooks', 'commit-msg')));
@@ -1405,7 +1410,7 @@ test('a hooks directory that is a symlink out of the repository is refused', () 
   fs.mkdirSync(path.join(dir, 'outside'));
   fs.symlinkSync(path.join(dir, 'outside'), path.join(repo, '.githooks'));
   execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: repo });
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
   assert.strictEqual(r.status, 1);
   assert.ok(!fs.existsSync(path.join(dir, 'outside', 'commit-msg')));
@@ -1521,7 +1526,7 @@ test('a symlinked default .git/hooks outside the repository is refused', () => {
   fs.mkdirSync(path.join(dir, 'shared-hooks'));
   fs.rmSync(path.join(repo, '.git', 'hooks'), { recursive: true, force: true });
   fs.symlinkSync(path.join(dir, 'shared-hooks'), path.join(repo, '.git', 'hooks'));
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
   assert.strictEqual(r.status, 1);
   assert.ok(!fs.existsSync(path.join(dir, 'shared-hooks', 'commit-msg')));
@@ -1581,7 +1586,7 @@ test('install-hooks never writes through a symlinked hook file, and restores the
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hfs-'));
   const repo = path.join(dir, 'r'); fs.mkdirSync(repo);
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const run = () => require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8' });
   assert.strictEqual(run().status, 0);
   const hook = path.join(repo, '.git', 'hooks', 'commit-msg');
@@ -1769,7 +1774,7 @@ test('a global core.hooksPath inside this repository is still refused', () => {
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const globalCfg = path.join(dir, 'gitconfig');
   fs.writeFileSync(globalCfg, `[core]\n\thooksPath = ${path.join(repo, '.githooks')}\n`);
-  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const script = hooksIn(repo);
   const r = require('child_process').spawnSync('node', [script], { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: globalCfg } });
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /global git config/);
@@ -2153,5 +2158,35 @@ test('the commit-msg hook prints no git error on a repository\'s first commit', 
   const r = require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG' } });
   assert.strictEqual(r.status, 0);
   assert.doesNotMatch(r.stderr, /fatal:/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('P13 finds a service changelog under <service>/docs/', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'svcdocs-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']);
+  for (const f of ['docs/CHANGELOG.md', 'services/api/docs/CHANGELOG.md', 'services/api/src/api.js']) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), 'x\n'); }
+  g(['add', '-A']); g(['commit', '-q', '-m', 'init']); g(['switch', '-q', '-c', 'ENG-1-x']);
+  fs.appendFileSync(path.join(dir, 'services/api/src/api.js'), 'y\n'); fs.appendFileSync(path.join(dir, 'docs/CHANGELOG.md'), '- y\n');
+  g(['commit', '-q', '-am', 'feat(api): y [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const run = () => require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--title', 'ENG-1: y', '--branch', 'ENG-1-x'], { cwd: dir, encoding: 'utf8', env: { ...process.env, LINEAR_TEAM: 'ENG', PR_BODY: '' } });
+  const r = run();
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /services\/api\/docs\/CHANGELOG\.md/);
+  fs.appendFileSync(path.join(dir, 'services/api/docs/CHANGELOG.md'), '- y\n');
+  g(['commit', '-q', '-am', 'docs(api): changelog [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  assert.strictEqual(run().status, 0, run().stderr);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('install-hooks refuses to run from a checker outside the repository', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'install-hooks.js');
+  const r = require('child_process').spawnSync('node', [script], { cwd: dir, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /outside this repository; run the copy installed in it/);
+  assert.ok(!fs.existsSync(path.join(dir, '.git', 'hooks', 'commit-msg')));
   fs.rmSync(dir, { recursive: true, force: true });
 });
