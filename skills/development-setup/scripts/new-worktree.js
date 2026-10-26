@@ -8,6 +8,7 @@
 // Prints shell exports: AGENT_NAME (the worktree basename), COMPOSE_PROJECT_NAME (lowercase), and n free host ports.
 
 const { execFileSync } = require('child_process');
+const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
@@ -46,13 +47,34 @@ async function freePorts(count, used, start = 20000, end = 29999) {
   return found;
 }
 
+// Single-quote a value for POSIX shell so a path with spaces or metacharacters is set verbatim.
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 function git(args, cwd) {
   return execFileSync('git', args, { encoding: 'utf8', cwd }).trim();
 }
 
+// The first entry of `git worktree list` is the main checkout, also for separate-git-dir repos and submodules.
 function mainCheckout() {
-  const common = path.resolve(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
-  return path.dirname(common);
+  const first = git(['worktree', 'list', '--porcelain']).split('\n').find(l => l.startsWith('worktree '));
+  return first.slice('worktree '.length);
+}
+
+// The default base is origin's default branch when it is known; `main` is only the fallback.
+function defaultBase(root) {
+  try { return git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root).replace(/^origin\//, ''); }
+  catch { return 'main'; }
+}
+
+// Ports this agent claims are recorded in the common git dir so agents started in parallel do not get the same ones.
+function claimFile(root) {
+  return path.join(path.resolve(root, git(['rev-parse', '--git-common-dir'], root)), 'brain-port-claims.json');
+}
+
+function readClaims(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
 }
 
 function optionValue(argv, flag) {
@@ -70,10 +92,14 @@ async function main(argv) {
   const p = plan(name, root);
   if (cmd === 'remove') {
     git(['worktree', 'remove', p.worktree], root);
+    const file = claimFile(root);
+    const claims = readClaims(file);
+    delete claims[p.name];
+    fs.writeFileSync(file, JSON.stringify(claims, null, 2));
     console.log(`removed ${p.worktree}`);
     return;
   }
-  const base = optionValue(rest, '--base') || 'main';
+  const base = optionValue(rest, '--base') || defaultBase(root);
   const exists = git(['branch', '--list', p.branch], root) !== '';
   const args = exists ? ['worktree', 'add', p.worktree, p.branch] : ['worktree', 'add', '-b', p.branch, p.worktree, base];
   if (rest.includes('--dry-run')) {
@@ -86,16 +112,22 @@ async function main(argv) {
   if (count) {
     let psOutput = '';
     try { psOutput = execFileSync('docker', ['ps', '--format', '{{.Ports}}'], { encoding: 'utf8' }); } catch { /* docker not running: only the bind test applies */ }
-    ports = await freePorts(count, usedHostPorts(psOutput));
+    const file = claimFile(root);
+    const claims = readClaims(file);
+    const claimed = new Set(Object.entries(claims).filter(([k]) => k !== p.name).flatMap(([, v]) => v));
+    ports = await freePorts(count, new Set([...usedHostPorts(psOutput), ...claimed]));
+    if (ports.length < count) throw new Error(`only ${ports.length} of ${count} host ports are free; free some or ask for fewer`);
+    claims[p.name] = ports;
+    fs.writeFileSync(file, JSON.stringify(claims, null, 2));
   }
-  console.log(`export AGENT_NAME=${p.name}`);
-  console.log(`export WORKTREE=${p.worktree}`);
-  console.log(`export COMPOSE_PROJECT_NAME=${p.composeProject}`);
-  ports.forEach((port, i) => console.log(`export HOST_PORT_${i + 1}=${port}`));
+  console.log(`export AGENT_NAME=${shellQuote(p.name)}`);
+  console.log(`export WORKTREE=${shellQuote(p.worktree)}`);
+  console.log(`export COMPOSE_PROJECT_NAME=${shellQuote(p.composeProject)}`);
+  ports.forEach((port, i) => console.log(`export HOST_PORT_${i + 1}=${shellQuote(port)}`));
 }
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch(err => { console.error(`new-worktree: ${err.message}`); process.exit(1); });
 }
 
-module.exports = { plan, usedHostPorts, freePorts };
+module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout };

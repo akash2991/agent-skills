@@ -12,11 +12,20 @@ const path = require('path');
 const MARKER = '# brain-git-check hook';
 const CHECK = path.join(__dirname, 'brain-git-check.js');
 
+// A checkout that predates the brain pull has no check script: warn and let the commit or push through,
+// instead of failing every command with MODULE_NOT_FOUND.
 function hookBody(name, checkPath) {
   const run = name === 'commit-msg'
-    ? `node "$ROOT/${checkPath}" commit-msg "$1"`
-    : `node "$ROOT/${checkPath}" branch`;
-  return `#!/bin/sh\n${MARKER}\nROOT="$(git rev-parse --show-toplevel)"\n${run}\n`;
+    ? `node "$CHECK" commit-msg "$1"`
+    : `node "$CHECK" push`;
+  return [
+    '#!/bin/sh', MARKER,
+    'ROOT="$(git rev-parse --show-toplevel)"',
+    `CHECK="$ROOT/${checkPath}"`,
+    'if [ ! -f "$CHECK" ]; then echo "brain-git-check: $CHECK not found; skipping" >&2; exit 0; fi',
+    run,
+    '',
+  ].join('\n');
 }
 
 function install(hooksDir, checkPathFromRoot) {

@@ -90,3 +90,16 @@ test('an illegal move or a missing field cannot be rendered', () => {
   assert.ok(renderUpdate({ ...base, reason: '' }).errors.includes('missing reason'));
   assert.match(renderUpdate({ ...base, review: 'lgtm' }).errors[0], /review must be/);
 });
+
+test('a Blocked issue returns only to a live state other than Blocked', () => {
+  assert.match(checkMove('Blocked', 'Done', { left: 'Done' }).error, /must be a live state/);
+  assert.strictEqual(checkMove('Blocked', 'Blocked', { left: 'Blocked' }).ok, false);
+  assert.ok(checkMove('Blocked', 'Todo', { left: 'Todo' }).ok);
+});
+
+test('the state field is recognised in any spelling, so a lowercase name cannot skip the checks', () => {
+  const illegal = { ...base, field: ' state ', from: 'Done', to: 'In Progress' };
+  assert.match(renderUpdate(illegal).errors[0], /has no way out/);
+  const blocked = { ...base, field: 'state', to: 'Blocked' };
+  assert.match(renderUpdate(blocked).errors.join(), /a Blocked update needs blockerType/);
+});

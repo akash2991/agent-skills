@@ -1,195 +1,878 @@
 {
   "title": "Agent brain: who takes each step",
-  "areas": ["Git and delivery", "Linear", "Planning and design", "Building", "Reviews and audits", "Brain upkeep", "Infrastructure"],
+  "areas": [
+    "Git and delivery",
+    "Linear",
+    "Planning and design",
+    "Building",
+    "Reviews and audits",
+    "Brain upkeep",
+    "Infrastructure"
+  ],
   "flows": [
-    { "id": "commit", "name": "Commit a change", "area": "Git and delivery", "summary": "P1–P4: a small working commit with the ticket id and the model, effort and harness it was made with.",
+    {
+      "id": "commit",
+      "name": "Commit a change",
+      "area": "Git and delivery",
+      "summary": "P1–P4: a small working commit with the ticket id and the model, effort and harness it was made with.",
       "steps": [
-        ["Slice the change into one coherent capability", "judgment", null, "P1 P2"],
-        ["Write the subject, the why, and the summary", "judgment", null, "P3"],
-        ["Subject shape, ticket id, and the Model / Thinking-effort / Harness trailers", "det", "skills/git-workflow-and-versioning/scripts/brain-git-check.js", "P2 P3 P4"],
-        ["Install the commit-msg and pre-push hooks", "det", "skills/git-workflow-and-versioning/scripts/install-hooks.js", "P3 P5"]
-      ] },
-    { "id": "branch-worktree", "name": "Branch and worktree", "area": "Git and delivery", "summary": "P5–P7 and DS2–DS3: one branch and one sibling worktree per ticket.",
+        [
+          "Slice the change into one coherent capability",
+          "judgment",
+          null,
+          "P1 P2"
+        ],
+        [
+          "Write the subject, the why, and the summary",
+          "judgment",
+          null,
+          "P3"
+        ],
+        [
+          "Subject shape, ticket id, and the Model / Thinking-effort / Harness trailers",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P2 P3 P4"
+        ],
+        [
+          "Install the commit-msg and pre-push hooks",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/install-hooks.js",
+          "P3 P5"
+        ]
+      ]
+    },
+    {
+      "id": "branch-worktree",
+      "name": "Branch and worktree",
+      "area": "Git and delivery",
+      "summary": "P5–P7 and DS2–DS3: one branch and one sibling worktree per ticket.",
       "steps": [
-        ["Choose the slug", "judgment", null, "P5"],
-        ["Branch is <ticket>-<slug>", "det", "skills/git-workflow-and-versioning/scripts/brain-git-check.js", "P5"],
-        ["Create the sibling worktree, agent name, lowercase Compose project, free ports", "det", "skills/development-setup/scripts/new-worktree.js", "P6 DS2 DS3"],
-        ["Remove the worktree after the PR is open", "det", "skills/development-setup/scripts/new-worktree.js", "DS2"],
-        ["Delete the local and remote branch after merge", "det", "skills/git-workflow-and-versioning/scripts/merge-pr.js", "P7"]
-      ] },
-    { "id": "raise-pr", "name": "Raise a pull request", "area": "Git and delivery", "summary": "P8, P10, P11, P13: one PR per ticket, small, with a changelog line.",
+        [
+          "Choose the slug",
+          "judgment",
+          null,
+          "P5"
+        ],
+        [
+          "Branch is <ticket>-<slug>",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P5"
+        ],
+        [
+          "Create the sibling worktree, agent name, lowercase Compose project, free ports",
+          "det",
+          "skills/development-setup/scripts/new-worktree.js",
+          "P6 DS2 DS3"
+        ],
+        [
+          "Remove the worktree after the PR is open",
+          "det",
+          "skills/development-setup/scripts/new-worktree.js",
+          "DS2"
+        ],
+        [
+          "Delete the local and remote branch after merge",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/merge-pr.js",
+          "P7"
+        ]
+      ]
+    },
+    {
+      "id": "raise-pr",
+      "name": "Raise a pull request",
+      "area": "Git and delivery",
+      "summary": "P8, P10, P11, P13: one PR per ticket, small, with a changelog line.",
       "steps": [
-        ["Find the existing PR for the ticket before creating one", "det", null, "P10"],
-        ["Title is <ticket>: <goal>", "det", "skills/git-workflow-and-versioning/scripts/brain-git-check.js", "P10"],
-        ["Size within 400 lines and 10 files", "det", "skills/git-workflow-and-versioning/scripts/brain-git-check.js", "P11"],
-        ["A CHANGELOG.md line is in the change", "det", "skills/git-workflow-and-versioning/scripts/brain-git-check.js", "P13"],
-        ["Fill the PR body from the template", "det", null, "P10"],
-        ["Decide how to split an oversized change", "judgment", null, "P11"],
-        ["Write the changelog line", "judgment", null, "P13"],
-        ["Request the reviewer and link the PR on the ticket", "det", null, "P10"]
-      ] },
-    { "id": "review", "name": "Review a pull request", "area": "Reviews and audits", "summary": "P10, P14: adversarial review with inline findings and a submitted verdict.",
+        [
+          "Find the existing PR for the ticket before creating one",
+          "det",
+          null,
+          "P10"
+        ],
+        [
+          "Title is <ticket>: <goal>",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P10"
+        ],
+        [
+          "Size within 400 lines and 10 files",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P11"
+        ],
+        [
+          "A CHANGELOG.md line is in the change",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P13"
+        ],
+        [
+          "Fill the PR body from the template",
+          "det",
+          null,
+          "P10"
+        ],
+        [
+          "Decide how to split an oversized change",
+          "judgment",
+          null,
+          "P11"
+        ],
+        [
+          "Write the changelog line",
+          "judgment",
+          null,
+          "P13"
+        ],
+        [
+          "Request the reviewer and link the PR on the ticket",
+          "det",
+          null,
+          "P10"
+        ]
+      ]
+    },
+    {
+      "id": "review",
+      "name": "Review a pull request",
+      "area": "Reviews and audits",
+      "summary": "P10, P14: adversarial review with inline findings and a submitted verdict.",
       "steps": [
-        ["Find defects in the diff", "judgment", null, "P10"],
-        ["Rate each finding's severity and propose the fix", "judgment", null, "P10"],
-        ["Post inline comments and a submitted verdict", "det", null, "P10"],
-        ["File a review issue in Linear per finding", "det", null, "P14"],
-        ["Author fixes, replies with the commit, resolves the thread", "judgment", null, "P10"],
-        ["CI status of the PR", "det", ".github/workflows/checks.yml", "T8"]
-      ] },
-    { "id": "merge", "name": "Merge a pull request", "area": "Git and delivery", "summary": "P12, P15: a merge commit with the ticket id, only when green and approved.",
+        [
+          "Find defects in the diff",
+          "judgment",
+          null,
+          "P10"
+        ],
+        [
+          "Rate each finding's severity and propose the fix",
+          "judgment",
+          null,
+          "P10"
+        ],
+        [
+          "Post inline comments and a submitted verdict",
+          "det",
+          null,
+          "P10"
+        ],
+        [
+          "File a review issue in Linear per finding",
+          "det",
+          null,
+          "P14"
+        ],
+        [
+          "Author fixes, replies with the commit, resolves the thread",
+          "judgment",
+          null,
+          "P10"
+        ],
+        [
+          "Read the PR's CI status and act on it",
+          "det",
+          null,
+          "T8"
+        ]
+      ]
+    },
+    {
+      "id": "merge",
+      "name": "Merge a pull request",
+      "area": "Git and delivery",
+      "summary": "P12, P15: a merge commit with the ticket id, only when green and approved.",
       "steps": [
-        ["CI green and review approved (or review optional on the ticket)", "det", "skills/git-workflow-and-versioning/scripts/merge-pr.js", "P10 P12"],
-        ["Merge commit, never squash, ticket id in the message", "det", "skills/git-workflow-and-versioning/scripts/merge-pr.js", "P15"],
-        ["Move the ticket to Merged with a status update", "det", null, "M5"]
-      ] },
-    { "id": "release", "name": "Release a version", "area": "Git and delivery", "summary": "L1: semver, a changelog entry listing the tickets, a tag and a GitHub release.",
+        [
+          "CI green and review approved (or review optional on the ticket)",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/merge-pr.js",
+          "P10 P12"
+        ],
+        [
+          "Merge commit, never squash, ticket id in the message",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/merge-pr.js",
+          "P15"
+        ],
+        [
+          "Move the ticket to Merged with a status update",
+          "det",
+          null,
+          "M5"
+        ]
+      ]
+    },
+    {
+      "id": "release",
+      "name": "Release a version",
+      "area": "Git and delivery",
+      "summary": "L1: semver, a changelog entry listing the tickets, a tag and a GitHub release.",
       "steps": [
-        ["Pick the semver bump from the commit types", "det", null, "L1"],
-        ["Write the changelog entry from the merged tickets", "det", null, "L1"],
-        ["Tag vX.Y.Z and publish the release", "det", null, "L1"],
-        ["Decide that the release should go out", "human", null, "L2"]
-      ] },
-    { "id": "linear-intake", "name": "Take in a request", "area": "Linear", "summary": "M1–M2: the request lands in Triage verbatim, then is classified.",
+        [
+          "Pick the semver bump from the change's consumer impact",
+          "judgment",
+          null,
+          "L1"
+        ],
+        [
+          "Write the changelog entry from the merged tickets",
+          "det",
+          null,
+          "L1"
+        ],
+        [
+          "Tag vX.Y.Z and publish the release",
+          "det",
+          null,
+          "L1"
+        ],
+        [
+          "Decide that the release should go out",
+          "human",
+          null,
+          "L2"
+        ]
+      ]
+    },
+    {
+      "id": "linear-intake",
+      "name": "Take in a request",
+      "area": "Linear",
+      "summary": "M1–M2: the request lands in Triage verbatim, then is classified.",
       "steps": [
-        ["Record the prompt verbatim on a Triage issue", "det", null, "M1 M2"],
-        ["Classify kind, owning persona, scope, and size", "judgment", null, "M1"],
-        ["Decide scope and design readiness", "judgment", null, "M1"]
-      ] },
-    { "id": "linear-move", "name": "Move an issue and say why", "area": "Linear", "summary": "M3, M5: every state change carries a structured status update.",
+        [
+          "Record the prompt verbatim on a Triage issue",
+          "det",
+          null,
+          "M1 M2"
+        ],
+        [
+          "Classify kind, owning persona, scope, and size",
+          "judgment",
+          null,
+          "M1"
+        ],
+        [
+          "Decide scope and design readiness",
+          "judgment",
+          null,
+          "M1"
+        ]
+      ]
+    },
+    {
+      "id": "linear-move",
+      "name": "Move an issue and say why",
+      "area": "Linear",
+      "summary": "M3, M5: every state change carries a structured status update.",
       "steps": [
-        ["Is the move legal, and which states does it skip", "det", "skills/linear/scripts/linear-status.js", "M3"],
-        ["Render the status update in the template's shape", "det", "skills/linear/scripts/linear-status.js", "M5"],
-        ["Validate the Blocked block and its blocker type", "det", "skills/linear/scripts/linear-status.js", "M5"],
-        ["Write the reason, evidence, and next action", "judgment", null, "M5"],
-        ["Post the comment and change the state in Linear", "det", null, "M5 M7"],
-        ["Read back and quote the identifier", "det", null, "M7"]
-      ] },
-    { "id": "linear-setup", "name": "Set up a team's workflow", "area": "Linear", "summary": "Created once per team by the user.",
+        [
+          "Is the move legal, and which states does it skip",
+          "det",
+          "skills/linear/scripts/linear-status.js",
+          "M3"
+        ],
+        [
+          "Render the status update in the template's shape",
+          "det",
+          "skills/linear/scripts/linear-status.js",
+          "M5"
+        ],
+        [
+          "Validate the Blocked block and its blocker type",
+          "det",
+          "skills/linear/scripts/linear-status.js",
+          "M5"
+        ],
+        [
+          "Write the reason, evidence, and next action",
+          "judgment",
+          null,
+          "M5"
+        ],
+        [
+          "Post the comment and change the state in Linear",
+          "det",
+          null,
+          "M5 M7"
+        ],
+        [
+          "Read back and quote the identifier",
+          "det",
+          null,
+          "M7"
+        ]
+      ]
+    },
+    {
+      "id": "linear-setup",
+      "name": "Set up a team's workflow",
+      "area": "Linear",
+      "summary": "Created once per team by the user.",
       "steps": [
-        ["Create the missing workflow states in order", "det", "skills/linear/scripts/create-workflow.sh", "M3"],
-        ["Create the labels and templates", "det", null, "M6"]
-      ] },
-    { "id": "planning", "name": "Plan the work", "area": "Planning and design", "summary": "Scope, milestones, issues, estimates, cycles.",
+        [
+          "Create the missing workflow states in order",
+          "det",
+          "skills/linear/scripts/create-workflow.sh",
+          "M3"
+        ],
+        [
+          "Create the labels and templates",
+          "det",
+          null,
+          "M6"
+        ]
+      ]
+    },
+    {
+      "id": "planning",
+      "name": "Plan the work",
+      "area": "Planning and design",
+      "summary": "Scope, milestones, issues, estimates, cycles.",
       "steps": [
-        ["Decide scope and divide it into milestones and issues", "judgment", null, "M1"],
-        ["Estimate effort on the team's scale", "judgment", null, "M1"],
-        ["Create the project, milestones, issues, and relations", "det", null, "M7"],
-        ["Review the plan and the PRD", "human", null, "W3"]
-      ] },
-    { "id": "prd", "name": "Write a PRD", "area": "Planning and design", "summary": "Idea to a phased PRD with an MVP first.",
+        [
+          "Decide scope and divide it into milestones and issues",
+          "judgment",
+          null,
+          "M1"
+        ],
+        [
+          "Estimate effort on the team's scale",
+          "judgment",
+          null,
+          "M1"
+        ],
+        [
+          "Create the project, milestones, issues, and relations",
+          "det",
+          null,
+          "M7"
+        ],
+        [
+          "Review the plan and the PRD",
+          "human",
+          null,
+          "W3"
+        ]
+      ]
+    },
+    {
+      "id": "prd",
+      "name": "Write a PRD",
+      "area": "Planning and design",
+      "summary": "Idea to a phased PRD with an MVP first.",
       "steps": [
-        ["Interview the user and refine the idea", "judgment", null, ""],
-        ["Write the phased PRD", "judgment", null, "W4"],
-        ["PRD has the template's sections", "det", null, "W2"],
-        ["User reviews the PRD", "human", null, "W3"]
-      ] },
-    { "id": "design-docs", "name": "Write HLD, LLD and ADRs", "area": "Planning and design", "summary": "Design as code, reviewed by the user.",
+        [
+          "Interview the user and refine the idea",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Write the phased PRD",
+          "judgment",
+          null,
+          "W4"
+        ],
+        [
+          "PRD has the template's sections",
+          "det",
+          null,
+          "W2"
+        ],
+        [
+          "User reviews the PRD",
+          "human",
+          null,
+          "W3"
+        ]
+      ]
+    },
+    {
+      "id": "design-docs",
+      "name": "Write HLD, LLD and ADRs",
+      "area": "Planning and design",
+      "summary": "Design as code, reviewed by the user.",
       "steps": [
-        ["Decide the architecture and the contracts", "judgment", null, "C23"],
-        ["Write the HLD, LLD, and ADRs", "judgment", null, "W4"],
-        ["Documents sit where W9–W11 say and are in the index", "det", null, "W8 W9 W10"],
-        ["Rendered HTML sits beside its Markdown", "det", null, "W6"],
-        ["User reviews the design", "human", null, "W3"]
-      ] },
-    { "id": "implement", "name": "Implement a slice", "area": "Building", "summary": "Code and tests in the agent's own environment, one verified behavior per commit.",
+        [
+          "Decide the architecture and the contracts",
+          "judgment",
+          null,
+          "C23"
+        ],
+        [
+          "Write the HLD, LLD, and ADRs",
+          "judgment",
+          null,
+          "W4"
+        ],
+        [
+          "Documents sit where W9–W11 say and are in the index",
+          "det",
+          null,
+          "W8 W9 W10"
+        ],
+        [
+          "Rendered HTML sits beside its Markdown",
+          "det",
+          null,
+          "W6"
+        ],
+        [
+          "User reviews the design",
+          "human",
+          null,
+          "W3"
+        ]
+      ]
+    },
+    {
+      "id": "implement",
+      "name": "Implement a slice",
+      "area": "Building",
+      "summary": "Code and tests in the agent's own environment, one verified behavior per commit.",
       "steps": [
-        ["Design the code and write it", "judgment", null, "C1 C2 C3"],
-        ["Write the test behind each acceptance criterion", "judgment", null, "T1 T2"],
-        ["Run lint, type check, tests, and build", "det", null, "T8"],
-        ["Start the service in its own Docker project and seed data", "det", null, "DS3 DS5"]
-      ] },
-    { "id": "coding-standards", "name": "Hold the coding standards", "area": "Building", "summary": "C1–C23 split into what a linter can see and what needs a reader.",
+        [
+          "Design the code and write it",
+          "judgment",
+          null,
+          "C1 C2 C3"
+        ],
+        [
+          "Write the test behind each acceptance criterion",
+          "judgment",
+          null,
+          "T1 T2"
+        ],
+        [
+          "Run lint, type check, tests, and build",
+          "det",
+          null,
+          "T8"
+        ],
+        [
+          "Start the service in its own Docker project and seed data",
+          "det",
+          null,
+          "DS3 DS5"
+        ]
+      ]
+    },
+    {
+      "id": "coding-standards",
+      "name": "Hold the coding standards",
+      "area": "Building",
+      "summary": "C1–C23 split into what a linter can see and what needs a reader.",
       "steps": [
-        ["Strict types, no any, linter and type checker present", "det", null, "C7 C8"],
-        ["No edits to generated or vendor files", "det", null, "C14"],
-        ["No inline clock or randomness in business modules", "det", null, "C19"],
-        ["No secrets in source or fixtures", "det", null, "C22"],
-        ["Separate API, domain, and DB models; errors as domain objects", "judgment", null, "C3 C9"],
-        ["Business validation only at the edges", "judgment", null, "C10 C11"]
-      ] },
-    { "id": "debug", "name": "Debug a failure", "area": "Building", "summary": "Reproduce, localise, fix, guard.",
+        [
+          "Strict types, no any, linter and type checker present",
+          "det",
+          null,
+          "C7 C8"
+        ],
+        [
+          "No edits to generated or vendor files",
+          "det",
+          null,
+          "C14"
+        ],
+        [
+          "No inline clock or randomness in business modules",
+          "det",
+          null,
+          "C19"
+        ],
+        [
+          "No secrets in source or fixtures",
+          "det",
+          null,
+          "C22"
+        ],
+        [
+          "Separate API, domain, and DB models; errors as domain objects",
+          "judgment",
+          null,
+          "C3 C9"
+        ],
+        [
+          "Business validation only at the edges",
+          "judgment",
+          null,
+          "C10 C11"
+        ]
+      ]
+    },
+    {
+      "id": "debug",
+      "name": "Debug a failure",
+      "area": "Building",
+      "summary": "Reproduce, localise, fix, guard.",
       "steps": [
-        ["Reproduce the failure", "judgment", null, ""],
-        ["Localise the cause and choose the fix", "judgment", null, ""],
-        ["Run the regression test", "det", null, "T2"]
-      ] },
-    { "id": "security-audit", "name": "Audit security", "area": "Reviews and audits", "summary": "Never holds a PR (P9).",
+        [
+          "Reproduce the failure",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Localise the cause and choose the fix",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Run the regression test",
+          "det",
+          null,
+          "T2"
+        ]
+      ]
+    },
+    {
+      "id": "security-audit",
+      "name": "Audit security",
+      "area": "Reviews and audits",
+      "summary": "Never holds a PR (P9).",
       "steps": [
-        ["Scan for secrets and vulnerable dependencies", "det", null, "C22"],
-        ["Reason about trust boundaries and abuse cases", "judgment", null, ""],
-        ["File findings as review issues", "det", null, "M6"]
-      ] },
-    { "id": "perf-audit", "name": "Audit web performance", "area": "Reviews and audits", "summary": "Measured numbers only.",
+        [
+          "Scan for secrets and vulnerable dependencies",
+          "det",
+          null,
+          "C22"
+        ],
+        [
+          "Reason about trust boundaries and abuse cases",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "File findings as review issues",
+          "det",
+          null,
+          "M6"
+        ]
+      ]
+    },
+    {
+      "id": "perf-audit",
+      "name": "Audit web performance",
+      "area": "Reviews and audits",
+      "summary": "Measured numbers only.",
       "steps": [
-        ["Run the measurement", "det", null, ""],
-        ["Interpret the result and recommend", "judgment", null, ""]
-      ] },
-    { "id": "qa", "name": "Verify a milestone", "area": "Reviews and audits", "summary": "Independent end-to-end and concurrency verification.",
+        [
+          "Run the measurement",
+          "det",
+          null,
+          ""
+        ],
+        [
+          "Interpret the result and recommend",
+          "judgment",
+          null,
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "qa",
+      "name": "Verify a milestone",
+      "area": "Reviews and audits",
+      "summary": "Independent end-to-end and concurrency verification.",
       "steps": [
-        ["Design the end-to-end and race scenarios", "judgment", null, "T1 T3"],
-        ["Run the scenarios", "det", null, "T3"],
-        ["File a bug issue per failure", "det", null, "M6"]
-      ] },
-    { "id": "double-pass", "name": "Double-pass review of a brain PR", "area": "Reviews and audits", "summary": "AGENTS.md gate: two independent reviewers, then a synthesis.",
+        [
+          "Design the end-to-end and race scenarios",
+          "judgment",
+          null,
+          "T1 T3"
+        ],
+        [
+          "Run the scenarios",
+          "det",
+          null,
+          "T3"
+        ],
+        [
+          "File a bug issue per failure",
+          "det",
+          null,
+          "M6"
+        ]
+      ]
+    },
+    {
+      "id": "double-pass",
+      "name": "Double-pass review of a brain PR",
+      "area": "Reviews and audits",
+      "summary": "AGENTS.md gate: two independent reviewers, then a synthesis.",
       "steps": [
-        ["Start both reviewers on the same revision with fixed models", "det", null, ""],
-        ["Review the revision independently, twice", "judgment", null, ""],
-        ["Synthesize both reviews", "judgment", null, ""],
-        ["Check that both reviews and the synthesis cover the final revision", "det", null, ""],
-        ["Resolve the required fixes", "judgment", null, ""]
-      ] },
-    { "id": "session", "name": "Start a session", "area": "Brain upkeep", "summary": "/brain: one persona, declared.",
+        [
+          "Start both reviewers on the same revision with fixed models",
+          "det",
+          null,
+          ""
+        ],
+        [
+          "Review the revision independently, twice",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Synthesize both reviews",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Check that both reviews and the synthesis cover the final revision",
+          "det",
+          null,
+          ""
+        ],
+        [
+          "Resolve the required fixes",
+          "judgment",
+          null,
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "session",
+      "name": "Start a session",
+      "area": "Brain upkeep",
+      "summary": "/brain: one persona, declared.",
       "steps": [
-        ["Pick a persona for the task", "judgment", null, ""],
-        ["Fetch the skills its table names for the activity", "judgment", null, ""],
-        ["Declare persona, skills, tools, model, harness, effort", "det", null, ""],
-        ["/brain-status lists agents and subagents", "det", null, ""]
-      ] },
-    { "id": "brain-checks", "name": "Check the brain", "area": "Brain upkeep", "summary": "Anatomies, links, commands, evals, and the persona table.",
+        [
+          "Pick a persona for the task",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Fetch the skills its table names for the activity",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Declare persona, skills, tools, model, harness, effort",
+          "det",
+          null,
+          ""
+        ],
+        [
+          "/brain-status lists agents and subagents",
+          "det",
+          null,
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "brain-checks",
+      "name": "Check the brain",
+      "area": "Brain upkeep",
+      "summary": "Anatomies, links, commands, evals, and the persona table.",
       "steps": [
-        ["Skill anatomy", "det", "scripts/validate-skills.js", ""],
-        ["Persona anatomy, manifest, and the persona table", "det", "scripts/validate-agents.js", ""],
-        ["Reference links", "det", "scripts/validate-reference-links.js", ""],
-        ["Artifact paths", "det", "scripts/validate-artifact-paths.js", ""],
-        ["Command parity across tools", "det", "scripts/validate-commands.js", ""],
-        ["Trigger and routing evals", "det", "scripts/run-evals.js", ""]
-      ] },
-    { "id": "brain-build", "name": "Build and install the brain", "area": "Brain upkeep", "summary": "manifest.json to build/ to a project.",
+        [
+          "Skill anatomy",
+          "det",
+          "scripts/validate-skills.js",
+          ""
+        ],
+        [
+          "Persona anatomy, manifest, and the persona table",
+          "det",
+          "scripts/validate-agents.js",
+          ""
+        ],
+        [
+          "Reference links",
+          "det",
+          "scripts/validate-reference-links.js",
+          ""
+        ],
+        [
+          "Artifact paths",
+          "det",
+          "scripts/validate-artifact-paths.js",
+          ""
+        ],
+        [
+          "Command parity across tools",
+          "det",
+          "scripts/validate-commands.js",
+          ""
+        ],
+        [
+          "Trigger and routing evals",
+          "det",
+          "scripts/run-evals.js",
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "brain-build",
+      "name": "Build and install the brain",
+      "area": "Brain upkeep",
+      "summary": "manifest.json to build/ to a project.",
       "steps": [
-        ["Assemble build/ from the manifest", "det", "scripts/build-brain.js", ""],
-        ["Pull the brain into a repository", "det", "scripts/agent-brain.js", ""],
-        ["Decide which skills and personas the brain contains", "human", null, ""]
-      ] },
-    { "id": "learnings", "name": "Turn a learning into a rule", "area": "Brain upkeep", "summary": "LEARNINGS.md notes become changes here.",
+        [
+          "Assemble build/ from the manifest",
+          "det",
+          "scripts/build-brain.js",
+          ""
+        ],
+        [
+          "Pull the brain into a repository",
+          "det",
+          "scripts/agent-brain.js",
+          ""
+        ],
+        [
+          "Decide which skills and personas the brain contains",
+          "human",
+          null,
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "learnings",
+      "name": "Turn a learning into a rule",
+      "area": "Brain upkeep",
+      "summary": "LEARNINGS.md notes become changes here.",
       "steps": [
-        ["Record the override, correction, or gap when it happens", "judgment", null, ""],
-        ["Decide that a note recurs enough to change a rule", "judgment", null, ""],
-        ["Approve the change to the brain", "human", null, ""]
-      ] },
-    { "id": "session-hooks", "name": "Session hooks", "area": "Brain upkeep", "summary": "Hooks that run without a model.",
+        [
+          "Record the override, correction, or gap when it happens",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Decide that a note recurs enough to change a rule",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Approve the change to the brain",
+          "human",
+          null,
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "session-hooks",
+      "name": "Session hooks",
+      "area": "Brain upkeep",
+      "summary": "Hooks that run without a model.",
       "steps": [
-        ["Inject the meta-skill at session start", "det", "hooks/session-start.sh", ""],
-        ["Cache source reads before and after", "det", "hooks/sdd-cache-pre.sh", ""],
-        ["Hide ignored code from simplification", "det", "hooks/simplify-ignore.sh", ""]
-      ] },
-    { "id": "dev-machine", "name": "Run a dev machine", "area": "Infrastructure", "summary": "EC2 Spot machines for developers.",
+        [
+          "Inject the meta-skill at session start (the hook script exists but no host registers it)",
+          "det",
+          null,
+          ""
+        ],
+        [
+          "Cache source reads before and after",
+          "det",
+          "hooks/sdd-cache-pre.sh",
+          ""
+        ],
+        [
+          "Hide ignored code from simplification",
+          "det",
+          "hooks/simplify-ignore.sh",
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "dev-machine",
+      "name": "Run a dev machine",
+      "area": "Infrastructure",
+      "summary": "EC2 Spot machines for developers.",
       "steps": [
-        ["Check capacity and launch", "det", "infra/dev-machines/scripts/cloud-up.sh", ""],
-        ["Survive a Spot reclaim and relaunch", "det", "infra/dev-machines/scripts/spot-relaunch-watch.sh", ""],
-        ["Stop and reap idle machines", "det", "infra/dev-machines/scripts/cloud-reap.sh", ""],
-        ["Build Android on the machine", "det", "infra/dev-machines/scripts/android-ec2-build.sh", "DS16"]
-      ] },
-    { "id": "ios-build", "name": "Build iOS on EAS", "area": "Infrastructure", "summary": "DS16: only with explicit permission.",
+        [
+          "Check capacity and launch",
+          "det",
+          "infra/dev-machines/scripts/cloud-up.sh",
+          ""
+        ],
+        [
+          "Survive a Spot reclaim and relaunch",
+          "det",
+          "infra/dev-machines/scripts/spot-relaunch-watch.sh",
+          ""
+        ],
+        [
+          "Stop and reap idle machines",
+          "det",
+          "infra/dev-machines/scripts/cloud-reap.sh",
+          ""
+        ],
+        [
+          "Build Android on the machine",
+          "det",
+          "infra/dev-machines/scripts/android-ec2-build.sh",
+          "DS16"
+        ]
+      ]
+    },
+    {
+      "id": "ios-build",
+      "name": "Build iOS on EAS",
+      "area": "Infrastructure",
+      "summary": "DS16: only with explicit permission.",
       "steps": [
-        ["Count free builds, queue, build, report", "det", "skills/development-setup/scripts/ios-eas-build.sh", "DS16"],
-        ["Decide to wait or build elsewhere when the budget is spent", "human", null, "DS16"]
-      ] },
-    { "id": "observability", "name": "Instrument what ships", "area": "Building", "summary": "O1–O8: structured logs and RED metrics for every new boundary.",
+        [
+          "Count free builds, queue, build, report",
+          "det",
+          "skills/development-setup/scripts/ios-eas-build.sh",
+          "DS16"
+        ],
+        [
+          "Decide to wait or build elsewhere when the budget is spent",
+          "human",
+          null,
+          "DS16"
+        ]
+      ]
+    },
+    {
+      "id": "observability",
+      "name": "Instrument what ships",
+      "area": "Building",
+      "summary": "O1–O8: structured logs and RED metrics for every new boundary.",
       "steps": [
-        ["Decide which metrics and log events matter", "judgment", null, "O4 O5"],
-        ["Bounded labels and no PII or secrets in logs", "det", null, "O3"],
-        ["Provision dashboards and alerts at the planned milestone", "det", null, "O6 O7"]
-      ] }
+        [
+          "Decide which metrics and log events matter",
+          "judgment",
+          null,
+          "O4 O5"
+        ],
+        [
+          "Bounded labels and no PII or secrets in logs",
+          "det",
+          null,
+          "O3"
+        ],
+        [
+          "Provision dashboards and alerts at the planned milestone",
+          "det",
+          null,
+          "O6 O7"
+        ]
+      ]
+    }
   ]
 }

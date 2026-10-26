@@ -8,6 +8,8 @@ on:
 
 jobs:
   pr-rules:
+    # Bot PRs (Dependabot, Renovate) do not carry trailers or changelog lines; their own tooling reviews them.
+    if: github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

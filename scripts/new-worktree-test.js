@@ -6,7 +6,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { plan, usedHostPorts, freePorts } = require('../skills/development-setup/scripts/new-worktree');
+const { plan, usedHostPorts, freePorts, shellQuote } = require('../skills/development-setup/scripts/new-worktree');
 
 test('the worktree sits beside the main checkout and the compose project is lowercase', () => {
   assert.deepStrictEqual(plan('ENG-123-login', '/work/app'), {
@@ -42,11 +42,36 @@ test('create and remove make a sibling worktree on a new branch', () => {
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
   const out = execFileSync('node', [script, 'create', 'ENG-7-demo'], { cwd: repo, encoding: 'utf8' });
-  assert.match(out, /export COMPOSE_PROJECT_NAME=eng-7-demo/);
+  assert.match(out, /export COMPOSE_PROJECT_NAME='eng-7-demo'/);
   assert.ok(fs.existsSync(path.join(parent, 'ENG-7-demo', '.git')));
   assert.strictEqual(run(['rev-parse', '--abbrev-ref', 'HEAD'], path.join(parent, 'ENG-7-demo')).trim(), 'ENG-7-demo');
   // from inside the worktree the main checkout is still found
   execFileSync('node', [script, 'remove', 'ENG-7-demo'], { cwd: path.join(parent, 'ENG-7-demo'), encoding: 'utf8', stdio: 'pipe' }).toString();
   assert.ok(!fs.existsSync(path.join(parent, 'ENG-7-demo')));
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('exported values survive the shell verbatim, spaces and metacharacters included', () => {
+  const dir = "/work/my app; printf INJECTED/it's";
+  const out = execFileSync('sh', ['-c', `eval "export WORKTREE=${shellQuote(dir)}"; printf %s "$WORKTREE"`], { encoding: 'utf8' });
+  assert.strictEqual(out, dir);
+});
+
+test('agents created one after another claim disjoint host ports', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ports-'));
+  const repo = path.join(parent, 'app');
+  const run = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  fs.mkdirSync(repo);
+  run(['init', '-q', '-b', 'main']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+  const portsOf = out => out.split('\n').filter(l => /HOST_PORT_/.test(l)).map(l => l.split('=')[1].replace(/'/g, ''));
+  const a = portsOf(execFileSync('node', [script, 'create', 'ENG-8-a', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
+  const b = portsOf(execFileSync('node', [script, 'create', 'ENG-9-b', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
+  assert.strictEqual(a.length, 2);
+  assert.strictEqual(b.length, 2);
+  assert.deepStrictEqual(a.filter(p => b.includes(p)), []);
+  execFileSync('node', [script, 'remove', 'ENG-8-a'], { cwd: repo, encoding: 'utf8' });
+  execFileSync('node', [script, 'remove', 'ENG-9-b'], { cwd: repo, encoding: 'utf8' });
   fs.rmSync(parent, { recursive: true, force: true });
 });

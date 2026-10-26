@@ -3,11 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const os = require('os');
 const path = require('path');
 const check = require('../skills/git-workflow-and-versioning/scripts/brain-git-check');
 const { mergeBlockers } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 const { install, MARKER } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
+const { checkCommitMessage } = check;
 
 const GOOD = [
   'feat(login): add the login form [ENG-123]',
@@ -97,4 +99,56 @@ test('hooks install once and never overwrite a foreign hook', () => {
   assert.match(install(dir, 'skills/x/brain-git-check.js')[0], /installed/);
   assert.strictEqual(fs.readFileSync(path.join(dir, 'pre-push'), 'utf8'), '#!/bin/sh\necho mine\n');
   fs.rmSync(dir, { recursive: true });
+});
+
+const { checkPushedRefs, checkChangelog, parseNumstat: numstat, ticketSource } = require('../skills/git-workflow-and-versioning/scripts/brain-git-check');
+const { hookBody } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
+const { originRepo } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+
+test('a deleted changelog does not satisfy P13; an added line does', () => {
+  assert.strictEqual(checkChangelog(numstat('0\t100\tCHANGELOG.md')).length, 1);
+  assert.deepStrictEqual(checkChangelog(numstat('2\t0\tCHANGELOG.md')), []);
+});
+
+test('pre-push checks the refs being pushed, not the checked-out branch', () => {
+  const push = (ref, sha = 'abc1234') => `${ref} ${sha} ${ref} 0000000`;
+  assert.deepStrictEqual(checkPushedRefs(push('refs/heads/ENG-1-ok'), {}), []);
+  assert.strictEqual(checkPushedRefs(push('refs/heads/feature/x'), {}).length, 1);
+  assert.deepStrictEqual(checkPushedRefs(push('refs/tags/v1.0.0'), {}), []);
+  assert.deepStrictEqual(checkPushedRefs(push('refs/heads/main'), {}), []);
+  assert.deepStrictEqual(checkPushedRefs(push('refs/heads/release/1.2'), {}), []);
+  assert.deepStrictEqual(checkPushedRefs('refs/heads/gone 0000000000 refs/heads/gone abc1234', {}), []);
+});
+
+test('revert and autosquash subjects are not held to the commit anatomy', () => {
+  assert.deepStrictEqual(checkCommitMessage('Revert "feat(x): y [ENG-1]"', {}), []);
+  assert.deepStrictEqual(checkCommitMessage('fixup! feat(x): y [ENG-1]', {}), []);
+});
+
+test('the ticket check in merge and in the commit check share one pattern', () => {
+  assert.strictEqual(ticketSource({ LINEAR_TEAM: 'ENG' }), 'ENG-\\d+');
+  assert.ok(ticketSource({}).startsWith('[A-Z]'));
+});
+
+test('the hook skips with a warning when the check script is missing from the checkout', () => {
+  const body = hookBody('pre-push', 'skills/x/brain-git-check.js');
+  assert.match(body, /if \[ ! -f "\$CHECK" \]; then .* exit 0; fi/);
+  assert.match(body, /node "\$CHECK" push$/m);
+});
+
+test('the script folders are CommonJS even inside an ESM project', () => {
+  for (const d of ['git-workflow-and-versioning', 'linear', 'development-setup']) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'skills', d, 'scripts', 'package.json'), 'utf8'));
+    assert.strictEqual(pkg.type, 'commonjs', d);
+  }
+});
+
+test('merge-pr derives the repository from origin, not the default repository', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'origin-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:akash2991/agent-skills.git'], { cwd: dir });
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try { assert.strictEqual(originRepo(), 'akash2991/agent-skills'); }
+  finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true }); }
 });

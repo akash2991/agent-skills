@@ -32,6 +32,9 @@ function checkMove(from, to, { reason, left } = {}) {
   }
   if (from === 'Blocked') {
     if (!left) return { ok: false, error: 'a Blocked issue returns to the state it left: pass --left <state>' };
+    if (!['unstarted', 'started'].includes(typeOf(left)) || left === 'Blocked') {
+      return { ok: false, error: `${left} cannot be the state a Blocked issue left: it must be a live state other than Blocked` };
+    }
     return to === left ? { ok: true, skipped: [] } : { ok: false, error: `a Blocked issue returns to ${left}, not ${to}` };
   }
   if ((WORKFLOW.transitions[from] || []).includes(to)) return { ok: true, skipped: [] };
@@ -47,7 +50,9 @@ function renderUpdate(f) {
     if (!f[key]) errors.push(`missing ${key}`);
   }
   if (f.review && !REVIEWS.test(f.review)) errors.push(`review must be opened, approved, merged, or "changes requested (n)": got "${f.review}"`);
-  const blocked = f.field === 'State' && f.to === 'Blocked';
+  // Any spelling of the state field is the state field: a lowercase or padded name must not skip the move checks.
+  const isState = typeof f.field === 'string' && f.field.trim().toLowerCase() === 'state';
+  const blocked = isState && f.to === 'Blocked';
   const blockerKeys = ['blockerType', 'blockerDependency', 'blockerRequirement', 'blockerOwner'];
   if (blocked) {
     for (const k of blockerKeys) if (!f[k]) errors.push(`a Blocked update needs ${k}`);
@@ -56,7 +61,7 @@ function renderUpdate(f) {
     errors.push('blocker fields only belong on a move to Blocked');
   }
   let skipped = [];
-  if (f.field === 'State' && f.from && f.to) {
+  if (isState && f.from && f.to) {
     const move = checkMove(f.from, f.to, { reason: f.skipReason, left: f.left });
     if (!move.ok) errors.push(move.error);
     else skipped = move.skipped;

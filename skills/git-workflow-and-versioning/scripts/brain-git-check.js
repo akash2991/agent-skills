@@ -5,6 +5,7 @@
 //   commit-msg <file>            P3, P4   message anatomy: type(scope), ticket id, Model / Thinking-effort / Harness trailers
 //   branch [<name>]              P5       branch is <ticket>-<slug>
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
+//   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
 //   pr --base <ref>              P10, P11, P13   title starts with the ticket id, size within limits, changelog touched
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
 // Environment: LINEAR_TEAM narrows the ticket pattern to one team key; BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
@@ -26,6 +27,8 @@ function checkCommitMessage(raw, env = process.env) {
   const message = raw.split(/\r?\n/).filter(l => !l.startsWith('#')).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
+  // git's own revert and autosquash subjects carry no trailers; the commit they undo already passed.
+  if (/^(Revert ".*"|fixup! |squash! |amend! )/.test(subject)) return [];
   const errors = [];
   if (/^Merge /.test(subject)) {
     if (!new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
@@ -58,7 +61,7 @@ function checkPrTitle(title, env = process.env) {
 function parseNumstat(numstat) {
   return numstat.split('\n').filter(Boolean).map(line => {
     const [added, deleted, ...rest] = line.split('\t');
-    return { path: rest.join('\t'), lines: (Number(added) || 0) + (Number(deleted) || 0) };
+    return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
   }).filter(f => !LOCKFILES.test(f.path));
 }
 
@@ -70,8 +73,23 @@ function checkSize(files, body = '', env = process.env) {
   return [`PR changes ${lines} lines in ${files.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
 }
 
+// A changelog must gain a line; deleting or leaving the file untouched does not satisfy P13.
 function checkChangelog(files) {
-  return files.some(f => CHANGELOG.test(f.path)) ? [] : ['no CHANGELOG.md line in this change (P13)'];
+  return files.some(f => CHANGELOG.test(f.path) && f.added > 0) ? [] : ['no added CHANGELOG.md line in this change (P13)'];
+}
+
+// The refs git's pre-push hook receives on stdin: "<local ref> <local sha> <remote ref> <remote sha>".
+// Deletions (all-zero local sha), tags, and the protected trunk are not branch names to check.
+function checkPushedRefs(stdin, env = process.env) {
+  const errors = [];
+  for (const line of stdin.split('\n').filter(Boolean)) {
+    const [localRef, localSha] = line.split(' ');
+    if (/^0+$/.test(localSha) || !localRef.startsWith('refs/heads/')) continue;
+    const branch = localRef.slice('refs/heads/'.length);
+    if (branch === 'main' || branch.startsWith('release/')) continue;
+    errors.push(...checkBranchName(branch, env));
+  }
+  return errors;
 }
 
 function git(args) {
@@ -108,6 +126,9 @@ function main(argv) {
     }
     return report(errors);
   }
+  if (cmd === 'push') {
+    return report(checkPushedRefs(fs.readFileSync(0, 'utf8')));
+  }
   if (cmd === 'pr') {
     const base = optionValue(rest, '--base');
     if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>]'); process.exit(2); }
@@ -126,4 +147,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, checkPushedRefs, ticketSource };
