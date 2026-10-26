@@ -91,9 +91,9 @@ Product logic goes in the service's code, in the feature it belongs to. An agent
 - **In a project:** the project's `scripts/`. Installed skills are copies the next brain update overwrites, so the script does not go in them; when the script replaces steps a skill describes, write a `workaround` note in `docs/LEARNINGS.md` naming that skill; a procedure no skill covers needs only the script and the ticket.
 - **In the brain repository:** `skills/<skill>/scripts/` when a skill owns the procedure. The skill then says "run the script", not "do these steps", and the prose steps the script replaced are deleted.
 
-### 8. Prove the conversion keeps the behavior
+### 8. Prove the behavior
 
-Run the old workflow and the new one on the same inputs: recorded real runs where they exist, plus one input for each case found in step 3. Compare the outputs. Each difference is either a bug in the new workflow, fixed now, or a decision the old one made inconsistently, recorded with the rule the new one follows.
+For a new feature with no old workflow, verify against the owner-approved requirements and acceptance examples. For a conversion, run the old workflow and the new one on the same inputs: recorded real runs where they exist, plus one input for each case found in step 3. Compare the outputs. Each difference is either a bug in the new workflow, fixed now, or a decision the old one made inconsistently, recorded with the rule the new one follows.
 
 ## Common Rationalizations
 
@@ -127,7 +127,7 @@ Run the old workflow and the new one on the same inputs: recorded real runs wher
 - [ ] Control flow, including branches, loop bounds, and the stop condition, lives in code or a script
 - [ ] Each remaining model call has typed input and output, validation with an explicit failure branch, a prompt in the repository, and a recorded reason it can't be code
 - [ ] Any agent loop has an ADR saying why the path can't be known in advance
-- [ ] Old and new ran on the same inputs; every difference is fixed or recorded with the rule chosen
+- [ ] For a conversion, old and new ran on the same inputs and every difference is fixed or recorded with the rule chosen; for a new feature, the approved acceptance examples pass
 - [ ] The deterministic part runs twice on the same input with identical output (show both runs)
 - [ ] Tests pass with every model call replaced by a fake
 - [ ] A script sits where step 7 says; in the brain repository, the prose steps it replaced are deleted

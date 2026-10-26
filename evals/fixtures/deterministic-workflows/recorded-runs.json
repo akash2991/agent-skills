@@ -1,48 +1,98 @@
 {
   "$comment": "Outputs of triage-agent.js recorded from production runs. The same ticket was triaged on each run listed; runs disagree where the prompt leaves the decision to the model.",
   "customers": [
-    { "email": "ops@acme.example", "plan": "enterprise" },
-    { "email": "sam@smallshop.example", "plan": "starter" }
+    {
+      "email": "ops@acme.example",
+      "plan": "enterprise"
+    },
+    {
+      "email": "sam@smallshop.example",
+      "plan": "starter"
+    }
   ],
   "tickets": [
     {
       "id": "T-101",
       "raw": "From: sam@smallshop.example\nSubject: Double charge\n\nI was charged twice this month, please refund one of them.",
       "runs": [
-        { "queue": "billing", "summary": "Customer was charged twice and wants one charge refunded." },
-        { "queue": "billing", "summary": "Requests a refund for a duplicate monthly charge." }
+        {
+          "queue": "billing",
+          "summary": "Customer was charged twice and wants one charge refunded."
+        },
+        {
+          "queue": "billing",
+          "summary": "Requests a refund for a duplicate monthly charge."
+        }
       ]
     },
     {
       "id": "T-102",
       "raw": "From: ops@acme.example\nSubject: Refund for unused seats\n\nWe removed 40 seats last week; please refund the charge for them.",
       "runs": [
-        { "queue": "priority", "summary": "Enterprise customer wants a refund for 40 removed seats." },
-        { "queue": "billing", "summary": "Asks for a refund on seats removed last week." }
+        {
+          "queue": "priority",
+          "summary": "Enterprise customer wants a refund for 40 removed seats."
+        },
+        {
+          "queue": "billing",
+          "summary": "Asks for a refund on seats removed last week."
+        }
       ]
     },
     {
       "id": "T-103",
       "raw": "From: ops@acme.example\nSubject: SSO question\n\nHow do we add a second identity provider?",
       "runs": [
-        { "queue": "priority", "summary": "Asks how to configure a second SSO identity provider." },
-        { "queue": "general", "summary": "Question about adding another identity provider." }
+        {
+          "queue": "priority",
+          "summary": "Asks how to configure a second SSO identity provider."
+        },
+        {
+          "queue": "general",
+          "summary": "Question about adding another identity provider."
+        }
       ]
     },
     {
       "id": "T-104",
       "raw": "From: unknown@nowhere.example\nSubject: Charge on my card\n\nWhat is this charge from you?",
       "runs": [
-        { "queue": "billing", "summary": "Unknown sender asks about a card charge." },
-        { "queue": "general", "summary": "Someone not in the system asks about a charge." }
+        {
+          "queue": "billing",
+          "summary": "Unknown sender asks about a card charge."
+        },
+        {
+          "queue": "general",
+          "summary": "Someone not in the system asks about a charge."
+        }
       ]
     },
     {
       "id": "T-105",
-      "raw": "Subject: Cannot log in\n\nThe login page keeps spinning.",
+      "raw": "Subject: Cannot log in\n\nThe login page keeps spinning and I was charged for this month anyway.",
       "runs": [
-        { "queue": "general", "summary": "User cannot log in; the login page hangs." },
-        { "queue": "general", "summary": "Login page spins forever." }
+        {
+          "queue": "billing",
+          "summary": "Cannot log in and was still charged this month."
+        },
+        {
+          "queue": "general",
+          "summary": "Login page hangs; mentions a charge."
+        }
+      ]
+    },
+    {
+      "id": "T-106",
+      "raw": "From: sam@smallshop.example\nSubject: Cancel my plan\n\nPlease cancel my plan and refund this month's charge.",
+      "runs": [
+        {
+          "queue": "billing",
+          "summary": "Wants to cancel the plan and get this month's charge refunded."
+        },
+        {
+          "queue": "billing",
+          "summary": "Cancellation with a refund request for the current month."
+        }
       ]
     }
   ]

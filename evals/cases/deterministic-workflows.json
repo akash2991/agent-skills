@@ -49,7 +49,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "triage-agent.js runs support triage as an agent loop; recorded-runs.json holds its outputs from production. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed. Owner-approved routing policy: (1) a ticket whose body or subject contains the word \"refund\" or \"charge\" (case-insensitive, whole word) goes to billing; (2) otherwise a ticket from an enterprise customer goes to priority; (3) otherwise general. A sender not found in the customer list counts as not enterprise. A ticket with no From: header goes to general and is flagged needs_sender, whatever keywords it contains. assignQueue is called exactly once per ticket, after routing, with the queue the routing code chose.",
+      "prompt": "triage-agent.js runs support triage as an agent loop; recorded-runs.json holds its outputs from production. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed. Owner-approved routing policy: (1) a ticket whose body or subject contains the word \"refund\" or \"charge\" (case-insensitive, whole word) goes to billing; (2) otherwise a ticket from an enterprise customer goes to priority; (3) otherwise general. A sender not found in the customer list counts as not enterprise. A ticket with no From: header goes to general and is flagged needs_sender, whatever keywords it contains. assignQueue is called exactly once per ticket, after routing, with the queue the routing code chose. If the summary fails schema validation, take an explicit failure branch without automatically retrying the model call.",
       "expected_output": "Header parsing, lookup, and routing per the stated policy are plain code with tests; control flow is fixed in code; assignQueue is called once with the code's queue; only the summary is a model call with a typed, validated output and an explicit failure branch; every recorded ticket is replayed and differences reported",
       "files": [
         "deterministic-workflows"
@@ -57,13 +57,13 @@
       "expectations": [
         "The agent lists the workflow steps and classifies each as deterministic or judgment before rewriting",
         "Header parsing, customer lookup, and queue routing are plain code, not model calls",
-        "Routing follows the stated policy exactly: billing before priority before general, whole-word case-insensitive keywords, an unknown sender treated as not enterprise, a missing From: header routed to general with needs_sender whatever its keywords",
+        "Routing implements exactly this contract: a ticket with no From: header goes to general flagged needs_sender, whatever its keywords; otherwise the whole word \"refund\" or \"charge\", case-insensitive, in the subject or body goes to billing; otherwise a sender whose customer plan is enterprise goes to priority; otherwise general; a sender not in the customer list counts as not enterprise",
         "The order of steps and the stop condition live in code; the unbounded agent loop is removed",
         "assignQueue is called exactly once per ticket, after routing, and the persisted assignment equals the queue the routing code returned (a test shows it)",
         "The summary step is the only model call, with a typed output validated against a schema instead of regex-parsed text",
         "A validation failure takes an explicit branch and is not retried automatically",
         "Tests cover the deterministic steps and run with the model call replaced by a fake",
-        "Every ticket in recorded-runs.json is replayed through the new routing; the result per ticket is reported, and each ticket where the new queue differs from a recorded run is named with the policy rule applied"
+        "Every ticket in recorded-runs.json is replayed through the new routing and the queue per ticket is reported: T-101 billing, T-102 billing, T-103 priority, T-104 billing, T-105 general with needs_sender, T-106 billing; each ticket whose recorded runs differ from the new queue is named with the rule applied"
       ]
     },
     {
@@ -75,10 +75,10 @@
       ],
       "expectations": [
         "The agent does not implement the change by adding a sentence to SYSTEM_PROMPT; the queue rules are removed from the prompt",
-        "A routing function in code implements the stated policy in order (missing From:, retention, billing, priority, general) with whole-word case-insensitive keywords, and unit tests cover each rule",
+        "A routing function in code implements exactly this contract, in order, with unit tests for each rule: a ticket with no From: header goes to general flagged needs_sender, whatever its keywords; otherwise the whole word \"cancel\", \"cancelling\", or \"cancellation\", case-insensitive, in the subject or body goes to retention; otherwise \"refund\" or \"charge\" the same way goes to billing; otherwise a sender whose customer plan is enterprise goes to priority; otherwise general; a sender not in the customer list counts as not enterprise",
         "The model can no longer choose or assign the queue: assignQueue is removed from its tools and code calls it exactly once per ticket with the router's result",
         "An integration test with a fake model shows the persisted assignment and the returned queue both equal the router's result",
-        "The routing function is replayed on every ticket in recorded-runs.json and the queue per ticket is reported",
+        "The routing function is replayed on every ticket in recorded-runs.json and the queue per ticket is reported: T-101 billing, T-102 billing, T-103 priority, T-104 billing, T-105 general with needs_sender, T-106 retention",
         "Customer lookup and the summary step are not rewritten in this change"
       ]
     },
@@ -92,7 +92,7 @@
       "expectations": [
         "The agent lists the workflow steps and classifies each as deterministic or judgment",
         "The agent's final message names the open decisions: an enterprise customer asking for a refund matches two rules, an enterprise ticket with no keywords, a sender not in the customer list, and a ticket with no From: header",
-        "The agent's final message ends by asking the owner to decide those cases, without choosing a precedence or default itself",
+        "The agent's final message ends by asking the owner to decide those cases; it may recommend an option but does not adopt one",
         "The agent does not implement routing for the disputed cases before an answer"
       ]
     }
