@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -111,4 +111,48 @@ test('create needs a persona, which goes into the agent name', () => {
     assert.strictEqual(r.status, 2, args.join(' '));
     assert.match(r.stderr, /--persona/);
   }
+});
+
+test('remove works only on what the ledger holds for this owner, with a clean worktree, and keeps the branch', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-'));
+  const repo = path.join(parent, 'app');
+  const run = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  fs.mkdirSync(repo);
+  run(['init', '-q', '-b', 'main']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+  const node = (args, cwd = repo) => spawnSync('node', [script, ...args], { cwd, encoding: 'utf8' });
+
+  assert.strictEqual(node(['create', 'ENG-21-mine', '--persona', 'backend-engineer', '--owner', 'alice']).status, 0);
+  const wt = path.join(parent, 'ENG-21-mine');
+
+  // another owner cannot remove it
+  let r = node(['remove', 'ENG-21-mine', '--owner', 'bob']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /belongs to alice/);
+  assert.ok(fs.existsSync(wt));
+
+  // uncommitted work stops the removal
+  fs.writeFileSync(path.join(wt, 'scratch.txt'), 'x');
+  r = node(['remove', 'ENG-21-mine', '--owner', 'alice']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /uncommitted or untracked/);
+  fs.rmSync(path.join(wt, 'scratch.txt'));
+
+  // a worktree the ledger does not know about is not removed
+  run(['worktree', 'add', '-q', '-b', 'ENG-22-theirs', path.join(parent, 'ENG-22-theirs'), 'main']);
+  r = node(['remove', 'ENG-22-theirs', '--owner', 'alice']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /not in the ledger/);
+  assert.ok(fs.existsSync(path.join(parent, 'ENG-22-theirs')));
+
+  // the owner, with a clean worktree, removes it; the branch stays
+  r = node(['remove', 'ENG-21-mine', '--owner', 'alice']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(!fs.existsSync(wt));
+  assert.ok(run(['branch', '--list', 'ENG-21-mine']).includes('ENG-21-mine'));
+  const ledger = JSON.parse(fs.readFileSync(path.join(repo, '.git', 'brain-env-ledger.json'), 'utf8'));
+  assert.strictEqual(ledger['ENG-21-mine'], undefined);
+
+  fs.rmSync(parent, { recursive: true, force: true });
 });

@@ -3,7 +3,11 @@
 
 // Creates this agent's own worktree and prints the names derived from it (development-setup DS2, DS3).
 //   new-worktree.js create <TICKET-slug> --persona <persona> [--base <ref>] [--ports <n>] [--dry-run]
-//   new-worktree.js remove <TICKET-slug>
+//   new-worktree.js remove <TICKET-slug> [--owner <name>]
+//
+// The ledger (<git common dir>/brain-env-ledger.json) records every environment this script created: owner, branch,
+// worktree path, ports. remove acts only on an entry the ledger holds for the same owner, whose worktree is registered
+// with git, is on the recorded branch, and has no uncommitted or untracked changes. It never deletes a branch.
 // Run from the main checkout or any worktree of it. The worktree is placed beside the main checkout, never inside it.
 // Prints shell exports: AGENT_NAME (`<TICKET-slug> (<persona>)`, the visible name), COMPOSE_PROJECT_NAME (lowercase), and n free host ports.
 
@@ -75,6 +79,14 @@ function defaultBase(root, { fetch = true } = {}) {
 }
 
 // Ports this agent claims are recorded in the common git dir so agents started in parallel do not get the same ones.
+function ledgerFile(root) {
+  return path.join(path.resolve(root, git(['rev-parse', '--git-common-dir'], root)), 'brain-env-ledger.json');
+}
+
+function readLedger(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
 function claimFile(root) {
   return path.join(path.resolve(root, git(['rev-parse', '--git-common-dir'], root)), 'brain-port-claims.json');
 }
@@ -104,6 +116,10 @@ async function withLock(file, fn) {
   try { return await fn(); } finally { fs.rmSync(lock, { force: true }); }
 }
 
+function defaultOwner() {
+  return process.env.AGENT_NAME || require('os').userInfo().username;
+}
+
 function optionValue(argv, flag) {
   const i = argv.indexOf(flag);
   return i === -1 ? undefined : argv[i + 1];
@@ -124,14 +140,33 @@ async function main(argv) {
   const p = plan(name, root);
   const dryRun = rest.includes('--dry-run');
   if (cmd === 'remove') {
+    const owner = optionValue(rest, '--owner') || defaultOwner();
+    const ledger = ledgerFile(root);
+    const entry = readLedger(ledger)[p.name];
+    if (!entry) throw new Error(`${p.name} is not in the ledger: this script did not create it, so it is not removed`);
+    if (entry.owner !== owner) throw new Error(`${p.name} belongs to ${entry.owner}, not ${owner}; refusing to touch it`);
+    if (path.resolve(entry.worktree) !== path.resolve(p.worktree)) throw new Error(`ledger path ${entry.worktree} does not match ${p.worktree}`);
+    const registered = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
+    if (!registered) throw new Error(`${p.worktree} is not a worktree of this repository; refusing to remove it`);
+    const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree);
+    if (onBranch !== entry.branch) throw new Error(`${p.worktree} is on ${onBranch}, not ${entry.branch}; refusing to remove it`);
+    if (git(['status', '--porcelain', '--untracked-files=all'], p.worktree) !== '') {
+      throw new Error(`${p.worktree} has uncommitted or untracked changes; commit or stash them first, then remove`);
+    }
+    // No --force: git refuses a worktree with changes, and the branch is kept (a merged branch is deleted by its PR's cleanup).
     git(['worktree', 'remove', p.worktree], root);
+    await withLock(ledger, () => {
+      const all = readLedger(ledger);
+      delete all[p.name];
+      fs.writeFileSync(ledger, JSON.stringify(all, null, 2));
+    });
     const file = claimFile(root);
     await withLock(file, () => {
       const claims = readClaims(file);
       delete claims[p.name];
       fs.writeFileSync(file, JSON.stringify(claims, null, 2));
     });
-    console.log(`removed ${p.worktree}`);
+    console.log(`removed ${p.worktree}; branch ${entry.branch} kept`);
     return;
   }
   const base = optionValue(rest, '--base') || defaultBase(root, { fetch: !dryRun });
@@ -177,6 +212,15 @@ async function main(argv) {
       throw err;
     }
   }
+  if (!dryRun) {
+    const ledger = ledgerFile(root);
+    await withLock(ledger, () => {
+      const all = readLedger(ledger);
+      all[p.name] = { owner: optionValue(rest, '--owner') || defaultOwner(), branch: p.branch, worktree: p.worktree,
+        ports, composeProject: p.composeProject, createdAt: new Date().toISOString() };
+      fs.writeFileSync(ledger, JSON.stringify(all, null, 2));
+    });
+  }
   console.log(`export AGENT_NAME=${shellQuote(`${p.name} (${persona})`)}`);
   console.log(`export WORKTREE=${shellQuote(p.worktree)}`);
   console.log(`export COMPOSE_PROJECT_NAME=${shellQuote(p.composeProject)}`);
@@ -187,4 +231,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).catch(err => { console.error(`new-worktree: ${err.message}`); process.exit(1); });
 }
 
-module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock };
+module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock, ledgerFile, readLedger };

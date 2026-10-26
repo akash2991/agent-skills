@@ -46,7 +46,7 @@
       "id": "branch-worktree",
       "name": "Branch and worktree",
       "area": "Git and delivery",
-      "summary": "P5–P7 and DS2–DS3: one branch and one sibling worktree per ticket.",
+      "summary": "P5–P7 and DS1–DS3: one branch and one sibling worktree per ticket; each agent removes only its own environment.",
       "steps": [
         [
           "Choose the slug",
@@ -67,10 +67,22 @@
           "P6 DS2 DS3"
         ],
         [
-          "Remove the worktree after the PR is open",
+          "Remove the worktree after the PR is open: only the ledger's own environment, clean, on its recorded branch",
           "det",
           "skills/development-setup/scripts/new-worktree.js",
           "DS2"
+        ],
+        [
+          "Record owner, branch, path and ports in the ledger on create",
+          "det",
+          "skills/development-setup/scripts/new-worktree.js",
+          "DS1 DS2"
+        ],
+        [
+          "Refuse to remove what another owner or the ledger does not hold",
+          "det",
+          "skills/development-setup/scripts/new-worktree.js",
+          "DS1"
         ],
         [
           "Delete the local and remote branch after merge",
