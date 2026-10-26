@@ -1,6 +1,6 @@
 ---
 name: deterministic-workflows
-description: Converts agentic workflows into deterministic ones, made of code, scripts, and checks, with a model call kept only where judgment is genuinely needed. Use when designing a feature that would use an LLM, tool calling, or an agent loop; when orchestrating several agents; when a skill or procedure has an agent re-reason the same work every run; or when an agent repeats the same multi-stage procedure across sessions or tickets.
+description: Converts agentic workflows into deterministic ones, made of code, scripts, and checks, with a model call kept only where judgment is genuinely needed. Use when designing an AI feature or endpoint that would use an LLM, tool calling, or an agent loop; when building a multi-agent pipeline in product code or a script; when a skill or procedure has an agent re-reason the same work every run; or when an agent repeats the same multi-stage procedure across sessions or tickets.
 category: design
 ---
 
@@ -12,8 +12,8 @@ An agentic workflow lets a model decide what happens next. That costs tokens and
 
 ## When to Use
 
-- Designing or reviewing a feature that calls an LLM, uses tool calling, or runs an agent loop
-- Orchestrating several agents: a fan-out, a review pass, a pipeline of personas
+- Designing or reviewing an AI feature or endpoint that calls an LLM, uses tool calling, or runs an agent loop
+- Building a multi-agent pipeline in product code or a script, where agents hand work to each other
 - A skill, runbook, or prompt describes steps an agent works out again on every run
 - An agent repeats the same multi-step procedure (setup, a check, a migration, a release step) across sessions or tickets
 - An existing agentic flow is slow, costly, flaky, or gives different results for the same input
@@ -23,6 +23,7 @@ An agentic workflow lets a model decide what happens next. That costs tokens and
 - A single question answered once, with no workflow around it
 - Making existing code read more simply: that is `code-simplification`
 - Wiring an already deterministic check into CI: that is `ci-cd-and-automation`
+- The user or a slash command orchestrating personas (`/ship`, a review fan-out, the lifecycle commands): that is `../../references/orchestration-patterns.md`
 
 ## The Process
 
@@ -32,7 +33,7 @@ Search the scope you were given for workflows a model drives:
 
 - product code that calls a model: LLM clients, tool definitions, loops around a chat call
 - prompts, skills, and runbooks that list steps for an agent to carry out
-- multi-agent orchestration: fan-outs, review passes, hand-offs between personas
+- multi-agent pipelines in product code or scripts: agents that hand work to each other
 - procedures that recur in tickets, transcripts, or `docs/LEARNINGS.md`
 
 List each candidate with where it lives, then take them one at a time.
@@ -69,16 +70,16 @@ Rung 5 is allowed only when the path itself can't be known in advance: the seque
 
 ### 5. Fix the control flow in code
 
-The order of steps, the branches, the loop bounds, and the stop condition live in code: a pipeline, a state machine, or a workflow script. A model may fill in a value at a step; outside an agent loop an ADR allows, it never chooses which step runs next.
+The order of steps, the branches, the loop bounds, and the stop condition live in code: a pipeline, a state machine, or a workflow script. A model may fill in a value at a step, and code may branch on that typed value; outside an agent loop an ADR allows, the model never chooses which step runs next. A human-decision step is an explicit checkpoint in that flow: the workflow stops, asks the owner, and resumes on the answer; a model never stands in for it.
 
-Who may orchestrate agents (the user, a slash command, never a persona) is `../../references/orchestration-patterns.md`. This skill adds one thing: once an orchestration runs the same fixed steps every time, its control flow becomes a script, and agents sit only at the leaves. The script starts each agent with a fixed brief, collects its output against a schema, and decides what happens next. Example: a two-reviewer-plus-synthesis PR review is a script that starts two independent reviewers on the same revision, waits for both, then starts the synthesizer with both reports. The user's checkpoints between pipeline stages stay where that reference puts them.
+In a multi-agent pipeline built into product code or a script, the code owns the hand-offs and agents sit only at the leaves: it starts each agent with a fixed brief, collects its output against a schema, and decides what happens next. No agent decides which agent runs next or when the pipeline is done. Orchestrating personas from the user or a slash command is out of scope here; it follows `../../references/orchestration-patterns.md`.
 
 ### 6. Confine each judgment step
 
 Every model call that remains:
 
 - has a typed input and a typed output (an enum, a JSON Schema, a record), never free text that later code parses ad hoc
-- validates its output against that type; a failure takes an explicit branch (reject, route to a human, mark the item `UNKNOWN`), with no automatic retry
+- validates its output against that type; a failure takes an explicit branch (reject, route to a human, mark the item `UNKNOWN`) and is not retried automatically; when a retry is warranted is `coding-standards`' call
 - has a fixed prompt kept in the repository, versioned with the code
 - carries a one-line comment or ADR entry saying why this step can't be code
 - is wrapped so tests replace it with a fake that returns fixed outputs
@@ -87,7 +88,7 @@ Every model call that remains:
 
 Product logic goes in the service's code, in the feature it belongs to. An agent's own repeated procedure goes in a script:
 
-- **In a project:** the project's `scripts/`. Installed skills are copies the next brain update overwrites, so never add scripts to them or edit them; write a `gap` note in `docs/LEARNINGS.md` naming the skill whose steps the script replaces.
+- **In a project:** the project's `scripts/`. Installed skills are copies the next brain update overwrites, so the script does not go in them; write a `workaround` note in `docs/LEARNINGS.md` naming the skill whose steps the script replaces.
 - **In the brain repository:** `skills/<skill>/scripts/` when a skill owns the procedure. The skill then says "run the script", not "do these steps", and the prose steps the script replaced are deleted.
 
 ### 8. Prove the conversion keeps the behavior
@@ -102,7 +103,7 @@ Run the old workflow and the new one on the same inputs: recorded real runs wher
 | "It's only run once" | It's the second run that matters. When the task comes back, write the script. |
 | "Writing the code takes longer than prompting" | Once. Every agentic run after that costs tokens, latency, and a review of output that may have changed. |
 | "An agent loop is more flexible" | Flexibility you can't test is drift. If the path really is unknowable, record that in an ADR; otherwise fix it. |
-| "The orchestrator agent can decide who to call next" | Then the workflow changes when the model changes. Put the routing in a script and keep the agents at the leaves. |
+| "The lead agent can decide which agent runs next" | Then the pipeline changes when the model changes. Put the hand-offs in code and keep the agents at the leaves. |
 | "Structured output is enough" | A schema fixes the shape of one answer. It doesn't fix which step runs next, when to stop, or what happens when validation fails. |
 | "The new code does what the prompt said" | The prompt left cases open and the model filled them in. Compare old and new on the same inputs before calling it equivalent. |
 
@@ -112,7 +113,7 @@ Run the old workflow and the new one on the same inputs: recorded real runs wher
 - A prompt that says "first do X, then Y, then Z" where X, Y, and Z are lookups, transforms, or commands
 - A model parses, formats, filters, sorts, counts, or routes by a fixed rule
 - Model output is parsed with regexes or string matching instead of a schema
-- Any retry loop around a model call
+- A retry loop around a model call (`coding-standards` owns when a retry is allowed)
 - The same multi-step procedure appears in two tickets, prompts, or transcripts with no script behind it
 - Tests can't run without a live model
 - A conversion shipped without comparing the old and new workflows on the same inputs
@@ -136,3 +137,5 @@ Run the old workflow and the new one on the same inputs: recorded real runs wher
 - `code-simplification` makes code read more simply without changing behavior; this skill changes who decides each step.
 - `ci-cd-and-automation` wires deterministic checks into the pipeline; this skill finds which steps become those checks.
 - `adrs` records the reason a step stays agentic.
+- `coding-standards` owns the retry rule a judgment step's failure branch follows.
+- `herdr-fanout` runs independent agents side by side; it is the mechanics of a fan-out, not a reason to keep its control flow agentic.

@@ -27,6 +27,7 @@ async function triage(ticket, llm, db) {
   ];
   for (;;) {
     const reply = await llm.chat({ messages, tools: Object.keys(TOOLS) });
+    messages.push({ role: 'assistant', content: reply.content, toolCall: reply.toolCall });
     if (reply.toolCall) {
       const result = TOOLS[reply.toolCall.name]({ ticketId: ticket.id, ...reply.toolCall.args }, db);
       messages.push({ role: 'tool', content: JSON.stringify(result) });

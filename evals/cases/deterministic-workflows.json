@@ -11,11 +11,15 @@
         "top_k": 3
       },
       {
-        "prompt": "Design the multi-agent review so a script owns the orchestration instead of an orchestrator agent deciding who runs next",
+        "prompt": "Our document-processing service chains three LLM agents that hand work to each other; make code own the pipeline and keep the agents only where they are needed",
         "top_k": 3
       },
       {
         "prompt": "Our LLM pipeline gives a different answer for the same ticket on every run and the token bill keeps growing; fix it so the same input gives the same result",
+        "top_k": 3
+      },
+      {
+        "prompt": "Add an AI summarization endpoint that turns a support thread into a short summary for the agent dashboard",
         "top_k": 3
       }
     ],
@@ -41,20 +45,34 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "triage-agent.js runs support triage as an agent loop. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed.",
-      "expected_output": "A rewrite where email extraction, customer lookup, and queue routing are plain code with tests, control flow is fixed in code, and only the summary remains a model call with a typed output, validation, and an explicit failure branch",
+      "prompt": "triage-agent.js runs support triage as an agent loop; recorded-runs.json holds its outputs from production. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed.",
+      "expected_output": "A rewrite where email extraction, customer lookup, and queue routing are plain code with tests, control flow is fixed in code, only the summary remains a model call with a typed, validated output and an explicit failure branch, and the new routing is compared against recorded-runs.json",
       "files": [
         "deterministic-workflows"
       ],
       "expectations": [
         "The agent lists the workflow steps and classifies each as deterministic or judgment before rewriting",
         "Header parsing, customer lookup, and queue routing by plan and keywords become plain code, not model calls",
-        "The agent names the cases the prompt leaves to the model (an enterprise customer asking for a refund matches two rules; a customer lookup that finds nothing) and resolves each explicitly or asks, rather than guessing",
+        "The agent names the cases the prompt leaves to the model (an enterprise customer asking for a refund matches two rules; an enterprise ticket with no keywords; a sender not found; a ticket with no From: header) and resolves each explicitly or asks, rather than guessing",
         "The order of steps and the stop condition live in code; the unbounded agent loop is removed",
         "The summary step is the only model call, with a typed output validated against a schema instead of regex-parsed text",
-        "A validation failure takes an explicit branch rather than a silent or unbounded retry",
+        "A validation failure takes an explicit branch and is not retried automatically",
         "Tests cover the deterministic steps and run with the model call replaced by a fake",
-        "Old and new triage are compared on the same inputs, including those two cases, and every difference is fixed or recorded"
+        "The new routing runs on every ticket in recorded-runs.json; each ticket where the recorded runs disagree (T-102, T-103, T-104) is reported with the rule the new code applies"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Support wants tickets that mention cancelling to go to a new retention queue. Make that change in triage-agent.js.",
+      "expected_output": "The agent notices the routing is a rule written in a prompt, moves queue routing into code (including the new retention rule and its precedence over the others) instead of adding another line to the system prompt, and tests it",
+      "files": [
+        "deterministic-workflows"
+      ],
+      "expectations": [
+        "The agent does not implement the change by adding a sentence to SYSTEM_PROMPT",
+        "Queue routing, including the new retention rule, becomes a function in code with tests",
+        "The precedence between retention and the existing rules is stated explicitly or asked about",
+        "The agent says the rest of the agent loop is a candidate for the same conversion and names it as follow-up rather than silently rewriting everything"
       ]
     }
   ]
