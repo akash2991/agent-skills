@@ -31,7 +31,11 @@ function git(args) {
 // --repo <host>/<owner>/<name> for it (and for a fork's PR, which lives on upstream).
 function originRepo() {
   // The URL as configured, before any url.*.insteadOf rewrite: that is the repository the user named.
-  const url = git(['config', '--get', 'remote.origin.url']).trim();
+  // One URL only: with several, git fetches from the first while `config --get` returns the last, so the repository
+  // is ambiguous; refuse rather than pick one.
+  const urls = git(['config', '--get-all', 'remote.origin.url']).split('\n').filter(Boolean);
+  if (urls.length !== 1) throw new Error(`origin has ${urls.length} URLs; pass --repo <host>/<owner>/<name>`);
+  const url = urls[0].trim();
   const host = ((url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '').toLowerCase();
   const repo = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (!repo || resolvedHost(host, url) !== 'github.com') {
@@ -83,7 +87,9 @@ function latestRuns(checks) {
   const groups = new Map();
   const kept = [];
   for (const [i, c] of checks.entries()) {
-    const producer = c.workflowPath ? `${c.workflowPath}|${c.event}` : runId(c) ? `run:${runId(c)}` : c.workflowName ? `workflow:${c.workflowName}` : '';
+    // The ref a run was for is part of its identity: a push run for a tag or another branch at the same SHA does
+    // not stand for this branch's push run.
+    const producer = c.workflowPath ? `${c.workflowPath}|${c.event}|${c.runBranch || ''}` : runId(c) ? `run:${runId(c)}` : c.workflowName ? `workflow:${c.workflowName}` : '';
     if (!producer) { kept.push(c); continue; }
     const key = `${producer}/${c.name || c.context}`;
     (groups.get(key) || groups.set(key, []).get(key)).push({ c, i });
@@ -227,11 +233,11 @@ function runIdentity(repo, checks) {
     const id = runId(c);
     if (!id) continue;
     if (!runs.has(id)) {
-      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt, prs: [.pull_requests[].number], head: .head_sha}']))); }
+      try { runs.set(id, JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/runs/${id}`, '--jq', '{path: .path, event: .event, created: .created_at, attempt: .run_attempt, prs: [.pull_requests[].number], head: .head_sha, branch: .head_branch}']))); }
       catch { runs.set(id, null); }
     }
     const run = runs.get(id);
-    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runPrs: run.prs || [], runHead: run.head });
+    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runPrs: run.prs || [], runHead: run.head, runBranch: run.branch });
     // Each job's own attempt: a re-run's jobs share the run id and its current attempt number.
     const job = jobId(c);
     if (job) { try { c.jobAttempt = Number(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/jobs/${job}`, '--jq', '.run_attempt']).trim()) || undefined; } catch { /* unknown */ } }
@@ -311,7 +317,7 @@ function mergeCommitProblems(repo, oid, head) {
   const c = JSON.parse(gh(['api', '--hostname', host, `repos/${owner}/${name}/commits/${oid}`, '--jq', '{parents: [.parents[].sha], message: .commit.message}']));
   const problems = [];
   if (c.parents.length !== 2 || !c.parents.includes(head)) problems.push(`${oid.slice(0, 8)} is not a merge commit of the inspected head (P15)`);
-  problems.push(...checkCommitMessage(c.message, process.env, { isMerge: true }));
+  problems.push(...checkCommitMessage(c.message, process.env, { isMerge: true, stripComments: false }));
   return problems;
 }
 
@@ -336,7 +342,12 @@ function main(argv) {
   }
   // The origin URL as verified now; cleanup uses this one and stops if origin is changed meanwhile.
   let verifiedUrl = '';
-  if (ownRepo) { try { verifiedUrl = git(['config', '--get', 'remote.origin.url']).trim(); } catch { ownRepo = false; } }
+  if (ownRepo) {
+    try {
+      const urls = git(['config', '--get-all', 'remote.origin.url']).split('\n').filter(Boolean);
+      if (urls.length === 1) verifiedUrl = urls[0].trim(); else ownRepo = false;
+    } catch { ownRepo = false; }
+  }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
   view.number = Number(pr);
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
@@ -458,7 +469,7 @@ function main(argv) {
   const url = verifiedUrl;
   const remoteRef = `refs/heads/${view.headRefName}`;
   let nowUrl = '';
-  try { nowUrl = git(['config', '--get', 'remote.origin.url']).trim(); } catch { /* removed */ }
+  try { nowUrl = git(['config', '--get-all', 'remote.origin.url']).trim(); } catch { /* removed */ }
   if (nowUrl !== url) {
     console.error(`merge-pr: merged #${pr}; origin changed during the run (${url} -> ${nowUrl || 'none'}), so ${view.headRefName} was left: delete it by hand (P7)`);
     process.exitCode = CLEANUP_INCOMPLETE;
@@ -482,7 +493,7 @@ function main(argv) {
   try {
     if (stillThere()) git(['push', '--quiet', `--force-with-lease=${remoteRef}:${view.headRefOid}`, url, `:${remoteRef}`]);
     // A push to a URL leaves origin's tracking ref behind: drop it too, only at the merged head.
-    try { git(['update-ref', '-d', `refs/remotes/origin/${view.headRefName}`, view.headRefOid]); } catch { /* absent or moved */ }
+    try { git(['update-ref', '--no-deref', '-d', `refs/remotes/origin/${view.headRefName}`, view.headRefOid]); } catch { /* absent or moved */ }
   } catch (err) {
     // GitHub's automatic head-branch deletion may have removed it first: that is P7 done, not left undone.
     let gone = false;
@@ -496,7 +507,13 @@ function main(argv) {
   // update-ref deletes exactly that commit, so work committed meanwhile survives; a branch checked out in a worktree
   // (P6) is left to that worktree.
   const local = localTip(view.headRefName);
-  if (local && local !== view.headRefOid) {
+  // A symbolic ref (ENG-1-x -> main) would make a deletion follow it to another branch: never touch one.
+  let symbolic = false;
+  try { execFileSync('git', ['symbolic-ref', '-q', `refs/heads/${view.headRefName}`], { stdio: 'ignore' }); symbolic = true; } catch { /* not symbolic */ }
+  if (local && symbolic) {
+    console.error(`merge-pr: local ${view.headRefName} is a symbolic ref; left alone (P7)`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+  } else if (local && local !== view.headRefOid) {
     console.error(`merge-pr: local branch ${view.headRefName} is not the merged head ${view.headRefOid.slice(0, 8)}; left alone (P7: delete it by hand if it is this PR's)`);
     process.exitCode = CLEANUP_INCOMPLETE;
   } else if (local) {
@@ -506,7 +523,7 @@ function main(argv) {
       git(['merge-base', '--is-ancestor', local, `origin/${view.baseRefName}`]);
       const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
       if (checkedOut) throw new Error('it is checked out in a worktree: remove that worktree (or detach it), then delete the branch');
-      git(['update-ref', '-d', `refs/heads/${view.headRefName}`, local]);
+      git(['update-ref', '--no-deref', '-d', `refs/heads/${view.headRefName}`, local]);
       // Its tracking config goes too, unless a branch of that name was created again meanwhile.
       if (!localTip(view.headRefName)) { try { execFileSync('git', ['config', '--remove-section', `branch.${view.headRefName}`], { stdio: 'ignore' }); } catch { /* no tracking config */ } }
     } catch (err) {

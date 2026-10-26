@@ -1400,3 +1400,81 @@ test('pre-push protects a non-origin remote\'s default even when origin/HEAD is 
   assert.match(r.stderr, /direct push to trunk is refused/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('an origin with several URLs is refused, not guessed', () => {
+  const f = approvedFixture();
+  execFileSync('git', ['config', '--add', 'remote.origin.url', 'https://github.com/backup/r.git'], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /origin has 2 URLs/);
+  assert.ok(!fs.existsSync(f.log) || !/^pr merge/m.test(fs.readFileSync(f.log, 'utf8')));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a symbolic ticket ref is never deleted through to the branch it points at', () => {
+  const f = approvedFixture();
+  const g = args => execFileSync('git', args, { cwd: f.work, encoding: 'utf8' });
+  g(['update-ref', 'refs/heads/main', f.head]);
+  g(['branch', '-D', 'ENG-1-x']);
+  g(['symbolic-ref', 'refs/heads/ENG-1-x', 'refs/heads/main']);
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /symbolic ref; left alone/);
+  g(['rev-parse', '--verify', 'refs/heads/main']);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a push run for another ref does not supersede this branch\'s failing push run', () => {
+  const run = (id, branch, conclusion, created) => ({ name: 'test', conclusion, status: 'COMPLETED', detailsUrl: `https://github.com/o/r/actions/runs/${id}/job/1`,
+    workflowPath: '.github/workflows/ci.yml', event: 'push', runBranch: branch, runCreated: created });
+  const runs = latestRuns([run(1, 'ENG-1-x', 'FAILURE', '2026-10-26T10:00:00Z'), run(2, 'v1.0', 'SUCCESS', '2026-10-26T10:05:00Z')]);
+  assert.ok(runs.some(c => c.conclusion === 'FAILURE'));
+});
+
+test('a stored commit subject starting with # is checked as stored', () => {
+  const msg = '# Not a conventional subject\nfeat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c';
+  assert.deepStrictEqual(check.checkCommitMessage(msg, {}), [], 'the hook strips editor comments');
+  assert.ok(check.checkCommitMessage(msg, {}, { stripComments: false }).length > 0, 'CI does not');
+});
+
+test('several origin URLs with an explicit --repo merge that repository and leave local refs alone', () => {
+  const f = approvedFixture();
+  execFileSync('git', ['config', '--add', 'remote.origin.url', 'https://github.com/backup/r.git'], { cwd: f.work });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'github.com/o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.match(fs.readFileSync(f.log, 'utf8'), /pr merge 1 .*--repo github\.com\/o\/r/);
+  assert.doesNotMatch(fs.readFileSync(f.log, 'utf8'), /backup\/r/);
+  execFileSync('git', ['rev-parse', '--verify', 'refs/heads/ENG-1-x'], { cwd: f.work, stdio: 'pipe' });
+  assert.notStrictEqual(r.status, 1, r.stderr);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a symbolic remote-tracking ref is removed without deleting the branch it points at', () => {
+  const f = approvedFixture();
+  const g = args => execFileSync('git', args, { cwd: f.work, encoding: 'utf8' });
+  g(['update-ref', 'refs/heads/main', f.head]);
+  g(['update-ref', '-d', 'refs/remotes/origin/ENG-1-x']);
+  g(['symbolic-ref', 'refs/remotes/origin/ENG-1-x', 'refs/heads/main']);
+  require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(g(['rev-parse', '--verify', 'refs/heads/main']).trim(), f.head);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('push runs of two branches at one SHA stay apart; a rerun on the same ref supersedes', () => {
+  const run = (id, branch, conclusion, created) => ({ name: 'test', conclusion, status: 'COMPLETED', detailsUrl: `https://github.com/o/r/actions/runs/${id}/job/1`,
+    workflowPath: '.github/workflows/ci.yml', event: 'push', runBranch: branch, runCreated: created });
+  assert.ok(latestRuns([run(1, 'ENG-1-x', 'FAILURE', '2026-10-26T10:00:00Z'), run(2, 'ENG-2-y', 'SUCCESS', '2026-10-26T10:05:00Z')]).some(c => c.conclusion === 'FAILURE'));
+  assert.ok(!latestRuns([run(1, 'ENG-1-x', 'FAILURE', '2026-10-26T10:00:00Z'), run(3, 'ENG-1-x', 'SUCCESS', '2026-10-26T10:05:00Z')]).some(c => c.conclusion === 'FAILURE'));
+});
+
+test('the commits check reads a stored commit as stored; the hook still drops editor comments', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hashsubj-'));
+  const g = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'init']); g(['switch', '-q', '-c', 'ENG-1-x']);
+  g(['commit', '-q', '--allow-empty', '--cleanup=verbatim', '-m', '# Not a conventional subject\nfeat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c']);
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const env = { ...process.env, LINEAR_TEAM: 'ENG' };
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'commits', '--base', 'main'], { cwd: dir, env, encoding: 'utf8' }).status, 1);
+  fs.writeFileSync(path.join(dir, 'msg'), 'feat(a): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n# Please enter the commit message\n');
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: dir, env, encoding: 'utf8' }).status, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

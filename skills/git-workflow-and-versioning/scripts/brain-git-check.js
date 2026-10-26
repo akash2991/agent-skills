@@ -5,9 +5,9 @@
 //   commit-msg <file>            P3, P4   message anatomy: type(scope), ticket id, Model / Thinking-effort / Harness trailers
 //   branch [<name>]              P5       branch is <ticket>-<slug>
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
-//   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
-//   push [<remote> <url>]        P8       a push to, or deletion of, main or the remote's default branch is refused
-//   pr --base <ref>              P2, P4, P10, P11, P13   one ticket across branch/title/commits, title "<ticket>: <goal>", size, changelog
+//   push [<remote> <url>]        P5, P8   stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>;
+//                                         a push to, or deletion of, main or the remote's default branch is refused
+//   pr --base <ref>              P2, P4, P11, P13   one ticket across branch/title/commits, title "<ticket>: <goal>", size, changelog
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
 // Environment: LINEAR_TEAM narrows the ticket pattern to one team key (read from the repository's .env when unset); BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
 // override 400 and 10; PR_TITLE and PR_BODY supply the title and body (CI passes them without shell quoting).
@@ -30,8 +30,10 @@ function ticketSource(env = process.env) {
 // (which runs without it) rejects any that are left unsquashed.
 // isMerge: whether the commit has more than one parent, when the caller knows (commits mode); a one-parent commit
 // with a merge-like subject is then checked like any other. The commit-msg hook cannot know, so it goes by the subject.
-function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerge } = {}) {
-  const message = raw.split(/\r?\n/).filter(l => !l.startsWith('#')).join('\n').trim();
+// stripComments: only for the commit-msg hook, where git has not yet removed the editor's # lines; a stored commit
+// (CI, merge verification) is checked exactly as it is.
+function checkCommitMessage(raw, env = process.env, { allowFixup = false, isMerge, stripComments = true } = {}) {
+  const message = raw.split(/\r?\n/).filter(l => !(stripComments && l.startsWith('#'))).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
   // A git revert keeps the subject shape of git's own "Revert \"…\"", but still needs its ticket and trailers (P2, P3).
@@ -123,7 +125,7 @@ function checkOneTicket({ branch, title, messages, promotion }, env = process.en
 
 function checkPrTitle(title, env = process.env) {
   if (!new RegExp(`^${ticketSource(env)}: \\S`).test(title || '')) {
-    return [`PR title must be "<ticket>: <goal>": got "${title || ''}" (P10)`];
+    return [`PR title must be "<ticket>: <goal>": got "${title || ''}" (P2, P4)`];
   }
   return [];
 }
@@ -313,7 +315,7 @@ function main(argv) {
     const errors = [];
     for (const sha of git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean)) {
       const isMerge = git(['log', '-1', '--format=%P', sha]).trim().split(/\s+/).length > 1;
-      for (const e of checkCommitMessage(git(['log', '-1', '--format=%B', sha]), process.env, { isMerge })) errors.push(`${sha.slice(0, 8)}: ${e}`);
+      for (const e of checkCommitMessage(git(['log', '-1', '--format=%B', sha]), process.env, { isMerge, stripComments: false })) errors.push(`${sha.slice(0, 8)}: ${e}`);
     }
     return report(errors);
   }
