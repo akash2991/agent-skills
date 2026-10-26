@@ -7,13 +7,26 @@ const https = require('node:https');
 const http = require('node:http');
 const { randomBytes, createHash } = require('node:crypto');
 const { setMaxListeners } = require('node:events');
-const { sanitizeObservation, safeIdentity, structuralIdentity, LIMITS } = require('./privacy.cjs');
+const { sanitizeObservation, sanitizeMetadataObservation, projectContent, safeIdentity, structuralIdentity, LIMITS, CONTENT_LIMITS } = require('./privacy.cjs');
 const { loadDependencies } = require('./dependencies.cjs');
 const { claimLock } = require('./locks.cjs');
 
 const OUTBOX_LIMITS = Object.freeze({ records: 256, bytes: 4 * 1024 * 1024, flush: 32, scan: 512 });
 const FILE_PATTERN = /^[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{32}\.json$/;
-const MAX_FILE_BYTES = LIMITS.recordBytes + 512;
+const LEGACY_FILE_BYTES = LIMITS.recordBytes + 512;
+const MAX_FILE_BYTES = CONTENT_LIMITS.recordBytes + 512;
+const MAX_REQUEST_BYTES = 1024 * 1024;
+// Preserve the legacy size classifier: a larger file is admissible for private
+// inspection only with the distinct new serializer prefix, never as old data.
+function inspectOutbox(file) {
+  const inspected = inspectPrivate(file, MAX_FILE_BYTES);
+  if (inspected.bytes.length > LEGACY_FILE_BYTES && !inspected.bytes.subarray(0, 12).equals(Buffer.from('{"schema":3,'))) throw publicationError();
+  return inspected;
+}
+function recoverOutboxSlot(file) {
+  try { const inspected = inspectOutbox(file); discardPrivate(file, MAX_FILE_BYTES, inspected); return 1; }
+  catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
+}
 const OUTBOX_SLOT = '.outbox-v1.tmp';
 // Lifetime floors deliberately have no TTL: pending/checkpoint references can
 // outlive any wall-clock retention interval. Exhaustion is explicit refusal,
@@ -131,7 +144,7 @@ function supportedTruncation(name, bytes, revisions) {
   if (escaped || !closes.length) return false;
   try {
     const envelope = JSON.parse(text + (quoted ? '"' : '') + closes.reverse().join(''));
-    const projected = sanitizeObservation(envelope.record);
+    const projected = sanitizeMetadataObservation(envelope.record);
     if (projected.id !== head[3] || projected.traceId !== head[4] || projected.nativeSessionId !== head[5]) return false;
     const canonical = JSON.stringify({ schema: 2, version: envelope.version, revision: envelope.revision, record: projected });
     if (!canonical.startsWith(text)) return false;
@@ -146,7 +159,7 @@ function supportedTruncation(name, bytes, revisions) {
 // not deletion authority. Complete unsupported/noncanonical data is preserved.
 function recoverQueue(stateDir, directory, deadlineAt) {
   let recovered = recoverSlot(path.join(stateDir, '.revisions-v1.tmp'), REVISION_BYTES)
-    + recoverSlot(path.join(directory, OUTBOX_SLOT), MAX_FILE_BYTES);
+    + recoverOutboxSlot(path.join(directory, OUTBOX_SLOT));
   const files = [], handle = fs.opendirSync(directory);
   let recoveryRevisions;
   try {
@@ -156,7 +169,7 @@ function recoverQueue(stateDir, directory, deadlineAt) {
       if (!entry) break;
       if (count >= OUTBOX_LIMITS.scan) throw publicationError('recovery_pending');
       if (!FILE_PATTERN.test(entry.name)) throw publicationError();
-      const file = path.join(directory, entry.name), inspected = inspectPrivate(file, MAX_FILE_BYTES);
+      const file = path.join(directory, entry.name), inspected = inspectOutbox(file);
       try { JSON.parse(inspected.bytes.toString('utf8')); }
       catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
@@ -283,14 +296,18 @@ function queueObservation(record, { stateDir = defaultStateDir(), revision } = {
     const files = inventory.files;
     const bytes = files.reduce((sum, item) => sum + item.stat.size, 0);
     const version = randomBytes(16).toString('hex');
-    const payload = JSON.stringify({ schema: 2, version, revision, record: safe });
+    const payload = JSON.stringify({ schema: safe.content ? 3 : 2, version, revision, record: safe });
+    // Reserve SDK-added attributes explicitly; no admitted singleton depends on
+    // a permanently oversized request ever succeeding. Actual packing below is
+    // measured again AFTER SDK masking/escaping.
+    if (Buffer.byteLength(wireBody([wireRecord(safe)])) > MAX_REQUEST_BYTES - 16384) return { queued: false, reason: 'wire_refused_size' };
     if (files.length >= OUTBOX_LIMITS.records || bytes + Buffer.byteLength(payload) > OUTBOX_LIMITS.bytes) return { queued: false, reason: 'capacity' };
     const file = path.join(directory, `${safe.traceId}-${safe.id}-${version}.json`);
     // The slot itself consumes the admitted record/byte budget. Rename never
     // exposes an empty/partial final record, and recovery never promotes a slot.
     try { fs.lstatSync(file); throw publicationError(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     publishPrivate(directory, OUTBOX_SLOT, file, payload, MAX_FILE_BYTES);
-    return { queued: true, id: safe.id, traceId: safe.traceId, version, revision, privacy: 'metadata-only' };
+    return { queued: true, id: safe.id, traceId: safe.traceId, version, revision, privacy: safe.content ? 'full-content' : 'metadata-only' };
   } catch (error) {
     return { queued: false, reason: error.reason || (error.message === 'Revision capacity exceeded' ? 'revision_capacity' : 'state_unavailable') };
   } finally { lock?.release(); }
@@ -332,11 +349,15 @@ function loadCredentials({ env = process.env, home = os.homedir(), agentDir = pa
 
 function canonicalEntry({ name, bytes }, state) {
   const envelope = JSON.parse(bytes.toString('utf8'));
-  const record = sanitizeObservation(envelope.record), revision = envelope.revision;
-  const canonical = { schema: 2, version: envelope.version, revision, record };
+  if (!envelope || ![2, 3].includes(envelope.schema)) throw new Error();
+  // Schema 2 always uses the frozen metadata projection. Schema 3 MUST carry
+  // the explicit content policy; changing a schema number cannot promote bytes.
+  const record = envelope.schema === 2 ? sanitizeMetadataObservation(envelope.record) : sanitizeObservation(envelope.record);
+  const revision = envelope.revision;
+  const canonical = { schema: envelope.schema, version: envelope.version, revision, record };
   // Parseable legacy/noncanonical/unticketed data is ambiguous, not a crash
   // artifact. Preserve it, without replay-time tickets or guessed chronology.
-  if (envelope.schema !== 2 || !/^[a-f0-9]{32}$/.test(envelope.version)
+  if ((envelope.schema === 3 && !record.content) || !/^[a-f0-9]{32}$/.test(envelope.version)
     || !Number.isSafeInteger(revision) || revision < 1
     || revision > (state.entries[revisionKey(record)]?.allocated || 0)
     || name !== `${record.traceId}-${record.id}-${envelope.version}.json`
@@ -365,7 +386,17 @@ function readEntries(inventory, state) {
   return { entries: [...latest.values()].slice(0, OUTBOX_LIMITS.flush), invalid };
 }
 
-function sdkMask({ data }) {
+function sdkMask({ data }, approvedContent) {
+  // The pinned SDK supplies no attribute key to mask(). Accept only exact
+  // serialized I/O values from already validated records in THIS flush. Never
+  // loosen the metadata mask into a generic JSON/string pass-through.
+  if (typeof data === 'string' && approvedContent.has(data)) {
+    try {
+      const projected = projectContent(JSON.parse(data));
+      if (Object.hasOwn(projected, 'value') && JSON.stringify(projected.value) === data) return data;
+    } catch {}
+    return null;
+  }
   if (typeof data === 'string') return structuralIdentity('projectId', data) || structuralIdentity('worktreeId', data) || safeIdentity(data) || null;
   if (typeof data === 'number') return Number.isFinite(data) && data >= 0 && data <= 1e12 ? data : null;
   if (Array.isArray(data) && data.length <= LIMITS.skills && data.every(value => safeIdentity(value))) return data;
@@ -375,11 +406,20 @@ function attributesFor(record) {
   const attrs = {
     'langfuse.observation.type': record.type.toLowerCase(),
     'session.id': record.sessionId,
-    'langfuse.observation.metadata.privacy': JSON.stringify('metadata-only'),
+    'langfuse.observation.metadata.privacy': JSON.stringify(record.content ? 'full-content' : 'metadata-only'),
     'langfuse.observation.metadata.nativeSessionId': JSON.stringify(record.nativeSessionId)
   };
   if (record.type === 'AGENT' && record.parentId === null) attrs['langfuse.trace.name'] = record.name;
-  const tags = ['privacy:metadata-only', `type:${record.type.toLowerCase()}`];
+  const tags = [`privacy:${record.content ? 'full-content' : 'metadata-only'}`, `type:${record.type.toLowerCase()}`];
+  if (record.content) {
+    attrs['langfuse.observation.metadata.captureVersion'] = JSON.stringify(record.content.version);
+    attrs['langfuse.observation.metadata.redactionPolicyVersion'] = JSON.stringify(record.content.redactionPolicyVersion);
+    for (const surface of ['input', 'output']) {
+      const item = record.content[surface];
+      attrs[`langfuse.observation.metadata.${surface}Status`] = JSON.stringify(item.status);
+      if (Object.hasOwn(item, 'value')) attrs[`langfuse.observation.${surface}`] = JSON.stringify(item.value);
+    }
+  }
   for (const [key, value] of Object.entries(record.context || {})) {
     if (key === 'outcome' && value === 'unknown') continue;
     attrs[`langfuse.observation.metadata.${key}`] = JSON.stringify(value);
@@ -402,6 +442,30 @@ function attributesFor(record) {
 const otlpValue = value => Array.isArray(value) ? { arrayValue: { values: value.map(otlpValue) } }
   : typeof value === 'boolean' ? { boolValue: value } : typeof value === 'number' ? { doubleValue: value } : { stringValue: value };
 const nanos = time => (BigInt(time[0]) * 1000000000n + BigInt(time[1])).toString();
+function wireSpan(span) {
+  return {
+    traceId: span.spanContext().traceId, spanId: span.spanContext().spanId,
+    ...(span.parentSpanContext ? { parentSpanId: span.parentSpanContext.spanId } : {}),
+    name: span.name, kind: 1, startTimeUnixNano: nanos(span.startTime), endTimeUnixNano: nanos(span.endTime),
+    attributes: Object.entries(span.attributes).map(([key, value]) => ({ key, value: otlpValue(value) })),
+    status: { code: span.status.code === 2 ? 2 : 1 }
+  };
+}
+function wireRecord(record) {
+  return {
+    traceId: record.traceId, spanId: record.id, ...(record.parentId ? { parentSpanId: record.parentId } : {}),
+    name: record.name, kind: 1,
+    startTimeUnixNano: (BigInt(record.startTime) * 1000000n).toString(), endTimeUnixNano: (BigInt(record.endTime) * 1000000n).toString(),
+    attributes: Object.entries(attributesFor(record)).map(([key, value]) => ({ key, value: otlpValue(value) })), status: { code: 1 }
+  };
+}
+function wireScope(spans) {
+  return spans.some(span => span.attributes.some(({ key, value }) => key === 'langfuse.observation.metadata.privacy' && value.stringValue === '"full-content"'))
+    ? 'agent-brain.observations' : 'agent-brain.metadata';
+}
+function wireBody(spans) {
+  return JSON.stringify({ resourceSpans: [{ resource: { attributes: [] }, scopeSpans: [{ scope: { name: wireScope(spans), version: '1' }, spans }] }] });
+}
 
 // Public SpanExporter contract, with a deliberately small OTLP/HTTP JSON
 // transport. Unlike exporter environment defaults, only this explicit host and
@@ -413,22 +477,16 @@ function transportExporter({ credentials, timeoutMs, signal }) {
       let finished = false;
       const done = code => { if (!finished) { finished = true; callback({ code }); } };
       try {
-        const wireSpans = spans.map(span => ({
-          traceId: span.spanContext().traceId, spanId: span.spanContext().spanId,
-          ...(span.parentSpanContext ? { parentSpanId: span.parentSpanContext.spanId } : {}),
-          name: span.name, kind: 1, startTimeUnixNano: nanos(span.startTime), endTimeUnixNano: nanos(span.endTime),
-          attributes: Object.entries(span.attributes).map(([key, value]) => ({ key, value: otlpValue(value) })),
-          status: { code: span.status.code === 2 ? 2 : 1 }
-        }));
-        const body = JSON.stringify({ resourceSpans: [{ resource: { attributes: [] }, scopeSpans: [{ scope: { name: 'agent-brain.metadata', version: '1' }, spans: wireSpans }] }] });
-        if (Buffer.byteLength(body) > 1024 * 1024) return done(1);
+        const serialized = spans.map(wireSpan);
+        const body = wireBody(serialized);
+        if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) return done(1);
         const url = new URL('/api/public/otel/v1/traces', credentials.baseUrl);
         const client = url.protocol === 'https:' ? https : http;
         const req = client.request(url, {
           method: 'POST', signal, timeout: timeoutMs, headers: {
             'content-type': 'application/json', 'content-length': Buffer.byteLength(body),
             authorization: `Basic ${Buffer.from(`${credentials.publicKey}:${credentials.secretKey}`).toString('base64')}`,
-            'x-langfuse-ingestion-version': '4', 'x-langfuse-sdk-name': 'agent-brain.metadata'
+            'x-langfuse-ingestion-version': '4', 'x-langfuse-sdk-name': wireScope(serialized)
           }
         }, response => {
           // OTLP may report partial rejection in a 200 response. Do not
@@ -531,27 +589,60 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
     if (!active) { try { await delegate.shutdown?.(); } catch {} return; }
     if (!delegate || typeof delegate.export !== 'function') throw new Error();
     const spanEntries = new WeakMap();
+    const approvedContent = new Set();
+    for (const { record } of entries) for (const surface of ['input', 'output']) {
+      const item = record.content?.[surface];
+      if (item && Object.hasOwn(item, 'value')) approvedContent.add(JSON.stringify(item.value));
+    }
     const exporter = {
       export(spans, callback) {
         const batch = spans.map(span => spanEntries.get(span));
         if (!active || batch.some(entry => !entry)) { callback({ code: 1 }); return; }
-        let called = false;
-        const done = response => {
-          if (called) return;
-          called = true;
-          controller.signal.removeEventListener('abort', cancel);
-          const success = active && response?.code === 0;
-          if (success) for (const entry of batch) accepted.add(entry);
-          // Never pass arbitrary transport errors into SDK diagnostics.
-          callback({ code: success ? 0 : 1 });
-        };
-        const cancel = () => done({ code: 1 });
-        controller.signal.addEventListener('abort', cancel, { once: true });
-        try {
-          const returned = delegate.export(spans, done);
-          // Resolving a promise is NOT an ack; rejection is still a failure.
-          if (returned && typeof returned.then === 'function') Promise.resolve(returned).catch(() => done({ code: 1 }));
-        } catch { done({ code: 1 }); }
+        // Refuse SDK truncation/masking changes instead of ACKing a prefix or
+        // null as captured content. This check is on the real ended SDK spans.
+        for (let i = 0; i < spans.length; i++) {
+          const expected = attributesFor(batch[i].record);
+          for (const surface of ['input', 'output']) {
+            const key = `langfuse.observation.${surface}`;
+            if (spans[i].attributes[key] !== expected[key]) {
+              result.reason = 'sdk_content_mismatch'; callback({ code: 1 }); return;
+            }
+          }
+        }
+        const groups = [];
+        let group = [], wire = [];
+        for (const span of spans) {
+          const serialized = wireSpan(span);
+          if (Buffer.byteLength(wireBody([serialized])) > MAX_REQUEST_BYTES) {
+            result.reason = 'wire_refused_size'; callback({ code: 1 }); return;
+          }
+          if (group.length && Buffer.byteLength(wireBody([...wire, serialized])) > MAX_REQUEST_BYTES) {
+            groups.push(group); group = []; wire = [];
+          }
+          group.push(span); wire.push(serialized);
+        }
+        if (group.length) groups.push(group);
+        let pending = groups.length, failed = false;
+        if (!pending) { callback({ code: 0 }); return; }
+        for (const subset of groups) {
+          let called = false;
+          const done = response => {
+            if (called) return;
+            called = true;
+            controller.signal.removeEventListener('abort', cancel);
+            const success = active && response?.code === 0;
+            if (success) for (const span of subset) accepted.add(spanEntries.get(span));
+            else failed = true;
+            if (!--pending) callback({ code: failed ? 1 : 0 });
+          };
+          const cancel = () => done({ code: 1 });
+          controller.signal.addEventListener('abort', cancel, { once: true });
+          try {
+            const returned = delegate.export(subset, done);
+            // Resolving a promise is NOT an ack; rejection is still a failure.
+            if (returned && typeof returned.then === 'function') Promise.resolve(returned).catch(() => done({ code: 1 }));
+          } catch { done({ code: 1 }); }
+        }
       },
       async shutdown() { await delegate.shutdown?.(); },
       async forceFlush() { await delegate.forceFlush?.(); }
@@ -559,16 +650,18 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
     const processor = new sdk.LangfuseSpanProcessor({
       exporter, exportMode: 'batched', mediaUploadEnabled: false,
       publicKey: '', secretKey: '', baseUrl: 'https://invalid.invalid',
-      environment: 'metadata-only', release: 'metadata-only',
+      environment: entries.some(entry => entry.record.content) ? 'bounded-content' : 'metadata-only',
+      release: entries.some(entry => entry.record.content) ? 'content-v1' : 'metadata-only',
       flushAt: OUTBOX_LIMITS.flush, flushInterval: 1, timeout: timeoutMs / 1000,
-      mask: sdkMask, shouldExportSpan: () => true
+      mask: value => sdkMask(value, approvedContent), shouldExportSpan: () => true
     });
     let current;
     provider = new sdk.NodeTracerProvider({
       resource: sdk.emptyResource(), sampler: new sdk.AlwaysOnSampler(), spanProcessors: [processor], forceFlushTimeoutMillis: timeoutMs,
+      // Do not inherit ambient OTEL_SPAN_* truncation/count limits.
+      spanLimits: { attributeValueLengthLimit: CONTENT_LIMITS.recordBytes, attributeCountLimit: 256, eventCountLimit: 0, linkCountLimit: 0 },
       idGenerator: { generateTraceId: () => current.traceId, generateSpanId: () => current.id }
     });
-    const tracer = provider.getTracer('agent-brain.metadata', '1');
     for (const entry of entries) {
       if (!active) break;
       const record = entry.record;
@@ -576,7 +669,11 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
       const parent = record.parentId ? sdk.trace.setSpanContext(sdk.ROOT_CONTEXT, {
         traceId: record.traceId, spanId: record.parentId, traceFlags: sdk.TraceFlags.SAMPLED, isRemote: true
       }) : sdk.ROOT_CONTEXT;
+      const tracer = provider.getTracer(record.content ? 'agent-brain.observations' : 'agent-brain.metadata', '1');
       const span = tracer.startSpan(record.name, { startTime: record.startTime, attributes: attributesFor(record) }, parent);
+      // A shared flush can replay both policies. Do not relabel legacy metadata
+      // spans with the processor's content environment/release in mixed batches.
+      if (!record.content) span.setAttributes({ 'langfuse.environment': 'metadata-only', 'langfuse.release': 'metadata-only' });
       spanEntries.set(span, entry);
       span.setStatus({ code: ['error', 'failed', 'timeout'].includes(record.outcome) ? 2 : 1 });
       span.end(record.endTime);
