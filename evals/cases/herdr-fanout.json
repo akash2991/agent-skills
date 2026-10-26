@@ -30,13 +30,13 @@
     {
       "id": 1,
       "kind": "dialogue",
-      "prompt": "HERDR_ENV=1. The user says: \"Review the auth, payments, and notifications modules in parallel for ticket PROJ-42; don't change any files.\" Fan it out.",
+      "prompt": "HERDR_ENV=1. The user says: \"Review the auth, payments, and notifications modules in parallel for ticket PROJ-42; don't change any files. Run the payments review in Codex, which has no global brain prompt installed.\" Fan it out.",
       "expected_output": "A roster of three read-only reviewer slices, each spawned in its own tab without focus and labeled <ticket> <scope> (<persona>), briefed cold with paths, constraints, and a return shape, collected by pane id and synthesized with claims verified",
       "expectations": [
         "Checks HERDR_ENV before spawning anything",
         "Writes the roster (persona, label, self-contained brief, return shape) before creating any tab",
         "Creates one tab per slice with --no-focus and a --label of the form <ticket> <scope> (<persona>), such as a code-reviewer persona, reading the pane id from the response rather than guessing it",
-        "In a harness without the /brain command, such as a Codex tab, the brief adopts the persona with /prompts:brain or by telling the agent to read .agents/agents/<persona>.md and declare it",
+        "The Codex tab's brief adopts the persona by telling the agent to read .agents/agents/<persona>.md, adopt it, and declare it, not with /brain or /prompts:brain",
         "Each brief starts with the persona to adopt, the same one its tab label shows, names the paths, says not to modify files, and states the return shape; none tells the agent to exit",
         "Starts each agent with a lowercase Herdr handle derived from the ticket and slice, such as proj-42-auth, never the label or a pane id, and does not try to give the Herdr agent the label as its name",
         "Confirms with herdr tab get that each tab shows its PROJ-42 <scope> (<persona>) label",

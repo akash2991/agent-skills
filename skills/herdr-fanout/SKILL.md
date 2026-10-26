@@ -102,9 +102,10 @@ agents' visible names.
 
 Each sub-agent has none of your conversation. A one-line instruction gets
 one-line-quality work. Every brief starts with the persona to adopt, the same
-one the tab label shows: `/brain <persona>` where the harness has the brain
-command (Codex: `/prompts:brain <persona>`), otherwise "Read
-`.agents/agents/<persona>.md`, adopt it, and declare before working". It then
+one the tab label shows: `/brain <persona>` in a harness whose project install
+carries the brain command (Claude, Gemini, Pi), otherwise "Read
+`.agents/agents/<persona>.md`, adopt it, and declare before working", as for
+Codex, whose prompts are a manual global install. It then
 states: the exact files/paths and how to see them; what the slice is and the
 properties that must hold; what it may **not** do (e.g. "do not modify files");
 and the exact **return shape** you'll collect (ranked findings with file:line,
