@@ -8,7 +8,7 @@
 // --review-optional is for a ticket that made review optional (P8); pass it only then.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, checkPrTitle, extraLongLived, loadDotenv, checkCommitMessage } = require('./brain-git-check');
+const { ticketSource, checkPrTitle, extraLongLived, loadDotenv, checkCommitMessage, checkOneTicket } = require('./brain-git-check');
 
 // Exit codes: 0 merged and cleaned up, 1 not merged (a blocker or a failed merge), 2 bad usage, 4 the merge's outcome
 // could not be read (nothing deleted; run merge-pr again to verify and clean up), 3 merged but P7
@@ -65,25 +65,46 @@ function runId(c) {
   return ((c.detailsUrl || '').match(/\/actions\/runs\/(\d+)/) || [])[1] || '';
 }
 
-// A check from outside Actions (another CI app or a commit status) has no run identity at all: each one is kept,
-// never collapsed with a same-named check from another provider.
+function jobId(c) {
+  return ((c.detailsUrl || '').match(/\/job\/(\d+)/) || [])[1] || '';
+}
+
+// The checks that decide CI, grouped by workflow file, event, and check name. Within a group only the newest workflow
+// run counts (by its creation time), and within that run only its newest attempt (re-runs share the run id; each job
+// carries its own attempt). Every job of that run and attempt counts, so two jobs or matrix legs that share a name are
+// siblings, never one superseding the other. When attempts are unknown, every job of the newest run counts: that can
+// only keep a stale failure, never hide one. A run whose jobs for this name were all SKIPPED or NEUTRAL (an `if:` that
+// excluded the event) does not supersede an older run that executed. A check from outside Actions has no run identity
+// and is always kept.
 function latestRuns(checks) {
-  const byKey = new Map();
+  const at = raw => (!raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0);
+  const passive = c => ['SKIPPED', 'NEUTRAL'].includes(c.conclusion);
+  const groups = new Map();
+  const kept = [];
   for (const [i, c] of checks.entries()) {
-    const producer = c.workflowPath ? `${c.workflowPath}|${c.event}` : runId(c) || (c.workflowName ? `workflow:${c.workflowName}` : `external:${i}`);
+    const producer = c.workflowPath ? `${c.workflowPath}|${c.event}` : runId(c) ? `run:${runId(c)}` : c.workflowName ? `workflow:${c.workflowName}` : '';
+    if (!producer) { kept.push(c); continue; }
     const key = `${producer}/${c.name || c.context}`;
-    // Order first by when the workflow run was created, so a delayed job of an older run cannot outrank a newer run;
-    // then, within one run (its re-run attempts share the run id), by when this job started. A time that is missing
-    // or zero (a job not started yet) is the newest.
-    const at = raw => (!raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0);
-    const when = [at(c.runCreated || c.startedAt || c.createdAt), at(c.startedAt || c.createdAt)];
-    const prev = byKey.get(key);
-    const newer = !prev || when[0] > prev.when[0] || (when[0] === prev.when[0] && when[1] >= prev.when[1]);
-    // A newer SKIPPED or NEUTRAL run (a job whose `if:` excluded this event) does not supersede a run that executed.
-    const passive = r => ['SKIPPED', 'NEUTRAL'].includes(r.conclusion);
-    if (!prev || (newer && !(passive(c) && !passive(prev.run))) || (passive(prev.run) && !passive(c))) byKey.set(key, { when, run: c });
+    (groups.get(key) || groups.set(key, []).get(key)).push({ c, i });
   }
-  return [...byKey.values()].map(v => v.run);
+  for (const members of groups.values()) {
+    const runs = new Map();
+    for (const m of members) {
+      const id = runId(m.c) || m.c.runCreated || `job:${m.i}`;
+      const run = runs.get(id) || { created: at(m.c.runCreated || m.c.startedAt || m.c.createdAt), jobs: [] };
+      run.jobs.push(m.c);
+      runs.set(id, run);
+    }
+    const ordered = [...runs.values()].sort((a, b) => b.created - a.created);
+    const latestAttempt = jobs => {
+      if (!jobs.every(j => Number(j.jobAttempt))) return jobs;
+      const top = Math.max(...jobs.map(j => Number(j.jobAttempt)));
+      return jobs.filter(j => Number(j.jobAttempt) === top);
+    };
+    const executed = ordered.map(r => latestAttempt(r.jobs)).find(jobs => jobs.some(j => !passive(j)));
+    kept.push(...(executed || latestAttempt(ordered[0].jobs)));
+  }
+  return kept;
 }
 
 function isPending(c) {
@@ -126,15 +147,24 @@ function isApproved(view) {
 function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env) {
   const blockers = [];
   if (view.state !== 'OPEN') blockers.push(`PR is ${view.state}, not OPEN`);
-  // The same title rule CI checks: "<ticket>: <goal>".
+  // The same title rule CI checks: "<ticket>: <goal>". The title, branch, and commits are checked again here, because a
+  // pr-rules success on this head may predate a retitle (the head SHA does not change).
   blockers.push(...checkPrTitle(view.title, env));
+  if (view.commits) blockers.push(...checkOneTicket({ branch: view.headRefName, title: view.title, messages: view.commits.map(c => `${c.messageHeadline}\n\n${c.messageBody || ''}`) }, env));
   const ticket = new RegExp(`^(${ticketSource(env)}):`).exec(view.title || '');
   const checks = latestRuns(view.statusCheckRollup || []);
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
   // P3, P11, and P13 are checked only by the project's pr-rules workflow: its check must have run and passed; a
   // skipped or neutral pr-rules never checked anything.
   const rules = checks.filter(c => (c.name || c.context) === 'pr-rules');
-  if (checks.length && !rules.some(c => (c.conclusion || c.state) === 'SUCCESS')) blockers.push('no passing pr-rules check on this head: install templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
+  const passed = rules.filter(c => (c.conclusion || c.state) === 'SUCCESS');
+  if (checks.length && !passed.length) blockers.push('no passing pr-rules check on this head: install templates/pr-rules.yml so P3, P11, and P13 are checked (P10)');
+  // The head SHA does not change when the title, body, or base does: a pass that started before the last such change
+  // checked other metadata (a removed Size-exception, a retitle, a new base). Wait for the run the edit triggers.
+  const changed = Date.parse(view.metadataChangedAt || '') || 0;
+  if (passed.length && changed && !passed.some(c => (Date.parse(c.startedAt || '') || 0) >= changed)) {
+    blockers.push(`pr-rules last passed before the PR's title, body, or base changed (${view.metadataChangedAt}); wait for the run that change triggers (P10, P11)`);
+  }
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
   const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
@@ -174,7 +204,10 @@ function runIdentity(repo, checks) {
       catch { runs.set(id, null); }
     }
     const run = runs.get(id);
-    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created, runAttempt: run.attempt });
+    if (run && run.path) Object.assign(c, { workflowPath: run.path, event: run.event, runCreated: run.created });
+    // Each job's own attempt: a re-run's jobs share the run id and its current attempt number.
+    const job = jobId(c);
+    if (job) { try { c.jobAttempt = Number(gh(['api', '--hostname', host, `repos/${owner}/${name}/actions/jobs/${job}`, '--jq', '.run_attempt']).trim()) || undefined; } catch { /* unknown */ } }
   }
   return checks;
 }
@@ -187,6 +220,15 @@ function longLived(branch, defaultBranch, env = process.env) {
 
 // Review threads still open on the PR (P10: every review comment is resolved), across every page. gh pr view does
 // not report them.
+// When the PR's title, body, or base last changed: the newest of lastEditedAt and the title-rename and base-change events.
+function metadataChangedAt(repo, pr) {
+  const { host, owner, name } = splitRepo(repo);
+  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){lastEditedAt timelineItems(last:100,itemTypes:[RENAMED_TITLE_EVENT,BASE_REF_CHANGED_EVENT]){nodes{... on RenamedTitleEvent{createdAt} ... on BaseRefChangedEvent{createdAt}}}}}}';
+  const out = JSON.parse(gh(['api', 'graphql', '--hostname', host, '--jq', '.data.repository.pullRequest | [.lastEditedAt] + [.timelineItems.nodes[].createdAt] | map(select(. != null))',
+    '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr}`]) || '[]');
+  return out.sort().pop() || '';
+}
+
 function unresolvedThreads(repo, pr) {
   const { host, owner, name } = splitRepo(repo);
   const query = 'query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}';
@@ -248,13 +290,23 @@ function main(argv) {
     const same = (a, b) => ['host', 'owner', 'name'].every(k => a[k].toLowerCase() === b[k].toLowerCase());
     try { ownRepo = same(splitRepo(originRepo()), splitRepo(repo)); } catch { ownRepo = false; }
   }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit']));
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,baseRefName,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository,mergeCommit,commits']));
   // Already merged (an earlier run whose outcome was unknown, or someone else): skip the gates and the merge, and go
   // on to cleanup only if the merge commit proves P15 and P3.
   const alreadyMerged = view.state === 'MERGED';
   view.unresolvedThreads = unresolvedThreads(repo, pr);
+  view.metadataChangedAt = alreadyMerged ? '' : metadataChangedAt(repo, pr);
   runIdentity(repo, view.statusCheckRollup || []);
   const defaultBranch = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim();
+  // BRAIN_LONG_LIVED as pr-rules sees it: the repository variable when neither the environment nor .env defines it.
+  // An invalid or unreadable pattern cannot say which branches are long-lived, so no branch is deleted.
+  let patternInvalid = false;
+  if (process.env.BRAIN_LONG_LIVED === undefined) {
+    try { process.env.BRAIN_LONG_LIVED = gh(['variable', 'get', 'BRAIN_LONG_LIVED', '--repo', repo]).trim(); } catch (err) {
+      if (!/not found|404/i.test(String(err.stderr || err.message))) patternInvalid = true;
+    }
+  }
+  if (process.env.BRAIN_LONG_LIVED) { try { new RegExp(process.env.BRAIN_LONG_LIVED); } catch { patternInvalid = true; } }
   // A protected branch is never deleted either, whatever its name.
   const { host: h, owner: o, name: n } = splitRepo(repo);
   // An unknown protection state keeps the branch: only "no such branch" (a fork's head) counts as unprotected.
@@ -265,7 +317,7 @@ function main(argv) {
       protectionUnknown = true;
     }
   }
-  const keep = longLived(view.headRefName, defaultBranch) || isProtected || protectionUnknown;
+  const keep = longLived(view.headRefName, defaultBranch) || isProtected || protectionUnknown || patternInvalid;
   const reviewers = new Set((view.reviews || []).filter(r => ['APPROVED', 'CHANGES_REQUESTED'].includes(r.state)).map(r => r.author && r.author.login).filter(Boolean));
   view.writers = writers(repo, [...reviewers]);
   const { blockers, ticket } = alreadyMerged ? { blockers: [], ticket: '' } : mergeBlockers(view, { reviewOptional: opts.reviewOptional });
@@ -302,6 +354,11 @@ function main(argv) {
   if (problems.length) {
     console.error(`merge-pr: PR #${pr} is merged${mergeError || alreadyMerged ? ', but not by this run' : ''}, and its merge commit does not meet the rules; the branches were kept:`);
     for (const p of problems) console.error(`merge-pr:   ${p}`);
+    process.exitCode = CLEANUP_INCOMPLETE;
+    return;
+  }
+  if (keep && patternInvalid && !longLived(view.headRefName, defaultBranch)) {
+    console.error(`merge-pr: merged #${pr}; BRAIN_LONG_LIVED is not a valid regular expression or could not be read, so ${view.headRefName} was kept (P7)`);
     process.exitCode = CLEANUP_INCOMPLETE;
     return;
   }
@@ -368,6 +425,8 @@ function main(argv) {
       const checkedOut = git(['worktree', 'list', '--porcelain']).split('\n').includes(`branch refs/heads/${view.headRefName}`);
       if (checkedOut) throw new Error('it is checked out in a worktree: remove that worktree (or detach it), then delete the branch');
       git(['update-ref', '-d', `refs/heads/${view.headRefName}`, local]);
+      // Its tracking config goes too, unless a branch of that name was created again meanwhile.
+      if (!localTip(view.headRefName)) { try { git(['config', '--remove-section', `branch.${view.headRefName}`]); } catch { /* no tracking config */ } }
     } catch (err) {
       console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete`);
       process.exitCode = CLEANUP_INCOMPLETE;

@@ -145,7 +145,7 @@ When a skill ships runnable helpers under `scripts/`, each script follows these 
 - Include a cleanup trap for temporary files.
 - Reference the script path as `skills/<skill-name>/scripts/<script>.sh` (repo-relative).
 
-**Exception: Node checkers and actions.** A script that parses git or `gh` JSON, or runs as a git hook or CI step, may be Node instead (`git-workflow-and-versioning`'s `brain-git-check.js`, `install-hooks.js`, `merge-pr.js`). It uses `#!/usr/bin/env node`, only Node's standard library, and a `package.json` with `"type": "commonjs"` beside it; it reports one line per failure on stderr and signals the result by exit code (0 pass, 1 rule failed, 2 bad usage; a script may add a documented code for a partial result, as `merge-pr.js` uses 3 for "merged, cleanup left") rather than JSON on stdout, because hooks and CI read the exit code. It is committed executable (mode 755).
+**Exception: Node checkers and actions.** A script that parses git or `gh` JSON, or runs as a git hook or CI step, may be Node instead (`git-workflow-and-versioning`'s `brain-git-check.js`, `install-hooks.js`, `merge-pr.js`). It uses `#!/usr/bin/env node`, only Node's standard library, and a `package.json` with `"type": "commonjs"` beside it; it reports one line per failure on stderr and signals the result by exit code (0 pass, 1 rule failed, 2 bad usage; a script may add documented codes for other outcomes, as `merge-pr.js` uses 3 for "merged, cleanup left" and 4 for "outcome unknown") rather than JSON on stdout, because hooks and CI read the exit code. It is committed executable (mode 755).
 
 ## Writing Principles
 

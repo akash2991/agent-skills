@@ -67,16 +67,31 @@ function checkBranchName(name, env = process.env) {
 
 // One ticket per PR (P2, P4): the branch, the title, and every commit name the same ticket. A commit names its ticket
 // in the subject's [TICKET] (git's merge subjects carry it in the message).
+// A long-lived head (P16 promotion, e.g. release/1.0 into main) carries many tickets' merges: only its title is checked.
+// A commit's own ticket: the subject's trailing [TICKET]; for git's "Merge ... into <branch>", that branch's ticket; for
+// a revert, the ticket named outside the quoted subject of the commit it reverts; otherwise the first in the message.
+function commitTicket(msg, id) {
+  const subject = msg.split('\n')[0] || '';
+  const bracket = /\[([^\]]+)\]\s*$/.exec(subject);
+  if (bracket && id.test(bracket[1])) return bracket[1];
+  const into = /^Merge .* into (\S+)/.exec(subject);
+  if (into && id.test(into[1])) return id.exec(into[1])[1];
+  if (/^(Revert|Reapply) ".*"/.test(subject)) {
+    const own = msg.replace(/^(Revert|Reapply) ".*"/, '');
+    if (id.test(own)) return id.exec(own)[1];
+  }
+  const any = id.exec(msg);
+  return any ? any[1] : '';
+}
+
 function checkOneTicket({ branch, title, messages }, env = process.env) {
   const id = new RegExp(`\\b(${ticketSource(env)})\\b`);
   const named = new Map();
-  const add = (where, text) => { const m = id.exec(text || ''); if (m) (named.get(m[1]) || named.set(m[1], []).get(m[1])).push(where); };
-  if (branch && !(branch === 'main' || branch.startsWith('release/') || extraLongLived(branch, env))) add('branch', branch);
-  add('title', title);
-  for (const [i, msg] of (messages || []).entries()) {
-    const subject = (msg.split('\n')[0] || '');
-    add(`commit ${i + 1}`, (/\[([^\]]+)\]\s*$/.exec(subject) || [])[1] || msg);
-  }
+  const add = (where, ticket) => { if (ticket) (named.get(ticket) || named.set(ticket, []).get(ticket)).push(where); };
+  const longLivedHead = branch && (branch === 'main' || branch.startsWith('release/') || extraLongLived(branch, env));
+  if (branch && !longLivedHead) add('branch', (id.exec(branch) || [])[1]);
+  add('title', (id.exec(title || '') || [])[1]);
+  if (!longLivedHead) for (const [i, msg] of (messages || []).entries()) add(`commit ${i + 1}`, commitTicket(msg, id));
   if (named.size <= 1) return [];
   return [`one ticket per PR: ${[...named].map(([t, w]) => `${t} (${w.join(', ')})`).join(' vs ')} (P2, P4)`];
 }
@@ -136,7 +151,13 @@ function requiredChangelogs(changedPaths, allChangelogs, headFiles) {
   const global = (headFiles && GLOBAL_CHANGELOGS.find(c => headFiles.includes(c))) || GLOBAL_CHANGELOGS.find(c => allChangelogs.includes(c));
   if (global) required.add(global);
   for (const p of changedPaths) {
-    if (CHANGELOG.test(p) || p.startsWith('templates/')) continue;
+    if (p.startsWith('templates/')) continue;
+    if (CHANGELOG.test(p)) {
+      // A service changelog that the PR deletes while its service stays is still required (and so fails).
+      const dir = p.split('/').slice(0, -1).join('/');
+      if (dir && !GLOBAL_CHANGELOGS.includes(p) && headFiles && !headFiles.includes(p) && headFiles.some(f => f.startsWith(`${dir}/`))) required.add(p);
+      continue;
+    }
     const dir = p.split('/').slice(0, -1);
     while (dir.length) {
       const candidate = [...dir, 'CHANGELOG.md'].join('/');
@@ -197,20 +218,25 @@ function listChangelogs(base) {
 
 // A key from the repository's .env (LINEAR_TEAM, BRAIN_LONG_LIVED) when the environment lacks it: hooks do not load
 // .env. Never in CI, where the checkout is the PR's own.
-// The .env of this worktree, else of the main checkout: .env is untracked, so a ticket worktree (P6) has none.
+// The key from this worktree's .env, else from the main checkout's: .env is untracked, so a ticket worktree (P6) may
+// have none, or one without this key.
 function dotenvValue(key) {
   try {
     const here = git(['rev-parse', '--show-toplevel']).trim();
     const main = require('path').dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
-    const file = [`${here}/.env`, `${main}/.env`].find(f => fs.existsSync(f));
-    if (!file) return '';
-    const line = fs.readFileSync(file, 'utf8').split('\n').find(l => new RegExp(`^\\s*(export\\s+)?${key}\\s*=`).test(l));
-    if (!line) return '';
+    const pattern = new RegExp(`^\\s*(export\\s+)?${key}\\s*=`);
+    let line;
+    for (const file of [`${here}/.env`, `${main}/.env`]) {
+      if (!fs.existsSync(file)) continue;
+      line = fs.readFileSync(file, 'utf8').split('\n').find(l => pattern.test(l));
+      if (line) break;
+    }
+    if (!line) return null;
     const value = line.split('=').slice(1).join('=').trim();
     // A quoted value is taken as written; an unquoted one ends at an inline " #" comment.
     const quoted = /^(['"])(.*)\1/.exec(value);
     return quoted ? quoted[2] : value.replace(/\s+#.*$/, '').trim();
-  } catch { return ''; }
+  } catch { return null; }
 }
 
 // The repository's default branch, as far as this checkout knows it. Pushes to it are refused like pushes to main.
@@ -288,9 +314,12 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
+// Precedence per key: the environment, then this worktree's .env, then the main checkout's .env (then, in merge-pr,
+// the repository variable). The first that defines the key wins, even when empty: `BRAIN_LONG_LIVED=` means no long-lived
+// branches beyond main, the default branch, release/*, and protected ones. Never in CI.
 function loadDotenv(env = process.env) {
   if (env.CI) return;
-  for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (!env[key]) { const v = dotenvValue(key); if (v) env[key] = v; }
+  for (const key of ['LINEAR_TEAM', 'BRAIN_LONG_LIVED']) if (env[key] === undefined) { const v = dotenvValue(key); if (v !== null) env[key] = v; }
 }
 
 module.exports = { checkOneTicket, loadDotenv, parseNumstatRenames, extraLongLived, checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };

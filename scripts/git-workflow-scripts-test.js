@@ -342,11 +342,16 @@ test('checks are keyed by workflow run: same-named workflows and push vs pull_re
     { workflowName: 'CI', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z', detailsUrl: url(2) },
   ]);
   assert.strictEqual(runs.length, 2);
-  // A re-run keeps its run id, so the newest attempt replaces the failure.
+  // A re-run keeps its run id; each job's own attempt says which is newer.
   assert.strictEqual(latestRuns([
-    { workflowName: 'CI', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z', detailsUrl: url(3) },
-    { workflowName: 'CI', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:05:00Z', detailsUrl: url(3) },
+    { workflowName: 'CI', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', jobAttempt: 1, detailsUrl: url(3) },
+    { workflowName: 'CI', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', jobAttempt: 2, detailsUrl: url(3) },
   ]).length, 1);
+  // Without attempts, both jobs of the run count: a stale failure may block, never hide.
+  assert.strictEqual(latestRuns([
+    { workflowName: 'CI', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', detailsUrl: url(3) },
+    { workflowName: 'CI', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', detailsUrl: url(3) },
+  ]).length, 2);
 });
 
 test('the merge title rule is the CI one: "<ticket>: <goal>"', () => {
@@ -418,9 +423,11 @@ if (a[0] === 'api' && a.some(x => x.includes('/commits/'))) {
   process.stdout.write(JSON.stringify({ parents: g(['rev-list', '--parents', '-n', '1', 'main']).trim().split(' ').slice(1), message: g(['log', '-1', '--format=%B', 'main']) }));
   process.exit(0);
 }
+if (a[0] === 'api' && a.some(x => x.includes('lastEditedAt'))) { process.stdout.write(process.env.FAKE_EDITED || '[]'); process.exit(0); }
 if (a[0] === 'api' && a.some(x => x.includes('mergeQueue'))) { process.stdout.write(process.env.FAKE_QUEUE || ''); process.exit(0); }
 if (a[0] === 'api') { process.stdout.write(process.env.FAKE_UNRESOLVED || ''); process.exit(0); }
 if (a[0] === 'repo' && a[1] === 'view') { process.stdout.write('main'); process.exit(0); }
+if (a[0] === 'variable' && a[1] === 'get') { if (process.env.FAKE_LONG_LIVED !== undefined) { process.stdout.write(process.env.FAKE_LONG_LIVED); process.exit(0); } process.stderr.write('variable ' + a[2] + ' was not found'); process.exit(1); }
 if (a[0] === 'pr' && a[1] === 'view') {
   const v = JSON.parse(fs.readFileSync(${JSON.stringify(viewFile)}, 'utf8'));
   process.stdout.write(JSON.stringify(a[a.length - 1] === 'state,mergeCommit' ? { state: 'MERGED', mergeCommit: { oid: 'abcdef1234' } } : v)); process.exit(0);
@@ -769,12 +776,11 @@ test('a pushInsteadOf rewrite of origin leaves the remote branch alone', () => {
   fs.rmSync(f.root, { recursive: true, force: true });
 });
 
-test('re-run attempts of one run are ordered by job start, whatever the array order', () => {
-  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'B', status: 'COMPLETED', runCreated: '2026-10-26T10:00:00Z', runAttempt: 2 };
-  const a1 = { ...id, conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' };
-  const a2 = { ...id, conclusion: 'FAILURE', startedAt: '2026-10-26T10:20:00Z' };
-  assert.strictEqual(latestRuns([a1, a2])[0].conclusion, 'FAILURE');
-  assert.strictEqual(latestRuns([a2, a1])[0].conclusion, 'FAILURE');
+test('re-run attempts of one run are judged by each job\'s own attempt, whatever the array order', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'B', status: 'COMPLETED', runCreated: '2026-10-26T10:00:00Z', detailsUrl: 'https://github.com/o/r/actions/runs/77/job/1' };
+  const a1 = { ...id, conclusion: 'SUCCESS', jobAttempt: 1 };
+  const a2 = { ...id, conclusion: 'FAILURE', jobAttempt: 2 };
+  for (const order of [[a1, a2], [a2, a1]]) assert.deepStrictEqual(latestRuns(order).map(c => c.conclusion), ['FAILURE']);
 });
 
 test('the .env of the main checkout serves a ticket worktree, and a missing message file is bad usage', () => {
@@ -852,8 +858,106 @@ test('a squash merge (one parent) does not pass as P15, and the branches are kep
 });
 
 test('a not-yet-started job of a re-run attempt is newest whatever the array order', () => {
-  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'B', runCreated: '2026-10-26T10:00:00Z' };
-  const done = { ...id, status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' };
-  const queued = { ...id, status: 'QUEUED', startedAt: '0001-01-01T00:00:00Z' };
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'B', runCreated: '2026-10-26T10:00:00Z', detailsUrl: 'https://github.com/o/r/actions/runs/77/job/1' };
+  const done = { ...id, status: 'COMPLETED', conclusion: 'SUCCESS', jobAttempt: 1 };
+  const queued = { ...id, status: 'QUEUED', jobAttempt: 2 };
   for (const order of [[done, queued], [queued, done]]) assert.ok(isPending(latestRuns(order)[0]));
+});
+
+test('two jobs with the same name in one run and attempt are siblings: either failing blocks', () => {
+  const id = { workflowPath: 'ci.yml', event: 'pull_request', name: 'test', status: 'COMPLETED', runCreated: '2026-10-26T10:00:00Z', jobAttempt: 1 };
+  const runs = latestRuns([{ ...id, conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/r/actions/runs/9/job/1' }, { ...id, conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/r/actions/runs/9/job/2' }]);
+  assert.strictEqual(runs.length, 2);
+  const view = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' }, reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }, ...runs] };
+  assert.match(mergeBlockers(view).blockers.join(), /CI is not green: test/);
+});
+
+test('deleting a service changelog while the service stays fails P13', () => {
+  const all = ['CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const files = check.parseNumstat('1\t0\tCHANGELOG.md\n0\t5\tservices/api/CHANGELOG.md');
+  assert.match(check.checkChangelog(files, all, ['CHANGELOG.md', 'services/api/app.js']).join(), /services\/api\/CHANGELOG\.md/);
+});
+
+test('merge-pr re-checks one ticket at merge time: a retitle after a green pr-rules run is caught', () => {
+  const view = { state: 'OPEN', title: 'ENG-2: x', headRefName: 'ENG-1-x', headRefOid: 'h', author: { login: 'a' },
+    commits: [{ messageHeadline: 'feat: x [ENG-1]', messageBody: '' }],
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }], statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS' }] };
+  assert.match(mergeBlockers(view).blockers.join(), /one ticket per PR/);
+});
+
+test('one ticket: a release promotion checks only its title; reverts and merges are attributed to their own ticket', () => {
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'release/1.0', title: 'ENG-3: release 1.0', messages: ['Merge pull request #1 [ENG-1]', 'Merge pull request #2 [ENG-2]'] }, {}), []);
+  const revert = 'Revert "feat(b): add b [ENG-2]"\n\nUndo for [ENG-5]\n\nModel: m';
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'ENG-5-undo', title: 'ENG-5: undo b', messages: [revert] }, {}), []);
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'ENG-2-b', title: 'ENG-2: b', messages: ["Merge branch 'ENG-1-a' into ENG-2-b\n\nENG-2"] }, {}), []);
+});
+
+test('a worktree .env without a key falls back to the main checkout for that key', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dotenv2-'));
+  const main = path.join(dir, 'app');
+  fs.mkdirSync(main);
+  const g = (args, cwd = main) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']); g(['commit', '-q', '--allow-empty', '-m', 'init']);
+  fs.writeFileSync(path.join(main, '.env'), 'LINEAR_TEAM=ENG\n');
+  const wt = path.join(dir, 'ENG-1-x');
+  g(['worktree', 'add', '-q', wt, '-b', 'ENG-1-x']);
+  fs.writeFileSync(path.join(wt, '.env'), 'PORT=3001\n');
+  fs.writeFileSync(path.join(dir, 'msg'), 'feat(a): x [ABC-1]\n\nModel: m\nThinking-effort: h\nHarness: c\n');
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const env = { ...process.env }; delete env.CI; delete env.LINEAR_TEAM; delete env.BRAIN_LONG_LIVED;
+  assert.strictEqual(require('child_process').spawnSync('node', [script, 'commit-msg', path.join(dir, 'msg')], { cwd: wt, encoding: 'utf8', env }).status, 1, 'ABC is not the ENG team');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an invalid BRAIN_LONG_LIVED keeps the branch, and local cleanup removes the branch config', () => {
+  const bad = approvedFixture();
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: bad.work, env: { ...bad.env, BRAIN_LONG_LIVED: '([' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 3, r.stderr);
+  assert.match(r.stderr, /not a valid regular expression/);
+  fs.rmSync(bad.root, { recursive: true, force: true });
+  const f = approvedFixture();
+  execFileSync('git', ['config', 'branch.ENG-1-x.remote', 'origin'], { cwd: f.work });
+  const ok = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: f.env, encoding: 'utf8' });
+  assert.strictEqual(ok.status, 0, ok.stderr);
+  assert.throws(() => execFileSync('git', ['config', '--get', 'branch.ENG-1-x.remote'], { cwd: f.work, stdio: 'pipe' }));
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a pr-rules pass from before the last title, body, or base change does not count', () => {
+  const base = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h', author: { login: 'a' },
+    reviews: [{ author: { login: 'r' }, authorAssociation: 'MEMBER', state: 'APPROVED', commit: { oid: 'h' } }],
+    statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:00:00Z' }] };
+  // a Size-exception removed from the body, a retitle, or a new base all move metadataChangedAt
+  assert.match(mergeBlockers({ ...base, metadataChangedAt: '2026-10-26T10:05:00Z' }).blockers.join(), /pr-rules last passed before/);
+  assert.deepStrictEqual(mergeBlockers({ ...base, metadataChangedAt: '2026-10-26T09:55:00Z' }).blockers, []);
+});
+
+test('end to end: merge-pr refuses after an edit newer than the pr-rules pass', () => {
+  const f = approvedFixture({ ...mergeView, statusCheckRollup: [{ name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:00:00Z' }] });
+  const r = require('child_process').spawnSync('node', [mergeScript, '1', '--repo', 'o/r', ...PROV], { cwd: f.work, env: { ...f.env, FAKE_EDITED: '["2026-10-26T10:05:00Z"]' }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /pr-rules last passed before/);
+  fs.rmSync(f.root, { recursive: true, force: true });
+});
+
+test('a release promotion passes pr mode end to end, while a mixed-ticket feature branch fails', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'promo-'));
+  const g = (args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']);
+  fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), '# c\n'); g(['add', '-A']); g(['commit', '-q', '-m', 'init']);
+  const T = '\n\nModel: m\nThinking-effort: h\nHarness: c';
+  g(['switch', '-q', '-c', 'release/1.0']);
+  for (const t of ['ENG-1', 'ENG-2']) { fs.appendFileSync(path.join(dir, 'CHANGELOG.md'), `- ${t}\n`); g(['commit', '-q', '-am', `feat: ${t} [${t}]${T}`]); }
+  const script = path.join(__dirname, '..', 'skills', 'git-workflow-and-versioning', 'scripts', 'brain-git-check.js');
+  const run = (branch, title) => require('child_process').spawnSync('node', [script, 'pr', '--base', 'main', '--branch', branch, '--title', title], { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1' } });
+  assert.strictEqual(run('release/1.0', 'ENG-3: release 1.0').status, 0);
+  g(['branch', '-m', 'ENG-1-mixed']);
+  assert.match(run('ENG-1-mixed', 'ENG-1: mixed').stderr, /one ticket per PR/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('reapply is attributed like revert', () => {
+  const msg = 'Reapply "feat(b): add b [ENG-2]"\n\nBack for [ENG-6]';
+  assert.deepStrictEqual(check.checkOneTicket({ branch: 'ENG-6-b', title: 'ENG-6: b again', messages: [msg] }, {}), []);
 });
