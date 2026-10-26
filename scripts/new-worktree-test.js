@@ -41,7 +41,7 @@ test('create and remove make a sibling worktree on a new branch', () => {
   run(['init', '-q', '-b', 'main']);
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
-  const out = execFileSync('node', [script, 'create', 'ENG-7-demo'], { cwd: repo, encoding: 'utf8' });
+  const out = execFileSync('node', [script, 'create', 'ENG-7-demo', '--persona', 'backend-engineer'], { cwd: repo, encoding: 'utf8' });
   assert.match(out, /export COMPOSE_PROJECT_NAME='eng-7-demo'/);
   assert.ok(fs.existsSync(path.join(parent, 'ENG-7-demo', '.git')));
   assert.strictEqual(run(['rev-parse', '--abbrev-ref', 'HEAD'], path.join(parent, 'ENG-7-demo')).trim(), 'ENG-7-demo');
@@ -66,8 +66,8 @@ test('agents created one after another claim disjoint host ports', () => {
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
   const portsOf = out => out.split('\n').filter(l => /HOST_PORT_/.test(l)).map(l => l.split('=')[1].replace(/'/g, ''));
-  const a = portsOf(execFileSync('node', [script, 'create', 'ENG-8-a', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
-  const b = portsOf(execFileSync('node', [script, 'create', 'ENG-9-b', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
+  const a = portsOf(execFileSync('node', [script, 'create', 'ENG-8-a', '--persona', 'web-engineer', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
+  const b = portsOf(execFileSync('node', [script, 'create', 'ENG-9-b', '--persona', 'web-engineer', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
   assert.strictEqual(a.length, 2);
   assert.strictEqual(b.length, 2);
   assert.deepStrictEqual(a.filter(p => b.includes(p)), []);
@@ -98,8 +98,17 @@ test('running create again for the same ticket reuses the worktree', () => {
   run(['init', '-q', '-b', 'main']);
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
-  execFileSync('node', [script, 'create', 'ENG-11-again'], { cwd: repo, encoding: 'utf8' });
-  const again = execFileSync('node', [script, 'create', 'ENG-11-again'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  assert.match(again, /export AGENT_NAME='ENG-11-again'/);
+  execFileSync('node', [script, 'create', 'ENG-11-again', '--persona', 'scout'], { cwd: repo, encoding: 'utf8' });
+  const again = execFileSync('node', [script, 'create', 'ENG-11-again', '--persona', 'scout'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.match(again, /export AGENT_NAME='ENG-11-again \(scout\)'/);
   fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('create needs a persona, which goes into the agent name', () => {
+  const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+  for (const args of [[], ['--persona'], ['--persona', 'Backend Engineer']]) {
+    const r = require('child_process').spawnSync('node', [script, 'create', 'ENG-12-p', ...args, '--dry-run'], { encoding: 'utf8' });
+    assert.strictEqual(r.status, 2, args.join(' '));
+    assert.match(r.stderr, /--persona/);
+  }
 });

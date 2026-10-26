@@ -2,10 +2,10 @@
 'use strict';
 
 // Creates this agent's own worktree and prints the names derived from it (development-setup DS2, DS3).
-//   new-worktree.js create <TICKET-slug> [--base <ref>] [--ports <n>] [--dry-run]
+//   new-worktree.js create <TICKET-slug> --persona <persona> [--base <ref>] [--ports <n>] [--dry-run]
 //   new-worktree.js remove <TICKET-slug>
 // Run from the main checkout or any worktree of it. The worktree is placed beside the main checkout, never inside it.
-// Prints shell exports: AGENT_NAME (the worktree basename), COMPOSE_PROJECT_NAME (lowercase), and n free host ports.
+// Prints shell exports: AGENT_NAME (`<TICKET-slug> (<persona>)`, the visible name), COMPOSE_PROJECT_NAME (lowercase), and n free host ports.
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -13,6 +13,7 @@ const net = require('net');
 const path = require('path');
 
 const NAME = /^[A-Z][A-Z0-9]*-\d+-[a-z0-9]+(-[a-z0-9]+)*$/;
+const PERSONA = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const FORBIDDEN_PARENTS = /(^|\/)(\.?herdr|\.claude|\.agents|\.gemini|\.pi|\.hermes|\.agent-brain)(\/|$)/;
 
 function plan(name, mainCheckout) {
@@ -111,7 +112,12 @@ function optionValue(argv, flag) {
 async function main(argv) {
   const [cmd, name, ...rest] = argv;
   if (!['create', 'remove'].includes(cmd) || !name) {
-    console.error('usage: new-worktree.js create <TICKET-slug> [--base <ref>] [--ports <n>] [--dry-run] | remove <TICKET-slug>');
+    console.error('usage: new-worktree.js create <TICKET-slug> --persona <persona> [--base <ref>] [--ports <n>] [--dry-run] | remove <TICKET-slug>');
+    process.exit(2);
+  }
+  const persona = optionValue(rest, '--persona');
+  if (cmd === 'create' && !PERSONA.test(persona || '')) {
+    console.error('new-worktree: create needs --persona <persona>, a kebab-case persona name such as backend-engineer (DS2)');
     process.exit(2);
   }
   const root = mainCheckout();
@@ -171,7 +177,7 @@ async function main(argv) {
       throw err;
     }
   }
-  console.log(`export AGENT_NAME=${shellQuote(p.name)}`);
+  console.log(`export AGENT_NAME=${shellQuote(`${p.name} (${persona})`)}`);
   console.log(`export WORKTREE=${shellQuote(p.worktree)}`);
   console.log(`export COMPOSE_PROJECT_NAME=${shellQuote(p.composeProject)}`);
   ports.forEach((port, i) => console.log(`export HOST_PORT_${i + 1}=${shellQuote(port)}`));
