@@ -222,3 +222,37 @@ test('unsupported optional role evidence is omitted, not inferred from display n
   assert.throws(() => h.flow.update(h.run(), { requestedEffort: 'not a token' }), /Invalid tracing context/);
   noCaptureFailure(h);
 });
+
+for (const name of ds2Names) test(`Pi dispatch-before-child and repeated exact binding preserve capture for ${name}`, async t => {
+  const f = fixture(t), parent = f.make();
+  await withMetadata(undefined, undefined, async () => {
+    await start(parent);
+    await parent.controller.getContextTool().execute('context', { persona: 'backend-engineer', ticketId: 'TEST-17' }, undefined, undefined, parent.ctx);
+  });
+  const launchId = 'dispatch-first-exact-child';
+  const details = { id: launchId, name, agent: 'scout', sessionFile: path.join(f.cwd, 'dispatch-first.jsonl'), status: 'started' };
+  const dispatch = async toolCallId => {
+    await parent.emit('tool_execution_start', { toolName: 'subagent', toolCallId, args: { name } });
+    await parent.emit('tool_execution_end', { toolName: 'subagent', toolCallId, isError: false, result: { details } });
+  };
+  await dispatch('first');
+  const binding = parent.flow.store.resolveLaunch({ launchId });
+  assert.ok(binding);
+  const child = f.make({ PI_SUBAGENT_ID: launchId });
+  await withMetadata(name, undefined, async () => { await start(child); await finish(child); });
+  const first = child.flow.resolve(child.run());
+  assert.equal(first.parentSpanId, parent.run().rootSpanId);
+  assert.equal(first.traceId, parent.run().traceId);
+  assert.equal(first.persona, 'scout', 'typed dispatch role, not display-name parsing');
+  assert.equal(first.ticketId, 'TEST-17');
+  assert.equal(first.agentName, null);
+  assert.ok(f.records.some(record => record.type === 'AGENT' && record.id === first.rootSpanId));
+  assert.ok(f.records.some(record => record.type === 'GENERATION' && record.nativeSessionId === first.nativeSessionId));
+  await dispatch('repeat');
+  assert.equal(parent.flow.store.resolveLaunch({ launchId }).nonce, binding.nonce);
+  const repeated = child.flow.resolve(child.run());
+  for (const key of ['rootSpanId', 'runId', 'nativeSessionId', 'traceId', 'parentSpanId']) assert.equal(repeated[key], first[key]);
+  assert.equal(details.name, name, 'the UI-facing name remains intact');
+  omitted(f, name);
+  noCaptureFailure(parent, child);
+});
