@@ -7,9 +7,11 @@
 // copies in .claude/, .gemini/ and .pi/agents/ therefore carry native names;
 // the source and .agents/agents/ keep the labels. See docs/harness-layout.md.
 
+const { parseFrontmatter } = require('./skill-lint');
+
 const HARNESSES = ['claude', 'gemini', 'pi'];
 
-// Every persona reads; one with a read-only label does not write.
+// Every persona reads; one with a read-only shell does not write files.
 const READ = {
   claude: ['Read'],
   gemini: ['read_file', 'read_many_files', 'grep_search', 'glob', 'list_directory', 'activate_skill'],
@@ -34,9 +36,11 @@ const LINEAR_READ = [
 ];
 
 // Pi reaches MCP through pi-mcp-adapter's `mcp` proxy, or, with its built-in
-// MCP, through `mcp__<server>__*`; naming both works with either.
+// MCP, through `codemode` limited to the `mcp__` entries; names a setup lacks
+// are ignored. `tool_search` is left out: it loads MCP tools no entry matches.
+const PI_MCP = ['mcp', 'codemode'];
 function server(name) {
-  return { claude: [`mcp__${name}`], gemini: [`mcp_${name}_*`], pi: ['mcp', `mcp__${name}__*`] };
+  return { claude: [`mcp__${name}`], gemini: [`mcp_${name}_*`], pi: [...PI_MCP, `mcp__${name}__*`] };
 }
 
 const SHELL = { claude: ['Bash'], gemini: ['run_shell_command'], pi: ['bash'] };
@@ -50,8 +54,7 @@ const LABELS = {
   'linear (read)': {
     claude: LINEAR_READ.map(t => `mcp__linear__${t}`),
     gemini: LINEAR_READ.map(t => `mcp_linear_${t}`),
-    pi: ['mcp', 'mcp__linear__*'],
-    readOnly: true,
+    pi: [...PI_MCP, ...LINEAR_READ.map(t => `mcp__linear__${t}`)],
   },
   github: server('github'),
   aws: { viaShell: true },
@@ -66,9 +69,10 @@ const LABELS = {
 
 const splitLabels = v => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
 
-// Problems with a persona's labels: an unknown label, or one reached through
-// a shell the persona does not have.
+// Problems with a persona's labels: not an inline list, an unknown label, or
+// one reached through a shell the persona does not have.
 function labelErrors(tools) {
+  if (tools === '') return ['`tools` must be an inline comma-separated list'];
   const labels = splitLabels(tools);
   const errors = [];
   const hasShell = labels.some(l => LABELS[l] && LABELS[l].claude && LABELS[l].claude.includes('Bash'));
@@ -90,22 +94,19 @@ function nativeTools(tools, harness) {
   return [...new Set(out)];
 }
 
-function frontmatterValue(lines, key) {
-  const line = lines.find(l => l.startsWith(`${key}:`));
-  return line === undefined ? undefined : line.slice(key.length + 1).trim();
-}
-
 // The installed copy of a persona for one harness. Frontmatter is not shown
 // to the agent, so the labels, and for Gemini the skills, move into the body.
-function nativePersona(content, harness) {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(content);
-  if (!match) return content;
-  const lines = match[1].split(/\r?\n/);
-  const tools = frontmatterValue(lines, 'tools');
-  const skills = frontmatterValue(lines, 'skills');
-  if (tools === undefined) return content;
+// It reads frontmatter with the validator's parser, so the two agree.
+function nativePersona(source, harness) {
+  const crlf = source.includes('\r\n');
+  const content = crlf ? source.replace(/\r\n/g, '\n') : source;
+  const match = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*\n/.exec(content);
+  if (!match) return source;
+  const lines = match[1].split('\n');
+  const { tools, skills } = parseFrontmatter(content);
+  if (tools === undefined) return source;
   const native = nativeTools(tools, harness);
-  const kept = lines.filter(l => !l.startsWith('tools:') && !(harness === 'gemini' && l.startsWith('skills:')));
+  const kept = lines.filter(l => !/^tools[ \t]*:/.test(l) && !(harness === 'gemini' && /^skills[ \t]*:/.test(l)));
   // Gemini's schema is strict: `tools` is a YAML list and `skills` is unknown.
   kept.push(harness === 'gemini' ? `tools: [${native.join(', ')}]` : `tools: ${native.join(', ')}`);
   const labels = splitLabels(tools);
@@ -116,7 +117,8 @@ function nativePersona(content, harness) {
   const heading = /^# .*\r?\n/m.exec(body);
   const at = heading ? heading.index + heading[0].length : 0;
   body = `${body.slice(0, at)}\n${note.join('\n')}\n${body.slice(at)}`;
-  return `---\n${kept.join('\n')}\n---\n${body}`;
+  const out = `---\n${kept.join('\n')}\n---\n${body}`;
+  return crlf ? out.replace(/\n/g, '\r\n') : out;
 }
 
 module.exports = { HARNESSES, LABELS, labelErrors, nativeTools, nativePersona };

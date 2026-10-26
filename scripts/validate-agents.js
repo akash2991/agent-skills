@@ -19,8 +19,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFrontmatter } = require('./lib/skill-lint');
-const { labelErrors } = require('./lib/persona-tools');
+const { parseFrontmatter, frontmatterYamlErrors } = require('./lib/skill-lint');
+const { HARNESSES, labelErrors, nativePersona } = require('./lib/persona-tools');
 
 const ROOT = path.resolve(__dirname, '..');
 const AGENTS_DIR = path.join(ROOT, 'agents');
@@ -62,6 +62,15 @@ function main() {
     const thin = fm.skills !== undefined;
     if (thin && !fm.tools) errors.push(`${where}: missing \`tools\``);
     for (const e of labelErrors(fm.tools)) errors.push(`${where}: ${e}`);
+    // The installed copies must build, and Gemini's must still parse as YAML.
+    if (fm.tools && !labelErrors(fm.tools).length) {
+      for (const harness of HARNESSES) {
+        try {
+          const copy = nativePersona(content, harness);
+          if (harness === 'gemini') for (const e of frontmatterYamlErrors(copy)) errors.push(`${where}: Gemini copy: ${e}`);
+        } catch (err) { errors.push(`${where}: ${harness} copy: ${err.message}`); }
+      }
+    }
     for (const key of FORBIDDEN_KEYS) if (fm[key] !== undefined) errors.push(`${where}: must not set \`${key}\`; the user sets model and effort per run`);
     for (const s of splitList(fm.skills)) {
       if (!knownSkills.has(s)) errors.push(`${where}: skill "${s}" does not exist in skills/`);

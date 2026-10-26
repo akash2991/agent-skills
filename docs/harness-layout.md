@@ -49,33 +49,25 @@ Do not infer persona discovery from skill discovery:
 - `.pi/agents/`: project personas discovered by **pi-herdr-agents**, the extension used here, not Pi core.
 - Keep command templates in each harness's documented command/prompt directory. Codex global custom prompts require a separate user-controlled copy; the installer does not write to the home directory.
 
+The installer adjusts command skill paths to `.agents/skills/` except for Claude's `.claude/skills/`. It does not overwrite harness settings, MCP configuration, global configuration, or trust decisions. **Explicit opt-in exception:** `agent-brain pull --langfuse` delegates to the native Pi package manager (`@langfuse/pi-observability-plugin@0.1.2`) and Claude's project-scoped marketplace/plugin manager (`langfuse-observability` at marketplace tag `v1.2.1`) after pulling brain files. The native managers merge their own project registrations; `.pi/settings.json`, `.claude/settings.json`, and native plugin caches are not brain-managed assets and are never copied, pruned, or replaced by the brain. No credential or copied hook scripts are installed. Default pull does not register telemetry. See [Langfuse setup](langfuse-setup.md) for credentials, privacy, verification, and limitations.
+
 ### Persona tools: labels in the source, native names in harness copies
 
 A persona's `tools:` names the project's labels (`linear`, `shell`, `docker`, ...). Claude Code, Gemini CLI, and Pi read that line as an allowlist of their own tool names, and none of the labels is one. Checked on 2026-10-26: Claude Code 2.1.310 refuses to start the agent ("would be spawned with zero tools"); Gemini CLI 0.65.0's loader rejects the file, because its schema is strict (`tools` must be a YAML list, `skills` is an unknown key); Pi 1.3.0 under pi-herdr-agents 2.0.5 starts the agent with no tools at all.
 
-The installer therefore resolves the labels through `scripts/lib/persona-tools.js` when it writes `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`. The source and `.agents/agents/` keep the labels. A harness copy also gains one line under its heading, `Tools: <labels>. Reach <labels> through the shell.`, because no harness shows frontmatter to the agent; the Gemini copy carries its skills there too. `scripts/validate-agents.js` fails on a label the map does not know, and on a shell-reached label in a persona without `shell`.
+The installer therefore resolves the labels through `scripts/lib/persona-tools.js`, the one place the mapping lives, when it writes `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`. The source and `.agents/agents/` keep the labels. A harness copy also gains one line under its heading, `Tools: <labels>. Reach <labels> through the shell.`, because no harness shows frontmatter to the agent; the Gemini copy carries its skills there too. `scripts/validate-agents.js` reads frontmatter with the installer's parser and builds every harness copy, so a label the map does not know, a shell-reached label without `shell`, a `tools:` that is not an inline list, or a Gemini copy that is not valid YAML fails validation instead of the install.
 
-| Label | Claude Code | Gemini CLI | Pi |
-|---|---|---|---|
-| every persona | `Read` | `read_file`, `read_many_files`, `grep_search`, `glob`, `list_directory`, `activate_skill` | `read`, `grep`, `find`, `ls` |
-| unless a label is read-only | `Edit`, `Write` | `write_file`, `replace` | `edit`, `write` |
-| `shell`, `shell (read-only)` | `Bash` | `run_shell_command` | `bash` |
-| `linear`, `github` | `mcp__<server>` | `mcp_<server>_*` | `mcp`, `mcp__<server>__*` |
-| `linear (read)` | each `get_*`, `list_*`, `search_documentation`, `extract_images` tool | the same, as `mcp_linear_<tool>` | `mcp`, `mcp__linear__*` |
-| `aws`, `browser`, `docker`, `emulator`, `grafana`, `localstack`, `playwright`, `postgres` | none: reached with their CLI or HTTP API through the shell | none | none |
+In outline: every persona gets its harness's file-reading tools, and file-writing tools unless its shell is `shell (read-only)`; `shell` maps to the harness's shell tool; `linear` and `github` map to their MCP servers, and `linear (read)` to the Linear server's read tools by name; `aws`, `browser`, `docker`, `emulator`, `grafana`, `localstack`, `playwright`, and `postgres` map to nothing of their own and are reached with their CLI or HTTP API through the shell.
 
-What the allowlist cannot enforce:
+What the allowlist cannot enforce, and what it takes away:
 
-- **A read-only shell.** No harness scopes its shell tool through this list: Claude Code reduces `Bash(git log:*)` to plain `Bash`, and Pi's own documentation says `read,bash` is not read-only. `shell (read-only)` grants a full shell; the persona's text is the only limit.
-- **Read-only or per-server MCP in Pi.** With pi-mcp-adapter, every MCP server is reached through the one `mcp` proxy tool, so a Pi persona with `linear (read)` or `linear` can call any tool of any configured server. `mcp__<server>__*` scopes it only under Pi's built-in MCP.
-- **Shell-reached labels.** `docker` or `grafana` grant nothing beyond the shell; a persona with `shell` reaches every CLI on the machine.
+- **A read-only shell.** No harness scopes its shell tool through this list: Claude Code reduces `Bash(git log:*)` to plain `Bash`, and pi-herdr-agents' documentation says `read,bash` is not read-only. `shell (read-only)` grants a full shell; the persona's text is the only limit. Claude Code's built-in Explore agent works the same way: it denies the edit tools and keeps `Bash`.
+- **MCP scope in Pi.** With pi-mcp-adapter, every MCP server is reached through its one `mcp` proxy tool, so a Pi persona with `linear (read)` or `linear` can call any tool of any configured server. With Pi's built-in MCP, `codemode` reaches only the tools the `mcp__` entries name; `tool_search` is deliberately not granted, because it loads tools no entry matches, so a server with `deferred` exposure is unreachable. The built-in path follows Pi's documentation and was not run against an authenticated server.
+- **Server names.** The MCP servers must be configured as `linear` and `github`. The same server under another name, such as a claude.ai connector (`mcp__claude_ai_Linear__*`), gives the persona none of its tools.
+- **Shell-reached labels** grant nothing beyond the shell; a persona with `shell` reaches every CLI on the machine.
+- **Harness utilities are not granted.** The allowlist holds only what the labels name, so a persona started as a subagent has no web fetch or search, to-do list, or question tool (Claude `WebFetch`, `WebSearch`, `TodoWrite`; Gemini `web_fetch`, `google_web_search`, `write_todos`, `ask_user`). Add a label to the map when a persona needs one.
 - **Unverified names.** The GitHub MCP server did not connect during the check, so `mcp__github` and `mcp_github_*` follow each harness's naming rule but were not observed resolving. Gemini was checked with its loader, not by starting an agent.
 - **Personas without `tools:`** (the reviewers and auditors) are unrestricted in every harness.
-
-Claude Code's built-in Explore agent takes the same approach: it denies the edit tools and keeps `Bash`, so its read-only boundary is the prompt too.
-
-
-The installer adjusts command skill paths to `.agents/skills/` except for Claude's `.claude/skills/`. It does not overwrite harness settings, MCP configuration, global configuration, or trust decisions. **Explicit opt-in exception:** `agent-brain pull --langfuse` delegates to the native Pi package manager (`@langfuse/pi-observability-plugin@0.1.2`) and Claude's project-scoped marketplace/plugin manager (`langfuse-observability` at marketplace tag `v1.2.1`) after pulling brain files. The native managers merge their own project registrations; `.pi/settings.json`, `.claude/settings.json`, and native plugin caches are not brain-managed assets and are never copied, pruned, or replaced by the brain. No credential or copied hook scripts are installed. Default pull does not register telemetry. See [Langfuse setup](langfuse-setup.md) for credentials, privacy, verification, and limitations.
 
 ## Runtime checks versus documentation
 

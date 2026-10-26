@@ -9,7 +9,7 @@ const path = require('path');
 const test = require('node:test');
 
 const { buildBrain, assertSafeOutput, splitFrontmatter } = require('./lib/build-brain');
-const { stripFencedCodeBlocks } = require('./lib/skill-lint');
+const { stripFencedCodeBlocks, frontmatterYamlErrors } = require('./lib/skill-lint');
 const { pullInstall, planInstall, validateRelPath, mergeProjectAgents, STATE_PATH } = require('./lib/pull-install');
 const { labelErrors, nativeTools, nativePersona } = require('./lib/persona-tools');
 
@@ -644,7 +644,8 @@ test('native persona copies carry harness tool names; the labels stay in the sou
   assert.doesNotMatch(gemini, /^skills:/m, "Gemini's agent schema is strict");
   assert.match(gemini, /^Skills \(load with activate_skill\): brownfield-adoption, /m);
 
-  assert.match(nativePersona(scout, 'pi'), /^tools: read, grep, find, ls, bash, mcp, mcp__linear__\*$/m);
+  assert.match(nativePersona(scout, 'pi'), /^tools: read, grep, find, ls, bash, mcp, codemode, mcp__linear__extract_images, .*mcp__linear__get_issue, /m);
+  assert.doesNotMatch(nativePersona(scout, 'pi'), /mcp__linear__\*|tool_search|save_issue/);
   assert.deepEqual(nativeTools('linear', 'claude'), ['Read', 'Edit', 'Write', 'mcp__linear']);
 
   const reviewer = fs.readFileSync(path.join(ROOT, 'agents/code-reviewer.md'), 'utf8');
@@ -653,4 +654,24 @@ test('native persona copies carry harness tool names; the labels stay in the sou
   assert.deepEqual(labelErrors('linear, jira'), ['unknown tool label "jira"; add it to scripts/lib/persona-tools.js']);
   assert.deepEqual(labelErrors('linear, docker'), ['tool label "docker" is reached through the shell, which the persona does not list']);
   assert.throws(() => nativeTools('jira', 'claude'), /unknown tool label/);
+});
+
+test('the installer reads persona frontmatter the way the validator does', () => {
+  const persona = tools => `---\nname: p\ndescription: "P. Use when testing."\nskills: linear\n${tools}\n---\n\n# P\n\n## Role\n`;
+  const expected = nativePersona(persona('tools: linear, shell'), 'claude');
+  for (const quoted of ['tools: "linear, shell"', "tools: 'linear, shell'"]) assert.equal(nativePersona(persona(quoted), 'claude'), expected);
+  assert.equal(nativePersona(persona('tools: linear, shell').replace('\n---\n\n#', '\n--- \n\n#'), 'claude').includes('tools: Read, Edit, Write, mcp__linear, Bash'), true, 'a closing fence with trailing space is still transformed');
+  assert.throws(() => nativePersona(persona('tools:\n  - linear'), 'claude'), /inline comma-separated list/);
+  assert.deepEqual(labelErrors(''), ['`tools` must be an inline comma-separated list']);
+
+  const crlf = nativePersona(persona('tools: linear, shell').replace(/\n/g, '\r\n'), 'pi');
+  assert.equal(crlf.replace(/\r\n/g, ''), crlf.replace(/\r\n/g, '').replace(/\n/g, ''), 'CRLF in, CRLF only out');
+  assert.ok(!/[^\r]\n/.test(crlf));
+  const headless = nativePersona('---\nname: p\ndescription: d\ntools: linear\n---\nBody.\n', 'pi');
+  assert.match(headless, /^---\n[\s\S]*\n---\n\nTools: linear\.\nBody\.\n$/);
+
+  for (const file of fs.readdirSync(path.join(ROOT, 'agents'))) {
+    const gemini = nativePersona(fs.readFileSync(path.join(ROOT, 'agents', file), 'utf8'), 'gemini');
+    assert.deepEqual(frontmatterYamlErrors(gemini), [], file);
+  }
 });
