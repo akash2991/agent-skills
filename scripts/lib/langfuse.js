@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { METADATA_CAPTURE_POLICY, FULL_CAPTURE_POLICY } = require('../../runtime/langfuse/bootstrap.js');
 
 const RUNTIME_PATH = '.agent-brain/observability';
 const LEGACY_PI_PACKAGE = 'npm:@langfuse/pi-observability-plugin@0.1.2';
@@ -16,7 +17,7 @@ const OLD_CLAUDE = /^langfuse-observability@/;
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const sourceOf = entry => typeof entry === 'string' ? entry : entry?.source;
 
-function readSettings(file) {
+function readSettings(file, missingValue = {}) {
   try {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unsafe native settings');
@@ -26,7 +27,7 @@ function readSettings(file) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Native settings must be an object');
     return value;
   } catch (error) {
-    if (error.code === 'ENOENT') return {};
+    if (error.code === 'ENOENT') return missingValue;
     throw error;
   }
 }
@@ -47,7 +48,7 @@ function checkNativeSettings(target, options = {}) {
     for (const key of ['enabledPlugins', 'hooks']) if (settings[key] !== undefined && (!settings[key] || typeof settings[key] !== 'object' || Array.isArray(settings[key]))) throw new Error('Invalid Claude plugin/hook settings');
   }
   if (Object.entries(local.enabledPlugins || {}).some(([key, enabled]) => OLD_CLAUDE.test(key) && enabled === true)) {
-    throw new Error('Legacy Claude Langfuse is enabled by a local override. Disable that exporter before metadata-only setup.');
+    throw new Error('Legacy Claude Langfuse is enabled by a local override. Disable that exporter before tracing setup.');
   }
   const home = options.home || os.homedir();
   const agentDir = options.agentDir || process.env.PI_CODING_AGENT_DIR || path.join(home, '.pi/agent');
@@ -74,8 +75,30 @@ function checkNativeSettings(target, options = {}) {
   return { pi, claude, local, globalPi, globalClaude, home, agentDir };
 }
 
+// Validate before asset pulls, dependency preparation or native registration.
+// Existing refusal stays a refusal; choosing a policy never clears enabled:false.
+function planLangfuseMarker(target, options = {}) {
+  if (options.captureMode !== undefined && !['metadata-only', 'full-content'].includes(options.captureMode)) {
+    throw new Error('Invalid capture mode; expected metadata-only or full-content.');
+  }
+  const old = readSettings(path.join(target, '.agent-brain/tracing.json'), null);
+  if (old) {
+    const expected = old.schema === 1 ? METADATA_CAPTURE_POLICY : old.schema === 2 ? FULL_CAPTURE_POLICY : null;
+    if (!expected || typeof old.enabled !== 'boolean'
+      || Object.entries(expected).some(([key, value]) => key !== 'enabled' && old[key] !== value)
+      || Object.keys(old).some(key => !Object.hasOwn(expected, key) && key !== 'runtime')
+      || (old.runtime !== undefined && ![RUNTIME_PATH, 'runtime/langfuse'].includes(old.runtime))) {
+      throw new Error('Invalid or unsupported tracing marker; reconcile explicitly before setup (contents omitted).');
+    }
+  }
+  const mode = options.captureMode || old?.captureMode || 'metadata-only';
+  return { ...(mode === 'full-content' ? FULL_CAPTURE_POLICY : METADATA_CAPTURE_POLICY),
+    enabled: old?.enabled !== false, runtime: old?.runtime || RUNTIME_PATH };
+}
+
 function preflightLangfuse(target, run = spawnSync, options = {}) {
   checkNativeSettings(target, options);
+  planLangfuseMarker(target, options);
   for (const [command, label] of [['pi', 'Pi'], ['claude', 'Claude Code']]) {
     const result = run(command, ['--version'], { cwd: target, encoding: 'utf8', timeout: 10000 });
     if (result.error || result.status !== 0) throw new Error(`--langfuse requires ${label} on PATH. No brain files were changed.`);
@@ -145,6 +168,7 @@ function prepareCache(target, settings, run, options) {
 
 function installLangfuse(target, run = spawnSync, options = {}) {
   const settings = checkNativeSettings(target, options);
+  const markerPolicy = planLangfuseMarker(target, options);
   const { bootstrap } = prepareCache(target, settings, run, options);
   const runtimeSource = '../.agent-brain/observability';
   const packages = (settings.pi.packages || []).filter(entry => {
@@ -170,11 +194,9 @@ function installLangfuse(target, run = spawnSync, options = {}) {
   }
   const claude = { ...settings.claude, enabledPlugins: disabled, hooks };
   const marker = path.join(target, '.agent-brain/tracing.json');
-  const oldMarker = readSettings(marker);
-  if (oldMarker.schema !== undefined && oldMarker.schema !== 1) throw new Error('Unknown tracing marker schema; reconcile before setup.');
   atomicJSON(path.join(target, '.pi/settings.json'), pi);
   atomicJSON(path.join(target, '.claude/settings.json'), claude);
-  atomicJSON(marker, { ...oldMarker, schema: 1, enabled: true, captureMode: 'metadata-only', runtime: RUNTIME_PATH });
+  atomicJSON(marker, markerPolicy);
   if (options.worktreeBootstrap) {
     for (const entry of settings.globalPi.packages || []) {
       const source = sourceOf(entry);
@@ -186,7 +208,10 @@ function installLangfuse(target, run = spawnSync, options = {}) {
     const installed = run('pi', ['install', bootstrap], { cwd: target, encoding: 'utf8', timeout: 120000 });
     if (installed.error || installed.status !== 0) throw new Error('Project tracing configured, but the explicit user-level worktree bootstrap failed. Retry --langfuse --worktree-bootstrap after native Pi reconciliation.');
   }
-  return `Brain tracing: first-party Pi extension and Claude hooks registered in metadata-only mode.\nLegacy project exporters are disabled; no credentials were copied.\n${options.worktreeBootstrap ? 'Explicit project-gated Pi user bootstrap installed for old worktree bases; known legacy user package removed if present.' : 'For old worktree bases without the adapter, explicitly add --worktree-bootstrap (changes native Pi user package registration).'}\nConfigure shared private credentials and restart both harnesses. Registration/transport acceptance is not proof of Langfuse ingestion.\nDisable both adapters for a run with BRAIN_TRACING_ENABLED=false.`;
+  const policyNotice = markerPolicy.captureMode === 'full-content'
+    ? 'Full-content consent: available prompt/response/tool JSON includes PII. Credential redaction is best effort, not a guarantee. Private durable content may retry after marker removal/downgrade; kill switches stop delivery. Limits and unavailable native fields apply.'
+    : 'Metadata-only policy: new prompt/response/tool bodies are not captured. Previously consented content may still retry; kill switches stop delivery.';
+  return `Brain tracing: first-party Pi extension and Claude hooks registered; ${markerPolicy.enabled ? markerPolicy.captureMode : `disabled (configured ${markerPolicy.captureMode}; existing refusal preserved)`}.\n${policyNotice}\nLegacy project exporters are disabled; no credentials were copied.\n${options.worktreeBootstrap ? 'Explicit project-gated Pi user bootstrap installed for old worktree bases; known legacy user package removed if present.' : 'For old worktree bases without the adapter, explicitly add --worktree-bootstrap (changes native Pi user package registration).'}\nConfigure shared private credentials and restart both harnesses. Registration/transport acceptance is not proof of Langfuse ingestion.\nDisable both adapters for a run with BRAIN_TRACING_ENABLED=false.`;
 }
 
-module.exports = { RUNTIME_PATH, LEGACY_PI_PACKAGE, LEGACY_CLAUDE_PLUGIN, CLAUDE_HOOK_COMMAND, HOOK_EVENTS, checkNativeSettings, preflightLangfuse, installLangfuse };
+module.exports = { RUNTIME_PATH, LEGACY_PI_PACKAGE, LEGACY_CLAUDE_PLUGIN, CLAUDE_HOOK_COMMAND, HOOK_EVENTS, checkNativeSettings, planLangfuseMarker, preflightLangfuse, installLangfuse };

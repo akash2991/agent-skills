@@ -46,7 +46,11 @@ function runContext(argv, options = {}) {
     run = flow.captureBrainCommand(run, { commandName: 'brain', commandArgs: `${persona}${ticket ? ` --ticket ${ticket}` : ''}`, cwd: options.cwd || process.cwd() });
     if (values['--persona'] && run.persona !== persona) throw new Error('Persona was not found in the installed brain; it was not attributed.');
   } else if (command !== 'status' || args.length) throw new Error('Usage: context-cli.cjs [--actor NONCE] status | set [--persona name] [--ticket TEAM-123]');
-  return { captureMode: 'metadata-only', harness: run.harness, project: run.projectName, projectId: run.projectId,
+  // Report today's policy, not the immutable grant on an older queued record.
+  // Native trust/actor checks still belong to the caller; this is not enablement
+  // or proof of capture/delivery (including when ancestry is pending).
+  const capturePolicy = flow.getCapturePolicy();
+  return { captureMode: capturePolicy?.captureMode || 'disabled', capturePolicy, harness: run.harness, project: run.projectName, projectId: run.projectId,
     persona: run.persona || 'UNKNOWN', ticketId: run.ticketId || 'UNKNOWN', ticketSource: run.ticketSource || 'unknown',
     runtimeName: run.runtimeName, agentName: run.agentName, sessionId: resolved ? run.sessionId : 'UNKNOWN', nativeSessionId: run.nativeSessionId, ancestryPending: !resolved,
     skillsInvoked: run.skillsInvoked || [], skillsLoaded: run.skillsLoaded || [], health: flow.readState?.('health') || { lineageLossObserved: false }, delivery: flow.readState?.('delivery') || null };

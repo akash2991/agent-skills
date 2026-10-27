@@ -4,11 +4,19 @@ First-party Pi extension and Claude command hooks. This is development-session t
 
 ## Privacy boundary
 
-Capture is **metadata-only**, with no content-export switch. Prompts, system/context text, completions, reasoning, tool inputs/results, arbitrary errors, attachments and images are not observation fields. Neither payloads nor their hashes are persisted in tracing checkpoints/outboxes. Native harness transcripts remain the harness's responsibility; this adapter does not remove their local content.
+New opt-ins default to **metadata-only**. That frozen path does not traverse prompt/context, completion, reasoning or tool bodies, and persists neither those payloads nor their hashes. Existing schema-1 opt-ins never silently become full-content. Native harness transcripts remain the harness's responsibility in either mode; this adapter does not remove their local content.
+
+**Explicit full-content is a different privacy choice:** `agent-brain pull --langfuse --capture-mode full-content` consents to capturing available prompt/context text, responses and tool arguments/results as typed JSON, including PII. Names, emails, SSNs and ordinary URLs are intentionally retained. This can include private code, personal information and exposed tool errors. Do not use it where that collection/storage/export is inappropriate. It is full **available** content within bounds, not unlimited capture or access to hidden provider data.
+
+Credential redaction uses configured known literals and common credential patterns/keys, **best effort only**. Unknown, encoded, split or novel secrets can escape it; a `captured` status is not a secret-free certification. There is no arbitrary credential, environment or keychain discovery. Review access/retention and rotate any exposed real credentials. PII retention is intentional, not a masking failure.
+
+Full-content observations carry `record.content` version 1 with typed `input` and `output` surfaces. Each reports `captured`, `credential_redacted`, `unavailable`, `unsupported` or `refused_size`. Successful surfaces hold complete JSON values, including arrays/objects and empty/null values; others hold no value. No successful prefix/truncation or hash substitutes for content. Binary/media/data-URI payloads are unsupported; media uploads remain disabled. Non-JSON native values and hidden fields are not fabricated. In particular, Claude's hidden provider request/system context, hidden reasoning and unexposed media are unavailable, not reconstructed from hooks/transcripts. Available native prompt/response/tool fields are not a claim of the complete provider exchange.
+
+The whole canonical full-content observation is capped at **256 KiB**, including metadata and both surfaces; projection also bounds depth (32), nodes (16,384) and keys per container (4,096). Oversized surfaces are explicitly refused, not silently shortened. The shared outbox remains **256 records / 4 MiB**, with actual serialized request byte packing capped at **1 MiB** after SDK escaping/masking. Capacity refusal is not successful capture. Metadata-only observations retain their 16 KiB budget.
 
 Allowed metadata includes validated project/worktree identities, branch/runtime/agent labels, adopted persona, ticket ID and provenance, harness, model/effort, observed skill names, timing, outcomes, token/cache usage and available costs. Labels must themselves be non-secret identifiers; validation and known-pattern defenses are not an arbitrary-PII guarantee. Do not put task bodies or secrets into names, branches or context identifiers.
 
-`privacy.cjs` is the strict projection used before queueing and again before export. The public Langfuse SDK has masking enabled and media uploads disabled. Authentication is used only for the configured transport, never as observation metadata.
+`privacy.cjs` projects before managed persistence and revalidates before export: strict metadata projection in both modes, plus the explicit credential-redacted content envelope in full-content mode. Source identity labels remain strict non-secret identifiers even when body PII is retained. Content never enters `ContextStore`; it can exist in private adapter checkpoints, deferred batches and the durable outbox **before export**. The public Langfuse SDK has masking enabled and media uploads disabled. Authentication is used only for the configured transport, never as observation metadata.
 
 ## Opt-in and migration
 
@@ -16,13 +24,30 @@ The brain pull installs these managed resources under `.agent-brain/observabilit
 
 - Pi: one native project `extensions` file entry. Registering the SDK package directory instead would let Pi install its dependencies during startup.
 - Claude: native project command hooks referencing the private, project-gated bootstrap.
-- Project marker `.agent-brain/tracing.json`: schema 1, enabled, metadata-only.
+- Project marker `.agent-brain/tracing.json`: schema 1 metadata-only by default; schema 2 only with explicit full-content selection.
+
+`--capture-mode metadata-only|full-content` applies only alongside `pull --langfuse`. Invalid modes/marker controls fail before writes. Omitting the option preserves an existing valid policy, including `enabled:false`; repeat setup does not clear a refusal. An explicit downgrade writes schema 1 and removes the full-content consent facts. To resume a disabled declaration, review and deliberately change its `enabled` field yourself. Neither mode grants native trust or changes tool permissions. The full-content marker is:
+
+```json
+{
+  "schema": 2,
+  "enabled": true,
+  "captureMode": "full-content",
+  "capturePolicyVersion": 1,
+  "redactionPolicyVersion": 1,
+  "pii": "retain",
+  "durableRetry": true,
+  "runtime": ".agent-brain/observability"
+}
+```
+
+All consent facts are required; a mode label alone is insufficient. `runtime` is optional and may also be `runtime/langfuse` for authoring-source discovery. Installation reuses the existing native layout, not extra skill/runtime copies.
 
 Known legacy project exporters are removed/disabled. Conflicting local overrides, direct legacy extension paths and manual Python hooks fail preflight instead of being silently ignored. Existing sessions must restart. Unrelated settings, local permissions, credentials and trust decisions are not replaced.
 
 For old worktree bases missing the adapter, explicitly add `--worktree-bootstrap`. This registers the project-gated Pi bootstrap in native **user** package settings and removes a known legacy user exporter if present. It does not opt unrelated repositories into tracing. Principal-repository opt-in and native project trust are still required. It does not modify old worktree files or grant trust.
 
-Both harnesses honor `BRAIN_TRACING_ENABLED=false` or `LANGFUSE_TRACING_ENABLED=false`. Disable the project marker to disable future automatic discovery. These switches do not disable unrelated third-party exporters.
+Both harnesses honor `BRAIN_TRACING_ENABLED=false` or `LANGFUSE_TRACING_ENABLED=false`; these kill switches stop delivery as well as new capture. Disabling/removing/downgrading the marker prevents new full-content capture, **not retry of content already captured under its immutable durable-retry grant**. Such records may export on later eligible runs, including after marker downgrade/removal. Private checkpoint/deferred retention and capacity limits still apply; this is not guaranteed indefinite retry. Stop controllers and inspect local content-bearing state if revoking consent; marker edits do not erase that state or remote records. There is no retroactive historical-content backfill or remote deletion promise. These switches do not disable unrelated third-party exporters.
 
 ## Credentials
 
@@ -37,7 +62,7 @@ JSON keys are `publicKey`, `secretKey`, `baseUrl`. Files must be owner-only regu
 ## Context and lineage
 
 - `ContextStore` allocates identities before work. Unfinished AGENT roots stay local and are exported with terminal evidence, not as competing ended-span heartbeats; their generations/children may therefore appear before the root finishes. Root prompts have distinct run/trace identities where the adapter supports turns; descendants share the parent's trace/session with distinct AGENT span IDs.
-- Disabled, invalid or unreadable tracing declarations stop both direct Pi capture and discovery; a more-specific refusal cannot fall back to an enabled Git root or principal checkout. Marker-absent Pi probes require explicit `-e <runtime>/pi.js --brain-tracing`; the pane helper adds this flag. Resource presence alone grants no consent, and explicit target refusal, native trust refusal and kill switches still win.
+- Disabled, invalid or unreadable tracing declarations stop both direct Pi capture and discovery; a more-specific refusal cannot fall back to an enabled Git root or principal checkout. Marker-absent Pi probes require explicit `-e <runtime>/pi.js --brain-tracing`; the pane helper adds this flag. That existing flag authorizes metadata-only, not full-content. Use a valid explicit project marker for full-content; no marker-absent full-content launch/exec consent is promised here. Resource presence alone grants no consent, and explicit target refusal, native trust refusal and kill switches still win.
 - Correlation uses exact native child IDs, session-file aliases, or launch capabilities, never names, timing, nearest processes or arbitrary ambient `TRACEPARENT`.
 - Unresolved native children are held before tools. Their records and descendants remain deferred until the exact dispatch response binds them; they are not exported as guessed orphan traces.
 - The daemon does not inherit the caller terminal's environment. Stock Pi subagent capture therefore needs discovery in the child plus the shared context store. Explicit Pi/Claude pane launches use `brain-trace.cjs launch`, which prebinds native session/pane identities and supplies native resource arguments.
@@ -52,7 +77,7 @@ node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context --actor <curre
 node "$HOME/.cache/agent-brain/bootstrap/brain-trace.cjs" context --actor <current-hook-actor> status
 ```
 
-Only register an actually adopted persona/established ticket. Unknown attribution stays unknown. An unbound native child may update its own metadata through an exact tool capability, but reports `ancestryPending` and no shared session identity until binding; this never enables premature export. Delivery diagnostics are shared-outbox accounting, not per-actor ingestion proof. Branch-inferred tickets are marked inferred. Successful `Skill` execution/known skill expansion and successful skill-file reads are separate invoked/loaded evidence; installed or persona-permitted skills are not usage evidence. `/brain` is a command, not itself an invoked skill.
+Only register an actually adopted persona/established ticket. Unknown attribution stays unknown. An unbound native child may update its own metadata through an exact tool capability, but reports `ancestryPending` and no shared session identity until binding; this never enables premature export. Context CLI status reports the current `captureMode` and versioned `capturePolicy` (`null`/`disabled` on refusal/kill), not an older record's capture grant or a native trust grant. An absent marker remains metadata-only policy for eligible explicit per-run callers, not automatic enablement. Delivery diagnostics are shared-outbox accounting, not per-actor ingestion proof. Branch-inferred tickets are marked inferred. Successful `Skill` execution/known skill expansion and successful skill-file reads are separate invoked/loaded evidence; installed or persona-permitted skills are not usage evidence. `/brain` is a command, not itself an invoked skill.
 
 ## Native authorization and headless fixtures
 
@@ -72,7 +97,7 @@ Historical final-name files are different from known temporary slots. Parse fail
 
 ContextStore's canonical snapshot is at most 8 MiB; future temporary publication uses one private `.context-v1.tmp` slot, also at most 8 MiB. Under the exclusive context lock, recovery discards safely validated abandoned snapshots but never promotes them over canonical state. Supported legacy `.context-<32 hex>.tmp` files are reclaimed in bounded passes of at most 256 root entries plus one lookahead; recovery can explicitly refuse admission with `CONTEXT_SNAPSHOT_RECOVERY_PENDING` while retries make cleanup progress. A root flooded with unrelated entries, unknown snapshot names, unsafe ownership/type/mode/links or oversized artifacts can require offline inspection after stopping all controllers. Unsafe files are preserved, not followed or silently deleted; live/paused publishers retain their lock protection. Stop older controllers before upgrading. This is verified for process interruption, not an experimental power-loss durability claim.
 
-Skill attribution keeps at most 32 valid names per invoked/loaded list in an observation (capture retains at most 128). `skillsInvokedStatus` / `skillsLoadedStatus` explicitly report `filtered`, `truncated` or `refused` evidence, survive replay, and carry no arbitrary error text. Capture overflow retains prior evidence; exported truncation is not a complete skill inventory. The 16 KiB observation budget still applies.
+Skill attribution keeps at most 32 valid names per invoked/loaded list in an observation (capture retains at most 128). `skillsInvokedStatus` / `skillsLoadedStatus` explicitly report `filtered`, `truncated` or `refused` evidence, survive replay, and carry no arbitrary error text. Capture overflow retains prior evidence; exported truncation is not a complete skill inventory. The metadata projection retains its 16 KiB budget; adding a full-content envelope uses the separate 256 KiB whole-record cap.
 
 Claude hooks currently await a bounded delivery attempt, including tool hooks. Under an outage, this can add per-hook latency; duplicate project/per-run hooks can compound it. The transfer budget is 2.5 seconds with a 3.5-second async guard, **not a universal wall-clock ceiling** for synchronous filesystem/lock work. Outage/load latency has not been measured. Do not remove replay attempts or broaden native permissions to hide latency; diagnose the delivery state instead.
 
@@ -92,4 +117,4 @@ Normal abort/error/shutdown hooks are best effort. SIGKILL, indefinitely lagging
 
 ## Verification
 
-Offline suites exercise projections, protocol races, adapters, outbox retries and local synthetic HTTP. Native wiring tests use temporary configuration/trust stores without model calls. Live acceptance requires fetching actual observations after indexing delay and checking positive coverage, IDs/types/nesting, metadata, unique model/tool counts, outcomes, and absence of synthetic canaries/content. Neither a passing test, an empty outbox nor HTTP 200 proves that by itself.
+Installer consent and shared content-flow support do not themselves prove that a native adapter supplies all available fields. Integrate the corresponding Pi/Claude adapter revision before claiming full-content capture, then verify it natively. Offline suites exercise projections, protocol races, adapters, outbox retries and local synthetic HTTP. Native wiring tests use temporary configuration/trust stores without model calls. Live acceptance requires fetching actual observations after indexing delay and checking positive coverage, IDs/types/nesting, metadata, unique model/tool counts and outcomes. Metadata-only checks require absent content/canaries. Full-content checks instead require positive actual prompt/response/tool JSON coverage, intentional synthetic PII retention, credential-canary absence, explicit unavailable/unsupported/size statuses and replay behavior. Earlier metadata-only evidence does not prove full-content capture; fresh affected native runs and final-revision reviews remain necessary. Neither a passing test, an empty outbox nor HTTP 200 proves that by itself.

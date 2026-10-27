@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
-const { RUNTIME_PATH, LEGACY_PI_PACKAGE, LEGACY_CLAUDE_PLUGIN, CLAUDE_HOOK_COMMAND, HOOK_EVENTS, preflightLangfuse, installLangfuse } = require('./lib/langfuse');
+const { RUNTIME_PATH, LEGACY_PI_PACKAGE, LEGACY_CLAUDE_PLUGIN, CLAUDE_HOOK_COMMAND, HOOK_EVENTS, planLangfuseMarker, preflightLangfuse, installLangfuse } = require('./lib/langfuse');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-tracing-install-'));
@@ -130,4 +130,159 @@ test('bootstrap flag cannot be accidentally used without tracing opt-in', t => {
   const result = spawnSync(process.execPath, [path.join(__dirname, 'agent-brain.js'), 'pull', '--target', f.target, '--worktree-bootstrap'], { encoding: 'utf8' });
   assert.equal(result.status, 2); assert.match(result.stderr, /requires --langfuse/);
   assert.deepEqual(fs.readdirSync(f.target), []);
+});
+
+const { FULL_CAPTURE_POLICY: FULL, METADATA_CAPTURE_POLICY: META, findCapturePolicySync, isTracingAllowed } = require('../runtime/langfuse/bootstrap.js');
+const markerPath = target => path.join(target, '.agent-brain/tracing.json');
+const cli = (f, args) => spawnSync(process.execPath, [path.join(__dirname, 'agent-brain.js'), 'pull', '--target', f.target, ...args], {
+  encoding: 'utf8', env: { ...process.env, HOME: f.home, PATH: '', PI_CODING_AGENT_DIR: f.options.agentDir, CLAUDE_CONFIG_DIR: f.options.claudeDir }
+});
+
+test('explicit full-content writes complete consent, retains it on reinstall and changes no permission/global settings', t => {
+  const f = fixture(t); runtime(f.target); const calls = [], run = runner(calls);
+  const globalPi = { defaultProjectTrust: 'always', packages: ['npm:unrelated'] };
+  const globalClaude = { permissions: { allow: ['Read'] }, env: { KEEP: 'unchanged' } };
+  const local = { permissions: { allow: ['Bash(printf *)'] }, env: { PRIVATE: 'SYNTHETIC_NO_COPY' } };
+  write(path.join(f.options.agentDir, 'settings.json'), globalPi);
+  write(path.join(f.options.claudeDir, 'settings.json'), globalClaude);
+  write(path.join(f.target, '.claude/settings.local.json'), local);
+  write(path.join(f.target, '.claude/settings.json'), { permissions: { allow: ['Read'] } });
+  write(path.join(f.home, '.config/agent-brain/langfuse.json'), { secretKey: 'SYNTHETIC_NO_COPY' });
+  write(path.join(f.target, '.env'), 'PRIVATE=SYNTHETIC_NO_COPY\n');
+  installLangfuse(f.target, run, f.options);
+  const nativeFiles = ['.pi/settings.json', '.claude/settings.json', '.claude/settings.local.json'];
+  const before = nativeFiles.map(file => fs.readFileSync(path.join(f.target, file), 'utf8'));
+  const message = installLangfuse(f.target, run, { ...f.options, captureMode: 'full-content' });
+  assert.match(message, /full-content/); assert.match(message, /PII/); assert.match(message, /best effort/); assert.match(message, /durable/);
+  assert.doesNotMatch(message, /SYNTHETIC_NO_COPY/);
+  assert.deepEqual(json(markerPath(f.target)), { ...FULL, runtime: RUNTIME_PATH });
+  assert.deepEqual(findCapturePolicySync(f.target), FULL, 'real discovery reads the installed marker');
+  const first = fs.readFileSync(markerPath(f.target), 'utf8');
+  installLangfuse(f.target, run, f.options);
+  installLangfuse(f.target, run, { ...f.options, captureMode: 'full-content' });
+  assert.equal(fs.readFileSync(markerPath(f.target), 'utf8'), first);
+  assert.deepEqual(nativeFiles.map(file => fs.readFileSync(path.join(f.target, file), 'utf8')), before, 'only consent changes, not native permissions/hooks/extensions');
+  assert.deepEqual(json(path.join(f.options.agentDir, 'settings.json')), globalPi);
+  assert.deepEqual(json(path.join(f.options.claudeDir, 'settings.json')), globalClaude);
+  assert.equal(fs.readFileSync(path.join(f.target, '.env'), 'utf8'), 'PRIVATE=SYNTHETIC_NO_COPY\n');
+  const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+  for (const file of [...walk(path.join(f.home, '.cache')), ...walk(path.join(f.target, '.agent-brain'))]) {
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('SYNTHETIC_NO_COPY'), 'no secret copy into cache/managed runtime/marker');
+  }
+  assert.equal(calls.filter(([cmd]) => cmd === 'npm').length, 1);
+  assert.ok(!calls.some(([cmd]) => cmd === 'pi'), 'full-content must not implicitly register a user package');
+});
+
+test('metadata schema stays frozen, explicit downgrade removes full consent and disabled marker stays disabled', t => {
+  const f = fixture(t); runtime(f.target); const run = runner();
+  installLangfuse(f.target, run, f.options);
+  assert.deepEqual(json(markerPath(f.target)), { ...META, runtime: RUNTIME_PATH });
+  installLangfuse(f.target, run, { ...f.options, captureMode: 'full-content' });
+  installLangfuse(f.target, run, { ...f.options, captureMode: 'metadata-only' });
+  assert.deepEqual(json(markerPath(f.target)), { ...META, runtime: RUNTIME_PATH });
+  for (const policy of [META, FULL]) {
+    write(markerPath(f.target), { ...policy, enabled: false });
+    for (const captureMode of [undefined, 'full-content', 'metadata-only']) {
+      const message = installLangfuse(f.target, run, { ...f.options, captureMode });
+      assert.equal(json(markerPath(f.target)).enabled, false);
+      assert.match(message, /disabled.*refusal preserved/);
+      assert.equal(findCapturePolicySync(f.target), null);
+      assert.equal(isTracingAllowed({ cwd: f.target, isProjectTrusted: () => true }, { perRun: true }), false);
+    }
+  }
+  write(markerPath(f.target), { ...FULL, runtime: 'runtime/langfuse' });
+  assert.deepEqual(planLangfuseMarker(f.target), { ...FULL, runtime: 'runtime/langfuse' }, 'keep native source selection');
+});
+
+test('invalid modes and marker controls fail before cache/native writes or CLI calls', t => {
+  for (const captureMode of ['', null, 'full', 'FULL-CONTENT', 'full-content\n', { mode: 'full-content' }]) {
+    const f = fixture(t); runtime(f.target);
+    assert.throws(() => installLangfuse(f.target, () => assert.fail('no runner call'), { ...f.options, captureMode }), /Invalid capture mode/);
+    assert.ok(!fs.existsSync(path.join(f.home, '.cache')));
+    assert.ok(!fs.existsSync(path.join(f.target, '.pi')));
+    assert.ok(!fs.existsSync(markerPath(f.target)));
+  }
+  const invalid = [{}, { ...META, captureMode: 'full-content' }, { ...FULL, schema: 3 }, { ...FULL, enabled: 'true' },
+    { ...FULL, pii: 'redact' }, { ...FULL, durableRetry: false }, { ...FULL, runtime: '../outside' }, { ...FULL, unknownControl: true }];
+  for (const key of Object.keys(FULL)) { const missing = { ...FULL }; delete missing[key]; invalid.push(missing); }
+  for (const marker of invalid) {
+    const f = fixture(t); runtime(f.target); write(markerPath(f.target), marker);
+    const previous = fs.readFileSync(markerPath(f.target), 'utf8');
+    const noRun = () => assert.fail('no CLI/install before validation');
+    assert.throws(() => preflightLangfuse(f.target, noRun, f.options), /tracing marker/);
+    assert.throws(() => installLangfuse(f.target, noRun, { ...f.options, captureMode: 'full-content' }), /tracing marker/);
+    assert.equal(fs.readFileSync(markerPath(f.target), 'utf8'), previous);
+    assert.ok(!fs.existsSync(path.join(f.home, '.cache')));
+    assert.ok(!fs.existsSync(path.join(f.target, '.pi')));
+    const result = cli(f, ['--langfuse', '--dry-run']);
+    assert.equal(result.status, 2); assert.match(result.stderr, /tracing marker/);
+    assert.ok(!fs.existsSync(path.join(f.target, 'AGENTS.md')), 'no asset pull before marker validation');
+  }
+});
+
+test('CLI capture-mode controls reject invalid/missing/duplicate/unscoped input before any writes', t => {
+  for (const args of [['--capture-mode', 'full-content'], ['--langfuse', '--capture-mode'],
+    ['--langfuse', '--capture-mode', 'FULL-CONTENT'], ['--langfuse', '--capture-mode', 'full-content\n'],
+    ['--langfuse', '--capture-mode', 'full-content', '--capture-mode', 'metadata-only']]) {
+    const f = fixture(t), result = cli(f, args);
+    assert.equal(result.status, 2, JSON.stringify(args)); assert.match(result.stderr, /capture-mode/);
+    assert.deepEqual(fs.readdirSync(f.target), []); assert.deepEqual(fs.readdirSync(f.home), []);
+  }
+});
+
+test('full-content dry-run reports consent without writes and omission reports existing policy honestly', t => {
+  const f = fixture(t);
+  const explicit = cli(f, ['--langfuse', '--capture-mode', 'full-content', '--dry-run']);
+  assert.equal(explicit.status, 0, explicit.stderr); assert.match(explicit.stdout, /full-content/);
+  assert.match(explicit.stdout, /PII/); assert.match(explicit.stdout, /best-effort/); assert.match(explicit.stdout, /durable/);
+  assert.deepEqual(fs.readdirSync(f.target), []); assert.deepEqual(fs.readdirSync(f.home), []);
+  write(markerPath(f.target), FULL);
+  const retained = cli(f, ['--langfuse', '--dry-run']);
+  assert.equal(retained.status, 0, retained.stderr); assert.match(retained.stdout, /full-content/);
+  assert.deepEqual(json(markerPath(f.target)), FULL);
+  write(markerPath(f.target), { ...FULL, enabled: false });
+  const disabled = cli(f, ['--langfuse', '--dry-run']);
+  assert.equal(disabled.status, 0, disabled.stderr); assert.match(disabled.stdout, /disabled.*refusal preserved/);
+  assert.equal(json(markerPath(f.target)).enabled, false);
+});
+
+test('ordinary pull preserves full-content declarations, native discovery layout and unrelated settings', t => {
+  const { pullInstall } = require('./lib/pull-install');
+  const f = fixture(t);
+  pullInstall({ target: f.target });
+  installLangfuse(f.target, runner(), { ...f.options, captureMode: 'full-content' });
+  const files = ['.pi/settings.json', '.claude/settings.json', '.agent-brain/tracing.json'];
+  const before = files.map(file => fs.readFileSync(path.join(f.target, file), 'utf8'));
+  pullInstall({ target: f.target });
+  assert.deepEqual(files.map(file => fs.readFileSync(path.join(f.target, file), 'utf8')), before);
+  assert.deepEqual(findCapturePolicySync(f.target), FULL);
+  assert.deepEqual(fs.readFileSync(path.join(f.target, '.agents/skills/coding-standards/SKILL.md')), fs.readFileSync(path.join(__dirname, '../skills/coding-standards/SKILL.md')));
+  assert.deepEqual(fs.readFileSync(path.join(f.target, '.claude/skills/coding-standards/SKILL.md')), fs.readFileSync(path.join(__dirname, '../skills/coding-standards/SKILL.md')));
+  for (const dir of ['.pi/skills', '.hermes/skills', '.gemini/skills', '.codex/skills']) assert.ok(!fs.existsSync(path.join(f.target, dir)), dir);
+});
+
+test('context status uses real current full/metadata/disabled policy, never stored content or an old grant', t => {
+  const { createFlow } = require('../runtime/langfuse/flow.cjs');
+  const { runContext } = require('../runtime/langfuse/context-cli.cjs');
+  const f = fixture(t); runtime(f.target); fs.mkdirSync(path.join(f.target, '.git'));
+  write(markerPath(f.target), FULL);
+  const env = {}, flow = createFlow({ cwd: f.target, stateDir: path.join(f.root, 'state'), env });
+  const run = flow.begin({ cwd: f.target, nativeSessionId: '550e8400-e29b-41d4-a716-446655440000' });
+  const { nonce } = flow.createToolLaunch(run);
+  const status = () => runContext(['--actor', nonce, 'status'], { cwd: f.target, flow, env });
+  for (const policy of [FULL, META, { ...FULL, enabled: false }, { ...FULL, pii: 'redact' }]) {
+    write(markerPath(f.target), policy);
+    const expected = policy.enabled && policy.pii !== 'redact' ? policy : null;
+    assert.equal(status().captureMode, expected?.captureMode || 'disabled');
+    assert.deepEqual(status().capturePolicy, expected);
+  }
+  write(markerPath(f.target), FULL);
+  for (const key of ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']) {
+    env[key] = 'false'; assert.equal(status().captureMode, 'disabled'); assert.equal(status().capturePolicy, null); delete env[key];
+  }
+  assert.equal(isTracingAllowed({ cwd: f.target, isProjectTrusted: () => false }), false);
+  fs.unlinkSync(markerPath(f.target));
+  assert.equal(status().captureMode, 'metadata-only', 'old absent-marker per-run flag is not full consent');
+  assert.deepEqual(status().capturePolicy, META);
+  assert.ok(!Object.hasOwn(status(), 'content'));
 });
