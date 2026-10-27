@@ -5,7 +5,7 @@
 // logged. Supported actor additionalContext is the only stdout; ordinary Bash
 // input and native permission decisions are never changed.
 const { handleClaudeHook } = require('./claude.cjs');
-const MAX_INPUT_BYTES = 1024 * 1024;
+const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 
 function readPayload(input = process.stdin, timeoutMs = 750) {
   return new Promise((resolve, reject) => {

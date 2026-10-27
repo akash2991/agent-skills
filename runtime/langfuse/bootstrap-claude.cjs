@@ -25,17 +25,31 @@ async function main(input, options = {}) {
   return adapter.handleClaudeHook(payload);
 }
 
-if (require.main === module) {
-  let input = '';
-  let size = 0;
-  process.stdin.on('data', chunk => {
-    size += chunk.length;
-    if (size <= LIMIT) input += chunk.toString('utf8');
-  });
-  process.stdin.on('end', () => {
-    if (size > LIMIT) return;
-    main(input).then(result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result)); })
-      .catch(() => { /* Telemetry failure is nonblocking; never echo payloads/errors. */ });
+function readInput(input = process.stdin, timeoutMs = 750) {
+  return new Promise(resolve => {
+    let size = 0;
+    const chunks = [];
+    const done = value => {
+      clearTimeout(timer);
+      input.off('data', data); input.off('end', end); input.off('error', fail);
+      resolve(value);
+    };
+    const fail = () => done(null);
+    const data = chunk => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > LIMIT) { fail(); return; }
+      chunks.push(buffer);
+    };
+    // Decode once: an arbitrary stream chunk can split a UTF-8 code point.
+    const end = () => done(Buffer.concat(chunks).toString('utf8'));
+    const timer = setTimeout(fail, timeoutMs);
+    input.on('data', data); input.once('end', end); input.once('error', fail);
   });
 }
-module.exports = { main };
+if (require.main === module) {
+  readInput().then(input => input === null ? null : main(input))
+    .then(result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result)); })
+    .catch(() => { /* Telemetry failure is nonblocking; never echo payloads/errors. */ });
+}
+module.exports = { main, readInput };
