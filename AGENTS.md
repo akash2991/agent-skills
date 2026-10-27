@@ -32,10 +32,6 @@ docs/            anatomies and per-tool setup guides
 | Assemble the brain from `manifest.json` | `node scripts/build-brain.js` → `build/` |
 | Flow map (which flows are code, agent, or mixed): edit `docs/flow-map.json`, then | `node scripts/build-flow-map.js` → `docs/flow-map.html` |
 
-## The interactive flow map is maintained
-
-`docs/flow-map.json` is the source: one entry per flow, each step classified as deterministic, judgment or human, with the script that runs it named when one exists. `docs/flow-map.html` is generated from it by `node scripts/build-flow-map.js` and is the page people read. Whenever a flow changes (a skill's procedure, a rule that becomes or stops being a script, a new script or hook, a step that moves between agent and code), update `docs/flow-map.json` in the same change, rebuild the HTML, and commit both. Never edit the HTML by hand. CI runs `node scripts/build-flow-map.js --check`, so a stale page fails the build.
-
 ## Mandatory double-pass PR review
 
 This gate applies to the brain repository itself, not automatically to projects consuming it. Changes here can propagate to every repository that installs or updates from the brain, so every change—including documentation and instruction changes—must follow this workflow:
