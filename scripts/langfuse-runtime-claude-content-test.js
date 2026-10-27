@@ -245,8 +245,13 @@ test('R7: deferred children and nested dispatches bind only exact IDs; child pro
   f.restart();
   await f.hook('PostToolUse', { tool_name: 'Agent', tool_use_id: 'dispatch-child', tool_response: { agentId: 'child', content: `dispatch result ${PII}`, usage: { output_tokens: 999999 } } });
   await f.hook('Stop');
+  // Hook delivery has a short bounded transfer budget; completion does not
+  // promise that every deferred descendant is already in the outbox.
+  const delivery = await f.flow.flush({ timeoutMs: 30000 });
+  assert.equal(delivery.deferred, 0, 'all exactly bound descendants must transfer within the explicit test budget');
   const child = childRun(f, 'child'), grand = childRun(f, 'grand');
   const childAgent = f.records().find(record => record.id === child.rootSpanId);
+  assert.ok(childAgent, 'completed child AGENT must survive deferred transfer');
   assert.equal(childAgent.parentId, f.flow.session(SESSION).rootSpanId);
   assert.equal(f.records().find(record => record.id === grand.rootSpanId).parentId, child.rootSpanId);
   assert.equal(childAgent.content.input.value.UserPromptSubmit.prompt, `own child ${PII}`);

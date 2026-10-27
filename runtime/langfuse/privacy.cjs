@@ -168,21 +168,32 @@ function redactCredentials(text, additionalPattern) {
   return text;
 }
 const credentialKey = key => /^(?:password|passwd|secret|client[-_]?secret|api[-_]?key|access[-_]?token|refresh[-_]?token|token|authorization|proxy[-_]?authorization|cookie|set[-_]?cookie|(?:aws[-_]?)?(?:secret[-_]?access[-_]?key|access[-_]?key[-_]?id)|private[-_]?key)$/i.test(key);
-// Concrete native binary payloads, not prose or schemas describing media.
-// Called only on our own descriptor-validated JSON clone, never native getters.
+// Classify original native structure BEFORE credential rewrites can change
+// keys/discriminators. Read only validated own data descriptors, never getters,
+// proxies or prototype fields. Prose and schemas are not media payloads.
 function nativeBinaryShape(value) {
-  const source = value.source;
+  const field = (object, key) => {
+    if (!plain(object)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (descriptor && (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value'))) contentFailure('unsupported');
+    return descriptor?.value;
+  };
+  const type = field(value, 'type'), source = field(value, 'source'), file = field(value, 'file');
   const mime = text => typeof text === 'string' && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(text);
-  return (['image', 'audio', 'file', 'document'].includes(value.type)
-    && ((typeof value.data === 'string' && mime(value.mimeType))
-      || (source?.type === 'base64' && typeof source.data === 'string')
-      || (value.type === 'file' && typeof value.file?.file_data === 'string')))
-    || (value.type === 'base64' && typeof value.data === 'string'
-      && (mime(value.media_type) || mime(value.mimeType)))
-    || (value.type === 'input_audio' && typeof value.input_audio?.data === 'string'
-      && typeof value.input_audio.format === 'string')
-    || (typeof value.inlineData?.data === 'string' && mime(value.inlineData.mimeType))
-    || (typeof value.inline_data?.data === 'string' && mime(value.inline_data.mime_type));
+  return (['image', 'audio', 'file', 'document'].includes(type)
+    && ((typeof field(value, 'data') === 'string' && mime(field(value, 'mimeType')))
+      || (field(source, 'type') === 'base64' && typeof field(source, 'data') === 'string')
+      || (type === 'file' && typeof field(file, 'file_data') === 'string')))
+    || (['image', 'pdf'].includes(type) && typeof field(file, 'base64') === 'string')
+    || (type === 'base64' && typeof field(value, 'data') === 'string'
+      && (mime(field(value, 'media_type')) || mime(field(value, 'mimeType'))))
+    || (type === 'input_audio' && typeof field(field(value, 'input_audio'), 'data') === 'string'
+      && typeof field(field(value, 'input_audio'), 'format') === 'string')
+    || (type === 'input_file' && typeof field(value, 'file_data') === 'string')
+    || (type === 'resource' && typeof field(field(value, 'resource'), 'blob') === 'string'
+      && typeof field(field(value, 'resource'), 'uri') === 'string')
+    || (typeof field(field(value, 'inlineData'), 'data') === 'string' && mime(field(field(value, 'inlineData'), 'mimeType')))
+    || (typeof field(field(value, 'inline_data'), 'data') === 'string' && mime(field(field(value, 'inline_data'), 'mime_type')));
 }
 function contentFailure(status) { throw Object.assign(new Error('Content refused'), { contentStatus: status }); }
 function plain(value) {
@@ -246,6 +257,7 @@ function projectContent(value, options = {}) {
     const count = keys.length - (array ? 1 : 0);
     if (count > CONTENT_LIMITS.keys || (array && raw.length > CONTENT_LIMITS.keys)) contentFailure('refused_size');
     if (array && count !== raw.length) contentFailure('unsupported');
+    if (!array && nativeBinaryShape(raw)) contentFailure('unsupported');
     ancestors.add(raw); charge(2 + Math.max(0, count - 1) + (array ? 0 : count));
     const result = array ? [] : {};
     for (const key of keys) {
@@ -261,7 +273,6 @@ function projectContent(value, options = {}) {
       else result[safeKey] = visit(descriptor.value, depth + 1);
     }
     ancestors.delete(raw);
-    if (!array && nativeBinaryShape(result)) contentFailure('unsupported');
     return result;
   }
   try {

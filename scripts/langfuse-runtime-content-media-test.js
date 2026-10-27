@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { projectContent } = require('../runtime/langfuse/privacy.cjs');
+const { projectContent, configurePrivacy } = require('../runtime/langfuse/privacy.cjs');
 const { createFlow } = require('../runtime/langfuse/flow.cjs');
 const { handleClaudeHook } = require('../runtime/langfuse/claude.cjs');
 const { flushOutbox } = require('../runtime/langfuse/export.cjs');
@@ -19,7 +19,17 @@ const variants = [
   ['audio', data => ({ type: 'input_audio', input_audio: { format: 'wav', data } })],
   ['file', data => ({ type: 'file', file: { filename: 'synthetic.bin', file_data: data } })],
   ['inline', data => ({ inlineData: { mimeType: 'image/png', data } })],
-  ['inline-snake', data => ({ inline_data: { mime_type: 'image/png', data } })]
+  ['inline-snake', data => ({ inline_data: { mime_type: 'image/png', data } })],
+  ['read-image', base64 => ({ type: 'image', file: { base64, type: 'image/png', originalSize: 64, dimensions: { width: 1, height: 1 } } })],
+  ['read-pdf', base64 => ({ type: 'pdf', file: { filePath: 'synthetic.pdf', base64, originalSize: 64 } })],
+  ['input-file', file_data => ({ type: 'input_file', file_data })],
+  ['mcp-resource', blob => ({ type: 'resource', resource: { uri: 'synthetic://binary', mimeType: 'application/pdf', blob } })]
+];
+const cases = [...variants,
+  ['image-mask-base64', variants[0][1], ['base64']],
+  ['image-mask-data', variants[0][1], ['data']],
+  ['read-image-mask-data', variants[6][1], ['data']],
+  ['read-pdf-mask-base64', variants[7][1], ['base64']]
 ];
 const files = dir => !fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true })
   .flatMap(entry => entry.isDirectory() ? files(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
@@ -46,10 +56,29 @@ test('shared projection refuses native raw binary shapes but retains text, PII, 
       properties: { source: { type: 'object', properties: { data: { type: 'string' } } },
         inlineData: { type: 'object', properties: { data: { type: 'string' }, mimeType: { type: 'string' } } } } }],
     document: { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'ordinary text zoe@example.invalid' } },
-    reference: { type: 'image', source: { type: 'url', url: 'https://example.invalid/image.png' } } };
+    reference: { type: 'image', source: { type: 'url', url: 'https://example.invalid/image.png' } },
+    textRead: { type: 'text', file: { filePath: 'synthetic.txt', content: 'zoe@example.invalid 123-45-6789' } },
+    notebook: { type: 'notebook', file: { cells: [{ cell_type: 'markdown', source: 'zoe@example.invalid' }] } },
+    resourceText: { type: 'resource', resource: { uri: 'synthetic://text', mimeType: 'text/plain', text: 'zoe@example.invalid' } } };
   assert.deepEqual(projectContent(ordinary), { status: 'captured', value: ordinary });
 });
-for (const [name, shape] of variants) test(`Claude ${name} raw media is unsupported before checkpoint/pending/outbox and pinned SDK export`, async t => {
+test('configured literal rewrites cannot disguise original native-media keys or discriminators', () => {
+  try {
+    for (const literal of ['base64', 'data', 'source', 'image', 'type', 'file', 'blob', 'inlineData']) {
+      configurePrivacy({ sensitiveLiterals: [literal] });
+      for (const [name, shape] of variants) assert.deepEqual(projectContent({ content: [shape('U1lOVEhFVElDX0JJTkFSWQ==')] }),
+        { status: 'unsupported' }, `${literal}: ${name}`);
+    }
+  } finally { configurePrivacy(); }
+  let reads = 0;
+  const source = { type: 'base64', media_type: 'image/png' };
+  Object.defineProperty(source, 'data', { enumerable: true, get() { reads++; throw Error('preclassification must not invoke getters'); } });
+  assert.deepEqual(projectContent({ type: 'image', source }), { status: 'unsupported' });
+  assert.equal(reads, 0);
+});
+for (const [name, shape, literals = []] of cases) test(`Claude ${name} raw media is unsupported before checkpoint/pending/outbox and pinned SDK export`, async t => {
+  configurePrivacy({ sensitiveLiterals: literals });
+  t.after(() => configurePrivacy());
   const f = fixture(t), data = Buffer.from(`SYNTHETIC_PRIVATE_BINARY_${name}`).toString('base64'), block = shape(data);
   await f.hook('SessionStart');
   fs.appendFileSync(f.transcript, JSON.stringify({ type: 'user', uuid: crypto.randomUUID(), sessionId: f.session,
@@ -79,6 +108,18 @@ for (const [name, shape] of variants) test(`Claude ${name} raw media is unsuppor
   assert.ok(seen.some(span => span.attributes['langfuse.observation.metadata.outputStatus'] === '"unsupported"'));
   assert.ok(seen.some(span => span.attributes['langfuse.observation.metadata.inputStatus'] === '"unsupported"'));
   assert.ok(!f.disk().includes(data));
+});
+test('actual Claude text Read responses retain PII rather than becoming media refusals', async t => {
+  const f = fixture(t), response = { type: 'text', file: { filePath: 'synthetic.txt', content: 'Zoë zoe@example.invalid 123-45-6789' } };
+  await f.hook('SessionStart');
+  await f.hook('PreToolUse', { tool_name: 'Read', tool_use_id: 'text-read', tool_input: {} });
+  await f.hook('PostToolUse', { tool_name: 'Read', tool_use_id: 'text-read', tool_response: response });
+  const records = files(path.join(f.stateDir, 'outbox')).filter(file => file.endsWith('.json'))
+    .map(file => JSON.parse(fs.readFileSync(file, 'utf8')))
+    .filter(entry => entry.record.type === 'TOOL').sort((a, b) => b.revision - a.revision);
+  const output = records[0].record.content.output;
+  assert.equal(output.status, 'captured');
+  assert.deepEqual(output.value.postToolUse, response);
 });
 test('Claude metadata-only hooks never inspect native raw media data', async t => {
   const f = fixture(t, META);
