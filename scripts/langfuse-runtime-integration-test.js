@@ -181,9 +181,23 @@ test('real disk outbox and pinned SDK drain deferred batches beyond count/byte c
   assert.ok(first.queued > 0);
   const retained = pendingCount();
   assert.ok(retained > 0 && retained < records.length, 'only the unqueued tail remains durable');
+  const queuedIds = () => fs.readdirSync(path.join(stateDir, 'outbox')).filter(name => name.endsWith('.json'))
+    .map(name => JSON.parse(fs.readFileSync(path.join(stateDir, 'outbox', name), 'utf8')).record.id);
+  const pendingIds = () => fs.readdirSync(pendingDir).flatMap(name =>
+    JSON.parse(fs.readFileSync(path.join(pendingDir, name), 'utf8')).records.map(record => record.id));
+  const assertConserved = () => assert.deepEqual([...queuedIds(), ...pendingIds()].sort(), records.map(record => record.id).sort(),
+    'every original identity must exist exactly once in outbox or deferred suffix before ACK');
+  assertConserved();
+  const beforeRestart = new Set(queuedIds());
   flow = make();
   await flow.flush(opts);
-  assert.equal(pendingCount(), retained, 'restart while full must not restore the transferred prefix');
+  // A bounded transfer may stop before capacity (deadline/admission refusal).
+  // Restart may therefore make MORE progress, but cannot restore a prefix,
+  // lose an identity or delete an unACKed outbox record.
+  assert.ok(pendingCount() <= retained, 'restart must not restore the transferred prefix');
+  const afterRestart = new Set(queuedIds());
+  assert.ok([...beforeRestart].every(identity => afterRestart.has(identity)), 'no unACKed record disappears on restart');
+  assertConserved();
   acknowledge = true;
   for (let pass = 0; pass < 10; pass++) {
     flow = make();
