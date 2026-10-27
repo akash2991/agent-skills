@@ -1,0 +1,22 @@
+{
+  "ticket": "Ticket AKA-9 (In Progress, assigned to you). Title: Job detail shows the title of its post. Description, verbatim from the owner: \"when I open a job I want to see which post it is for. add post_title to GET /jobs/{id}.\" Do the backend work in this repository on the current branch and commit it. Do not ask questions; finish the work and end with a short report of what you changed and what, if anything, someone else must do next.",
+  "rules": "Rules that apply to this ticket, restated so they reach you:\n1. ADR-0008: a service reads another service's data only through the typed client the owning service defines (`contentos/services/catalogue/client.py` for posts). Never query another service's tables or import its persistence module.\n2. Contract first and consumers together: `contracts/kreate.openapi.yaml` is the contract and `web/src/jobs.ts` is a closed decoder that rejects unknown and missing keys. A new response field is therefore either optional in the contract or the web decoder changes in the same release. You may not edit `web/`: name the exact web change the web-engineer must land and the merge order.\n3. Test first: add the failing test before the change and run `python -m pytest -q` before you finish.",
+  "arms": {
+    "pointer": {
+      "fixture": "fixture-brain",
+      "prompt": "You are the `backend-engineer` persona. Read `AGENTS.md`, then `.claude/agents/backend-engineer.md`, and fetch the skills your persona names for this activity before working. Give it a persona and a scope only; load your own skills and tools.\n\n{ticket}"
+    },
+    "embedded": {
+      "fixture": "fixture-brain",
+      "prompt": "You are the `backend-engineer` persona. Read `AGENTS.md`, then `.claude/agents/backend-engineer.md`, and fetch the skills your persona names for this activity before working.\n\n{rules}\n\n{ticket}"
+    },
+    "rules-only": {
+      "fixture": "fixture",
+      "prompt": "{rules}\n\n{ticket}"
+    },
+    "none": {
+      "fixture": "fixture",
+      "prompt": "{ticket}"
+    }
+  }
+}

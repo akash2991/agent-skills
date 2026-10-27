@@ -1,0 +1,5919 @@
+[
+ {
+  "src": "claude:main",
+  "chars": 153,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 90,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.72,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.93,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 42,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.55,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 65,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 159,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.75,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 95,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.75,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "NONE"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.3,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "NONE"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.4,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "test-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.3,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "test-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.4,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.4,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.35,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.5,
+    "second": "security-auditor"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.4,
+    "second": "test-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 159,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.9,
+    "second": null
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.7,
+    "second": "web-performance-auditor"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.9,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.95,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "web-performance-auditor"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.8,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.93,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.82,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 41,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.93,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 57,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.55,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.4,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.4,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.55,
+    "second": "mobile-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.55,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "mobile-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.72,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.7,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.93,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.8,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.55,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 41,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 17,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.7,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.4,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.75,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 42,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 43,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.55,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.93,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 42,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.4,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 56,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.4,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 47,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 16,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.4,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.35,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "test-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.4,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.55,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 43,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.45,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.72,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.4,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.93,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 42,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.88,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.95,
+    "second": "code-reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.4,
+    "second": "security-auditor"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.45,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 56,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.93,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.3,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.3,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 18,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.5,
+    "second": "mobile-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.75,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "mobile-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.75,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.93,
+    "second": null
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.7,
+    "second": "mobile-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.9,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.93,
+    "second": "code-reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.7,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.35,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 81,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.8,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.4,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 20,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.45,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.45,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 18,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.4,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.35,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 20,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.45,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.35,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.3,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.4,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.72,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.75,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.75,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "code-reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "code-reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.9,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 159,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.8,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 24,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.8,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 41,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 42,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "code-reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 45,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.97,
+    "second": null
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.55,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.55,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.9,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.72,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.97,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.45,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 45,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.97,
+    "second": null
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.95,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.97,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.93,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.97,
+    "second": null
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.72,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.75,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 45,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.97,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.93,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.93,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.93,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.85,
+    "second": "code-reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.93,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 36,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.88,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 45,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 41,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.7,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 41,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.93,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.97,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 49,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 43,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.95,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.97,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.97,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 38,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.97,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.97,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.85,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 19,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": null
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.93,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.93,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.9,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.85,
+    "second": "security-auditor"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "nine": {
+    "persona": "code-reviewer",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.93,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.95,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.9,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.8,
+    "second": "code-reviewer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "ERR",
+    "raw": "{\"duration_api_ms\":969,\"stop_reason\":\"end_turn\",\"session_id\":\"fd987878-c9ce-4710-8649-bbfca7fdf739\",\"total_cost_usd\":0.0001978,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":923,\"cache_read_i"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "web-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 87,
+  "routes": {
+   "nine": {
+    "persona": "ERR",
+    "raw": "{\"duration_api_ms\":843,\"stop_reason\":\"end_turn\",\"session_id\":\"42740100-262f-47cc-88a5-e563c0b02d9f\",\"total_cost_usd\":0.00020180000000000003,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":943,"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 48,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 23,
+  "routes": {
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.5,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 22,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.75,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.7,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "security-auditor"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 47,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.7,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "security-auditor",
+    "confidence": 0.45,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "security-auditor"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.72,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 28,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.45,
+    "second": "security-auditor"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 17,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.7,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 21,
+  "routes": {
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.8,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 25,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": "test-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "NONE"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.4,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 26,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "mobile-engineer",
+    "confidence": 0.7,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 27,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 37,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 39,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.6,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 33,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.55,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 40,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "test-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.8,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 32,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.45,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 35,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.85,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "reviewer",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 29,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.7,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.9,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "claude:spawn",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "claude:main",
+  "chars": 49,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 30,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 46,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.97,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 68,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 34,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.8,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.95,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.95,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 28,
+  "routes": {
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.85,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.93,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.93,
+    "second": null
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 37,
+  "routes": {
+   "nine": {
+    "persona": "product-manager",
+    "confidence": 0.5,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "product-manager",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 98,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.7,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.72,
+    "second": null
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 39,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.7,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "engineer"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 51,
+  "routes": {
+   "nine": {
+    "persona": "ERR",
+    "raw": "{\"duration_api_ms\":1346,\"stop_reason\":\"end_turn\",\"session_id\":\"af179c4e-4eae-4107-bd23-072b757d1147\",\"total_cost_usd\":0.0001988,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":928,\"cache_read_"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.3,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 59,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.93,
+    "second": "reviewer"
+   },
+   "nine": {
+    "persona": "backend-engineer",
+    "confidence": 0.6,
+    "second": "web-engineer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 31,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "product-manager"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 48,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 40,
+  "routes": {
+   "four": {
+    "persona": "scout",
+    "confidence": 0.9,
+    "second": null
+   },
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.85,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.4,
+    "second": "backend-engineer"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.45,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.85,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.6,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "scout",
+    "confidence": 0.5,
+    "second": "web-engineer"
+   },
+   "four": {
+    "persona": "scout",
+    "confidence": 0.6,
+    "second": "engineer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 159,
+  "routes": {
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "product-manager"
+   },
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": "scout"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 160,
+  "routes": {
+   "nine": {
+    "persona": "test-engineer",
+    "confidence": 0.6,
+    "second": "scout"
+   },
+   "four": {
+    "persona": "engineer",
+    "confidence": 0.5,
+    "second": "reviewer"
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 67,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": "mobile-engineer"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.9,
+    "second": null
+   }
+  }
+ },
+ {
+  "src": "pi:main",
+  "chars": 58,
+  "routes": {
+   "nine": {
+    "persona": "NONE",
+    "confidence": 0.8,
+    "second": "product-manager"
+   },
+   "four": {
+    "persona": "NONE",
+    "confidence": 0.7,
+    "second": "product-manager"
+   }
+  }
+ }
+]
