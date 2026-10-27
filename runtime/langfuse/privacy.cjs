@@ -15,7 +15,7 @@ const LIMITS = Object.freeze({ identity: 128, skills: 32, metrics: 24, recordByt
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 let sensitiveLiterals = [];
 let contentConfigurationValid = true;
-const CONTENT_LIMITS = Object.freeze({ recordBytes: 256 * 1024, depth: 32, nodes: 16384, keys: 4096 });
+const CONTENT_LIMITS = Object.freeze({ recordBytes: 256 * 1024, depth: 32, nodes: 16384, keys: 4096, additionalLiterals: 4096 });
 const REDACTED = '[REDACTED]';
 const CONTENT_STATUSES = new Set(['captured', 'credential_redacted', 'unavailable', 'unsupported', 'refused_size']);
 
@@ -145,7 +145,7 @@ function skillList(value, previousStatus) {
 // Best effort only: arbitrary, encoded and novel credentials can escape these
 // rules. PII (including emails/SSNs/names/URLs) is deliberately NOT masked here.
 // Protect the replacement token itself so every rule and literal is idempotent.
-function redactCredentials(text) {
+function redactCredentials(text, additionalPattern) {
   const rules = [
     [/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-\r\n]*PRIVATE KEY-----|$)/gi, REDACTED],
     [/\b(?:sk[-_](?:lf[-_])?|pk[-_]lf[-_]|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]+/gi, REDACTED],
@@ -153,9 +153,13 @@ function redactCredentials(text) {
     [/\bAIza[A-Za-z0-9_-]{20,}\b/g, REDACTED],
     [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED],
     [/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, `$1 ${REDACTED}`],
+    // Runtime capabilities, not placeholder prose (ACTOR/NONCE). Preserve the
+    // complete command, including quoting, rather than refusing its surface.
+    [/(\bBRAIN_TRACE_LAUNCH_ID\s*=\s*|--actor(?:=|\s+))(["']?)([A-Za-z0-9_-]{32,128})(?![A-Za-z0-9_-])\2/gi, `$1$2${REDACTED}$2`],
     [/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^/\s@]+@/gi, `$1${REDACTED}@`],
     [/((?:["']?(?:password|passwd|secret|client_secret|api[-_]?key|access[-_]?token|refresh[-_]?token|token|authorization|cookie)["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)/gi, `$1${REDACTED}`]
   ];
+  if (additionalPattern) rules.push([additionalPattern, REDACTED]);
   for (const literal of sensitiveLiterals) {
     const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     rules.push([new RegExp(escaped, 'gi'), REDACTED]);
@@ -179,8 +183,29 @@ function fields(value, allowed) {
 // Shared snapshot/redactor for admission AND wire revalidation. It never calls
 // getters/toJSON, accepts no proxies/classes/prototype keys, and returns either
 // the COMPLETE JSON value or a typed refusal, never a successful prefix.
-function projectContent(value) {
+function projectContent(value, options = {}) {
   if (!contentConfigurationValid) return { status: 'unavailable' };
+  // Per-capture known runtime capabilities only. Never mutate configured
+  // literals or discover environment/private state. Validate without getters.
+  const additionalLiterals = [];
+  try {
+    fields(options, ['additionalSensitiveLiterals']);
+    const descriptor = Object.getOwnPropertyDescriptor(options, 'additionalSensitiveLiterals');
+    if (descriptor && !Object.hasOwn(descriptor, 'value')) contentFailure('unsupported');
+    const literals = descriptor?.value;
+    if (literals !== undefined) {
+      if (!Array.isArray(literals) || isProxy(literals) || Object.getPrototypeOf(literals) !== Array.prototype) contentFailure('unsupported');
+      if (literals.length > CONTENT_LIMITS.additionalLiterals) contentFailure('refused_size');
+      if (Reflect.ownKeys(literals).length !== literals.length + 1) contentFailure('unsupported');
+      for (let i = 0; i < literals.length; i++) {
+        const literal = Object.getOwnPropertyDescriptor(literals, String(i))?.value;
+        if (typeof literal !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(literal)) contentFailure('unsupported');
+        additionalLiterals.push(literal.toLowerCase());
+      }
+    }
+  } catch (error) { return { status: error.contentStatus || 'unsupported' }; }
+  const additionalPattern = additionalLiterals.length
+    ? new RegExp([...new Set(additionalLiterals)].sort((a, b) => b.length - a.length).join('|'), 'gi') : undefined;
   const ancestors = new Set();
   let nodes = 0, bytes = 0, redacted = false;
   const charge = amount => { bytes += amount; if (bytes > CONTENT_LIMITS.recordBytes) contentFailure('refused_size'); };
@@ -189,7 +214,7 @@ function projectContent(value) {
     if (raw.length > CONTENT_LIMITS.recordBytes) contentFailure('refused_size');
     charge(Buffer.byteLength(JSON.stringify(raw)));
     if (/^\s*data:(?:[a-z0-9.+-]+\/[a-z0-9.+-]+)?(?:;[^,\s]*)?,/i.test(raw)) contentFailure('unsupported');
-    const safe = redactCredentials(raw);
+    const safe = redactCredentials(raw, additionalPattern);
     if (safe !== raw) redacted = true;
     return safe;
   }
@@ -215,7 +240,8 @@ function projectContent(value) {
       if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) contentFailure('unsupported');
       const safeKey = array ? key : text(key);
       if (!array && (Object.hasOwn(result, safeKey) || ['__proto__', 'prototype', 'constructor'].includes(safeKey))) contentFailure('unsupported');
-      if (credentialKey(key)) { result[safeKey] = REDACTED; redacted = true; }
+      if (credentialKey(key) || (/^BRAIN_TRACE_LAUNCH_ID$/i.test(key)
+        && typeof descriptor.value === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(descriptor.value))) { result[safeKey] = REDACTED; redacted = true; }
       else result[safeKey] = visit(descriptor.value, depth + 1);
     }
     ancestors.delete(raw);

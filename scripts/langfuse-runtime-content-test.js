@@ -190,6 +190,53 @@ test('credential patterns and explicit decoded literals/keys are redacted idempo
   } finally { configurePrivacy(); }
 });
 
+test('per-capture runtime literals and command grammar redact values only, preserve PII/types and revalidate idempotently', () => {
+  configurePrivacy({ sensitiveLiterals: ['GLOBAL_SYNTHETIC_LITERAL'] });
+  try {
+    const capability = 'RuntimeCapability_'.repeat(3), other = 'OtherCapability_'.repeat(3);
+    const command = `export BRAIN_TRACE_LAUNCH_ID='${capability}'\nbrain-trace --actor "${other}" status; echo person@example.invalid`;
+    const payload = { command, echo: capability, nested: [null, 0, false, '', ...Object.values(PII)],
+      BRAIN_TRACE_LAUNCH_ID: other, prose: 'Use --actor ACTOR or --actor NONCE; BRAIN_TRACE_LAUNCH_ID=NONCE. data: ordinary prose.',
+      global: 'GLOBAL_SYNTHETIC_LITERAL' };
+    const options = { additionalSensitiveLiterals: [capability] };
+    const safe = projectContent(payload, options);
+    assert.equal(safe.status, 'credential_redacted');
+    assert.equal(safe.value.command, `export BRAIN_TRACE_LAUNCH_ID='[REDACTED]'\nbrain-trace --actor "[REDACTED]" status; echo person@example.invalid`);
+    assert.equal(safe.value.echo, '[REDACTED]'); assert.equal(safe.value.BRAIN_TRACE_LAUNCH_ID, '[REDACTED]');
+    assert.deepEqual(safe.value.nested, payload.nested); assert.equal(safe.value.prose, payload.prose);
+    assert.equal(safe.value.global, '[REDACTED]');
+    assert.deepEqual(projectContent(safe.value, options).value, safe.value);
+    assert.deepEqual(projectContent(safe.value).value, safe.value, 'wire revalidation needs no runtime secret list');
+    assert.equal(projectContent(capability).value, capability, 'per-capture list never becomes global configuration');
+    assert.equal(projectContent('GLOBAL_SYNTHETIC_LITERAL').value, '[REDACTED]');
+    assert.equal(projectContent({ [capability]: 1, '[REDACTED]': 2 }, options).status, 'unsupported');
+    for (const token of ['x'.repeat(32), 'y'.repeat(128)]) {
+      assert.equal(projectContent(`--actor=${token}; BRAIN_TRACE_LAUNCH_ID=${token}`).value,
+        '--actor=[REDACTED]; BRAIN_TRACE_LAUNCH_ID=[REDACTED]');
+    }
+  } finally { configurePrivacy(); }
+});
+
+test('per-capture option/accessor/proxy/budget refusal neither executes getters nor resets configured defenses', () => {
+  configurePrivacy({ sensitiveLiterals: ['GLOBAL_SYNTHETIC_LITERAL'] });
+  try {
+    let reads = 0;
+    const getter = {}; Object.defineProperty(getter, 'additionalSensitiveLiterals', { get() { reads++; throw Error('OPTIONS_GETTER'); } });
+    const array = []; Object.defineProperty(array, '0', { get() { reads++; throw Error('LITERAL_GETTER'); } });
+    const proxy = new Proxy({}, { ownKeys() { reads++; throw Error('OPTIONS_PROXY'); }, getPrototypeOf() { reads++; throw Error('OPTIONS_PROXY'); } });
+    for (const options of [null, getter, proxy, { unrelated: [] }, { additionalSensitiveLiterals: array },
+      { additionalSensitiveLiterals: new Proxy([], { get() { reads++; throw Error('ARRAY_PROXY'); } }) },
+      { additionalSensitiveLiterals: ['NONCE'] }, { additionalSensitiveLiterals: ['a'.repeat(129)] },
+      { additionalSensitiveLiterals: new Array(1) }]) {
+      assert.equal(projectContent(PII, options).status, 'unsupported');
+    }
+    assert.equal(reads, 0);
+    assert.equal(projectContent(PII, { additionalSensitiveLiterals: Array(CONTENT_LIMITS.additionalLiterals + 1).fill('a'.repeat(32)) }).status, 'refused_size');
+    assert.equal(projectContent('GLOBAL_SYNTHETIC_LITERAL').value, '[REDACTED]');
+    assert.equal(projectContent('a'.repeat(CONTENT_LIMITS.recordBytes + 1), { additionalSensitiveLiterals: ['a'.repeat(32)] }).status, 'refused_size', 'redaction cannot bypass original size budget');
+  } finally { configurePrivacy(); }
+});
+
 test('invalid redaction configuration refuses content without replacing the previous metadata defense', () => {
   configurePrivacy({ sensitiveLiterals: ['SYNTHETIC_OLD'] });
   try {

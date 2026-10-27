@@ -149,7 +149,8 @@ test('all tool JSON, original model args versus Bash execution mutation, native 
   await h.emit('tool_execution_end', { toolCallId: 'code', toolName: 'codemode', result: { content: [] }, isError: false });
   const tools = byType(f, 'TOOL'), bash = tools.find(r => r.toolName === 'bash');
   assert.deepEqual(bash.content.input.value.modelArguments.value, modelArgs);
-  assert.equal(bash.content.input.value.executionArguments.status, 'unsupported', 'never persist injected runtime capability');
+  assert.equal(bash.content.input.value.executionArguments.status, 'credential_redacted');
+  assert.equal(bash.content.input.value.executionArguments.value.command, `export BRAIN_TRACE_LAUNCH_ID='[REDACTED]'\n${modelArgs.command}`);
   assert.deepEqual(bash.content.output.value.result.structuredContent.data, [null, '', false, 0, PII]);
   assert.equal(bash.id, before.capture.record.id);
   const done = f.outbox().find(e => e.record.id === bash.id); assert.ok(done.revision > before.capture.revision);
@@ -239,6 +240,22 @@ test('record budget refuses whole surfaces, native binary is unsupported, missin
   assert.equal(gs[0].content.input.status, 'refused_size'); assert.ok(!Object.hasOwn(gs[0].content.input, 'value'));
   assert.equal(gs[1].content.input.status, 'unsupported'); assert.equal(gs[2].content.input.status, 'unavailable');
   for (const r of f.records()) assert.ok(Buffer.byteLength(JSON.stringify(r)) <= CONTENT_LIMITS.recordBytes);
+  f.checkDisk();
+});
+
+test('ordinary actor placeholders, JSON image/file prose and tool declarations survive; only actual binary blocks refuse', async t => {
+  const f = fixture(t), h = harness(f); await h.begin();
+  const payload = { prose: 'Use --actor ACTOR or --actor NONCE. BRAIN_TRACE_LAUNCH_ID=NONCE; data: ordinary prose.',
+    tools: [{ name: 'describe', schema: { type: 'file', description: PII, properties: { inlineData: { type: 'string' }, image_url: { type: 'string' } } } }],
+    examples: [{ type: 'image', description: PII, data: 'image description' }, { type: 'file', path: '/never/read', data: 'file description' }],
+    image_url: 'field description', inlineData: 'not binary' };
+  await h.request(payload); await h.answer();
+  assert.deepEqual(byType(f, 'GENERATION')[0].content.input.value.payload, payload);
+  for (const block of [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'SYNTHETIC_BASE64' } },
+    { inlineData: { mimeType: 'image/png', data: 'SYNTHETIC_BASE64' } }, { type: 'input_audio', input_audio: { data: 'SYNTHETIC_BASE64', format: 'wav' } }]) {
+    await h.request({ content: [block] }); await h.answer();
+    assert.equal(byType(f, 'GENERATION').at(-1).content.input.status, 'unsupported');
+  }
   f.checkDisk();
 });
 
@@ -347,19 +364,29 @@ test('durable handoff failure preserves the completed revision and input; shutdo
   assert.equal(done.record.outcome, 'completed'); f.checkDisk();
 });
 
-test('successful dispatch remains a child AGENT; unsupported typed dispatch attachment is explicit, not a duplicate TOOL', async t => {
+test('dispatch before child retains typed actual content, then attaches SPAN to exact native child without duplicate TOOL', async t => {
   const f = fixture(t), h = harness(f), parent = await h.begin();
   await h.issue([{ id: 'dispatch', name: 'subagent', args: { task: PII } }]);
   await h.emit('tool_execution_start', { toolCallId: 'dispatch', toolName: 'subagent', args: { task: PII } });
   const details = { id: 'exact-child-launch', sessionFile: '/synthetic/child.jsonl', status: 'started', name: 'child' };
   await h.emit('tool_execution_end', { toolCallId: 'dispatch', toolName: 'subagent', result: { details }, isError: false });
-  assert.equal(h.flow.readState('health').piDispatchContentUnsupported, true);
+  assert.equal(h.flow.readState('health').piDispatchExactChildBindingUnavailable, true);
   const index = h.flow.readState(`pi-content-open:${parent.nativeSessionId}`);
-  assert.equal(index.blocked.length, 1); assert.equal(h.flow.readObservation(index.blocked[0]).record.content.output.status, 'unsupported');
+  assert.equal(index.blocked.length, 1);
+  const saved = h.flow.readObservation(index.blocked[0]);
+  assert.deepEqual(saved.record.content.input.value.executionArguments.value, { task: PII });
+  assert.deepEqual(saved.record.content.output.value.result, { details });
+  assert.equal(byType(f, 'SPAN').length, 0);
   const child = harness(f, { session: '22222222-2222-4222-8222-222222222222', flow: f.flow({ env: { PI_SUBAGENT_ID: details.id } }) });
   const run = await child.begin('child own prompt'); await child.request({ child: PII }); await child.answer(); await child.settle();
   assert.equal(run.parentSpanId, parent.rootSpanId);
   const childRoot = byType(f, 'AGENT').find(r => r.id === run.rootSpanId); assert.equal(childRoot.content.input.value.prompt, 'child own prompt');
+  const span = byType(f, 'SPAN')[0]; assert.ok(span);
+  assert.equal(span.parentId, run.rootSpanId); assert.equal(span.nativeSessionId, run.nativeSessionId);
+  assert.equal(span.context.runId, run.runId); assert.deepEqual(span.content, saved.record.content);
+  assert.ok(!span.usage); assert.ok(!span.model);
+  assert.equal(h.flow.readObservation(index.blocked[0]), null);
+  assert.ok(h.flow.readObservation(`pi-content-root:${parent.rootSpanId}`), 'child retry cannot lose parent open-root index');
   await h.settle();
   await h.emit('before_agent_start', { messageType: 'custom', message: { customType: 'subagent_result', details } });
   await h.request({ resumed: PII }); await h.answer(); await h.settle();
@@ -367,7 +394,54 @@ test('successful dispatch remains a child AGENT; unsupported typed dispatch atta
   assert.equal(byType(f, 'AGENT').find(r => r.id === parent.rootSpanId).outcome, 'completed');
   await h.emit('session_shutdown');
   const restart = harness(f); await restart.emit('session_start'); assert.equal(byType(f, 'TOOL').length, 0);
-  assert.equal(restart.flow.readState(`pi-content-open:${parent.nativeSessionId}`).blocked.length, 1); f.checkDisk();
+  assert.equal(restart.flow.readState(`pi-content-open:${parent.nativeSessionId}`).blocked.length, 0);
+  assert.equal(byType(f, 'SPAN').length, 1); f.checkDisk();
+  const { spans } = await ack(f);
+  const wire = spans.find(s => s.spanContext().spanId === span.id);
+  assert.equal(wire.parentSpanContext.spanId, run.rootSpanId);
+  assert.deepEqual(JSON.parse(wire.attributes['langfuse.observation.input']), span.content.input.value);
+});
+
+test('native child observed before dispatch result attaches only that exact child, never a same-name/path candidate', async t => {
+  const f = fixture(t), h = harness(f), parent = await h.begin();
+  await h.issue([{ id: 'dispatch-before-result', name: 'subagent', args: { task: PII, values: [false, null, 0] } }]);
+  await h.emit('tool_execution_start', { toolCallId: 'dispatch-before-result', toolName: 'subagent', args: { task: PII } });
+  const other = harness(f, { session: '33333333-3333-4333-8333-333333333333' });
+  const wrong = await other.begin('same-name child');
+  const child = harness(f, { session: '22222222-2222-4222-8222-222222222222', flow: f.flow({ env: { PI_SUBAGENT_ID: 'early-native-child' } }) });
+  const run = await child.begin('actual child prompt');
+  assert.equal(child.flow.resolve(run), null, 'native child awaits exact parent launch binding');
+  const result = { details: { id: 'early-native-child', sessionFile: '/synthetic/not-read.jsonl', status: 'completed', name: 'same-name' },
+    content: [{ type: 'text', text: PII }], structuredContent: { values: [null, false, 0, ''] } };
+  await h.emit('tool_execution_end', { toolCallId: 'dispatch-before-result', toolName: 'subagent', result, isError: false });
+  const span = byType(f, 'SPAN')[0]; assert.ok(span);
+  assert.equal(span.parentId, run.rootSpanId); assert.notEqual(span.parentId, wrong.rootSpanId);
+  assert.equal(span.traceId, parent.traceId); assert.equal(span.context.runId, run.runId);
+  assert.deepEqual(span.content.output.value.result, result);
+  assert.deepEqual(span.content.input.value.modelArguments.value, { task: PII, values: [false, null, 0] });
+  assert.equal(byType(f, 'TOOL').length, 0);
+  assert.equal(h.flow.readState(`pi-content-open:${parent.nativeSessionId}`).blocked.length, 0);
+  await child.request({ child: PII }); await child.answer(); await child.settle();
+  assert.equal(byType(f, 'AGENT').find(r => r.id === run.rootSpanId).content.input.value.prompt, 'actual child prompt');
+  f.checkDisk();
+});
+
+test('unknown successful dispatch preserves actual typed result and explicit unsupported binding across restart without fake proof', async t => {
+  const f = fixture(t), h = harness(f), parent = await h.begin();
+  await h.issue([{ id: 'unknown-dispatch', name: 'subagent', args: { task: PII } }]);
+  await h.emit('tool_execution_start', { toolCallId: 'unknown-dispatch', toolName: 'subagent', args: { task: PII } });
+  const result = { content: [{ type: 'text', text: PII }], details: { name: 'not-ownership', sessionFile: '/never/read/guess.jsonl' } };
+  await h.emit('tool_execution_end', { toolCallId: 'unknown-dispatch', toolName: 'subagent', result, isError: false });
+  const index = h.flow.readState(`pi-content-open:${parent.nativeSessionId}`), key = index.blocked[0];
+  const saved = h.flow.readObservation(key);
+  assert.deepEqual(saved.record.content.output.value.result, result);
+  assert.equal(h.flow.readState('health').piDispatchExactChildBindingUnavailable, true);
+  const retry = h.flow.closeDispatchObservation(key, { launchId: 'unproven-child' });
+  assert.equal(retry.unsupported, true); assert.equal(retry.reason, 'dispatch_exact_child_binding_unavailable');
+  assert.deepEqual(h.flow.readObservation(key), saved);
+  const restarted = harness(f); await restarted.emit('session_start');
+  assert.deepEqual(restarted.flow.readObservation(key), saved);
+  assert.equal(byType(f, 'SPAN').length, 0); assert.equal(byType(f, 'TOOL').length, 0); f.checkDisk();
 });
 
 test('exact deferred children and descendants retain projected content/tickets through later binding and restart', async t => {
@@ -417,7 +491,7 @@ test('actual native optional-undefined fields have JSON boundary semantics, whil
   await h.settle(); f.checkDisk();
 });
 
-test('runtime actor arguments and echoed locally minted capabilities are refused, never exported as credentials', async t => {
+test('runtime capabilities redact before private checkpoints/outbox/wire while whole commands and provider history retain PII', async t => {
   const f = fixture(t), h = harness(f); await h.begin();
   const args = { command: `printf '${PII}'` };
   await h.issue([{ id: 'bash', name: 'bash', args }]);
@@ -426,12 +500,51 @@ test('runtime actor arguments and echoed locally minted capabilities are refused
   const nonce = /='([^']+)'/.exec(args.command)[1];
   await h.emit('tool_execution_end', { toolCallId: 'bash', toolName: 'bash', isError: false,
     result: { content: [{ type: 'text', text: nonce }], details: undefined } });
-  const tool = byType(f, 'TOOL')[0]; assert.equal(tool.content.output.status, 'unsupported');
-  await h.request({ command: `brain-trace context --actor ${'a'.repeat(32)} status` }); await h.answer();
-  assert.equal(byType(f, 'GENERATION').at(-1).content.input.status, 'unsupported');
-  await h.settle();
+  const tool = byType(f, 'TOOL')[0]; assert.equal(tool.content.output.status, 'credential_redacted');
+  assert.equal(tool.content.output.value.result.content[0].text, '[REDACTED]');
+  const payload = { command: `brain-trace context --actor ${'a'.repeat(32)} status; printf '${PII}'`,
+    history: [{ role: 'tool', result: { command: args.command, echo: nonce, values: [null, false, 0, '', PII] } }] };
+  await h.request(payload);
+  const saved = captures(h).find(x => x.capture.record.type === 'GENERATION').capture;
+  assert.equal(saved.record.content.input.status, 'credential_redacted');
+  const projected = saved.record.content.input.value.payload;
+  assert.equal(projected.command, `brain-trace context --actor [REDACTED] status; printf '${PII}'`);
+  assert.equal(projected.history[0].result.command, `export BRAIN_TRACE_LAUNCH_ID='[REDACTED]'\nprintf '${PII}'`);
+  assert.equal(projected.history[0].result.echo, '[REDACTED]');
+  assert.deepEqual(projected.history[0].result.values, [null, false, 0, '', PII]);
+  await h.answer(); await h.settle();
+  for (const file of walk(f.stateDir)) {
+    const body = fs.readFileSync(file, 'utf8');
+    if (body.includes('"content"')) assert.ok(!body.includes(nonce), file);
+  }
   for (const envelope of f.outbox()) assert.ok(!JSON.stringify(envelope.record).includes(nonce));
   f.checkDisk();
+  const { spans } = await ack(f), wire = JSON.stringify(spans.map(s => s.attributes));
+  assert.ok(!wire.includes(nonce)); assert.ok(!wire.includes('a'.repeat(32))); assert.ok(wire.includes(PII));
+});
+
+test('known inbound capabilities redact bare echoes without private-state/env discovery', async t => {
+  const f = fixture(t), nonce = 'SYNTHETIC_INBOUND_'.repeat(3), h = harness(f, { flow: f.flow({ env: { BRAIN_TRACE_LAUNCH_ID: nonce } }) });
+  await h.begin(); await h.request({ echo: nonce, pii: PII });
+  const saved = captures(h).find(x => x.capture.record.type === 'GENERATION').capture;
+  assert.equal(saved.record.content.input.value.payload.echo, '[REDACTED]');
+  assert.equal(saved.record.content.input.value.payload.pii, PII); f.checkDisk();
+});
+
+test('runtime capability budget is bounded and diagnosed, never drops lineage injection or silently exports a prefix', async t => {
+  const f = fixture(t), flow = f.flow(), h = harness(f, { flow }); await h.begin();
+  let issued = 0;
+  flow.createToolLaunch = () => ({ nonce: `SYNTHETIC_CAPABILITY_${String(++issued).padStart(32, '0')}` });
+  for (let i = 0; i < CONTENT_LIMITS.additionalLiterals; i++) {
+    const input = { command: 'true' };
+    await h.emit('tool_call', { toolCallId: `uncaptured-${i}`, toolName: 'bash', input });
+    assert.ok(input.command.startsWith('export BRAIN_TRACE_LAUNCH_ID='));
+  }
+  assert.equal(flow.readState('health').piCapabilityBudgetExceeded, true);
+  await h.request({ text: PII });
+  const saved = captures(h).find(x => x.capture.record.type === 'GENERATION').capture;
+  assert.equal(saved.record.content.input.status, 'refused_size');
+  assert.ok(!Object.hasOwn(saved.record.content.input, 'value')); f.checkDisk();
 });
 
 test('an exact deferred continuation after controller restart preserves the original actor prompt and adds the new final answer', async t => {

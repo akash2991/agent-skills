@@ -71,6 +71,62 @@ function checkPII(content) {
 const sink = seen => () => ({ export(spans, callback) { seen.push(...spans); callback({ code: 0 }); }, async shutdown() {} });
 const ack = (f, seen = []) => flushOutbox({ stateDir: f.stateDir, env: {}, dependencyRoot, exporterFactory: sink(seen), timeoutMs: 10000 });
 
+test('flow forwards per-capture runtime literals without global reconfiguration; metadata mode reads neither body nor options', t => {
+  const f = fixture(t), flow = f.flow(), nonce = 'SYNTHETIC_FLOW_CAPABILITY_'.repeat(2);
+  configurePrivacy({ sensitiveLiterals: [LITERAL] });
+  const envelope = flow.createContent({ input: { echo: nonce, pii: PII, literal: LITERAL } }, { additionalSensitiveLiterals: [nonce] });
+  assert.equal(envelope.input.status, 'credential_redacted'); assert.equal(envelope.input.value.echo, '[REDACTED]');
+  assert.deepEqual(envelope.input.value.pii, PII); assert.equal(envelope.input.value.literal, '[REDACTED]');
+  assert.equal(flow.createContent({ input: nonce }).input.value, nonce);
+  const getter = {}; Object.defineProperty(getter, 'additionalSensitiveLiterals', { get() { assert.fail('option getter'); } });
+  assert.equal(flow.createContent({ input: PII }, getter).input.status, 'unsupported');
+  const bomb = new Proxy({}, { getOwnPropertyDescriptor() { assert.fail('metadata body/options access'); }, ownKeys() { assert.fail('metadata options access'); } });
+  marker(f.cwd, META);
+  assert.equal(flow.createContent(bomb, bomb), undefined);
+});
+
+test('dispatch handoff uses parent original grant after downgrade, typed child ownership/revision and no child-body consent', t => {
+  const f = fixture(t), flow = f.flow(), parent = f.begin(flow), key = 'synthetic-dispatch';
+  configurePrivacy({ sensitiveLiterals: [LITERAL] });
+  const source = flow.captureObservation(parent, observation(flow, parent, { type: 'TOOL', toolName: 'subagent',
+    content: flow.createContent({ input: payload(), output: { actualResult: PII } }) }));
+  flow.writeObservation(key, source);
+  const identity = { launchId: 'native-metadata-child' };
+  flow.store.createLaunch(parent, identity);
+  marker(f.cwd, META);
+  const childFlow = f.flow({ env: { PI_SUBAGENT_ID: identity.launchId } }), child = f.begin(childFlow);
+  assert.equal(childFlow.captureMode(), 'metadata-only');
+  const body = {}; Object.defineProperty(body, 'input', { get() { assert.fail('child body consent widened'); } });
+  assert.equal(childFlow.createContent(body), undefined);
+  const result = childFlow.closeDispatchObservation(key, identity); assert.equal(result.queued, 1);
+  assert.equal(flow.readObservation(key), null);
+  const queued = f.outbox()[0].envelope;
+  assert.equal(queued.record.type, 'SPAN'); assert.equal(queued.record.parentId, child.rootSpanId);
+  assert.equal(queued.record.nativeSessionId, child.nativeSessionId); assert.equal(queued.record.context.runId, child.runId);
+  assert.ok(Number.isSafeInteger(queued.revision)); assert.deepEqual(queued.record.content, source.record.content);
+  assert.equal(childFlow.createContent(body), undefined); checkDisk(f);
+});
+
+test('dispatch exact-binding helper refuses guessed parent edges, wrong parent, multi-use and ambiguous native publications', t => {
+  const f = fixture(t), flow = f.flow(), parent = f.begin(flow), key = 'unproven-dispatch';
+  const source = flow.captureObservation(parent, observation(flow, parent, { type: 'TOOL', toolName: 'subagent',
+    content: flow.createContent({ input: PII, output: { actual: true } }) }));
+  flow.writeObservation(key, source);
+  f.begin(flow, { parent }); // A parent edge alone is not exact launch proof.
+  for (const identity of [{ launchId: 'no-native-child' }, { launchId: 'multi-use' }, { launchId: 'wrong-parent' }, { launchId: 'ambiguous' }]) {
+    const wrongParent = identity.launchId === 'wrong-parent' ? f.begin(flow) : parent;
+    flow.store.createLaunch(wrongParent, { ...identity, ...(identity.launchId === 'multi-use' ? { multiUse: true } : {}) });
+    if (identity.launchId !== 'no-native-child') {
+      const cf = f.flow({ env: { PI_SUBAGENT_ID: identity.launchId } }), c = f.begin(cf);
+      if (identity.launchId === 'ambiguous') f.begin(cf, { nativeSessionId: c.nativeSessionId });
+    }
+    const result = flow.closeDispatchObservation(key, identity);
+    assert.equal(result.unsupported, true, identity.launchId);
+    assert.deepEqual(flow.readObservation(key), source);
+  }
+  assert.equal(f.outbox().length, 0); checkDisk(f);
+});
+
 test('schema-2 consent requires every versioned fact; shared discovery preserves old API tri-state', t => {
   const f = fixture(t), entry = path.join(f.cwd, '.agent-brain/observability/pi.js');
   assert.equal(bootstrap.findPolicySync(f.cwd), entry);

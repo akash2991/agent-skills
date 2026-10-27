@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { types: { isProxy } } = require('node:util');
 const { ContextStore } = require('./context.cjs');
 const { sanitizeObservation, sanitizeMetadataObservation, projectContent, CONTEXT_FIELDS } = require('./privacy.cjs');
 const { findCapturePolicySync, METADATA_CAPTURE_POLICY: METADATA_POLICY,
@@ -609,13 +610,17 @@ function createFlow(options = {}) {
   // Restart: readObservation(key) -> closeObservation(key) retries the original
   // grant/ticket even after downgrade. It grants NO new raw capture. Kill stops
   // delivery. Generic readState/writeState cannot read/write these envelopes.
-  function createContent(surfaces = {}) {
+  function createContent(surfaces = {}, options = {}) {
     if (captureMode() !== 'full-content') return undefined; // No body access in metadata mode.
     const result = { version: 1, captureMode: 'full-content', redactionPolicyVersion: 1 };
+    if (!surfaces || typeof surfaces !== 'object' || isProxy(surfaces)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(surfaces))) {
+      return freeze({ ...result, input: { status: 'unsupported' }, output: { status: 'unsupported' } });
+    }
     for (const field of ['input', 'output']) {
       const descriptor = Object.getOwnPropertyDescriptor(surfaces, field);
       result[field] = !descriptor ? { status: 'unavailable' }
-        : !Object.hasOwn(descriptor, 'value') ? { status: 'unsupported' } : projectContent(descriptor.value);
+        : !Object.hasOwn(descriptor, 'value') ? { status: 'unsupported' } : projectContent(descriptor.value, options);
     }
     return freeze(result);
   }
@@ -765,6 +770,46 @@ function createFlow(options = {}) {
       const result = submitCaptured([capture]);
       if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) fs.unlinkSync(fileFor(key));
       return result; // Disabled/refused/unfinished captures remain durable.
+    });
+  }
+
+  // Transfer only an already projected parent dispatch, under its ORIGINAL
+  // grant. A launch label/path/name is not a child. Native publication identity
+  // plus the store's single-use ownership claim must prove exactly one run.
+  // No child body is read and no new child-content consent is conferred.
+  function closeDispatchObservation(key, identity) {
+    return transaction(() => {
+      const source = readObservation(key);
+      if (!source) return { queued: 0, pending: 0 };
+      const unavailable = { queued: 0, pending: 0, unsupported: true, reason: 'dispatch_exact_child_binding_unavailable' };
+      if (source.record.type !== 'TOOL' || !['subagent', 'subagent_resume'].includes(source.record.toolName)
+        || source.record.outcome !== 'completed' || typeof store._transaction !== 'function') return unavailable;
+      const reference = store.referenceLaunch(identity).reference;
+      const candidate = store._transaction((state, now) => {
+        const bindings = Object.values(state.launches).filter(binding => binding.expiresAt > now
+          && reference.every(alias => binding.aliases.includes(alias)));
+        if (bindings.length !== 1) return null;
+        const binding = bindings[0];
+        if (binding.multiUse || binding.parent.runId !== source.owner.runId
+          || binding.parent.rootSpanId !== source.owner.rootSpanId) return null;
+        const matches = Object.values(state.runs).filter(item => {
+          const aliases = item.publication?.identity?.reference;
+          return aliases?.length && aliases.every(alias => binding.aliases.includes(alias))
+            && (!binding.claim || binding.claim === hash(`${item.run.harness}:${item.run.nativeSessionId}`));
+        });
+        return matches.length === 1 ? matches[0].run : null;
+      });
+      const child = candidate && resolve(candidate);
+      if (!child || child.parentSpanId !== source.owner.rootSpanId) return unavailable;
+      const record = atCapture(child, { id: id(`pi:dispatch:${child.rootSpanId}:${source.record.id}`),
+        parentId: child.rootSpanId, type: 'SPAN', startTime: source.record.startTime,
+        endTime: source.record.endTime, outcome: source.record.outcome,
+        ...(source.record.content ? { content: source.record.content } : {}) }, source.captureGrant);
+      const capture = issue({ observationVersion: 1, captureGrant: source.captureGrant,
+        owner: ownerFor(child), record, revision: allocate([record])[0] });
+      const result = submitCaptured([capture]);
+      if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) fs.unlinkSync(fileFor(key));
+      return result;
     });
   }
 
@@ -939,7 +984,7 @@ function createFlow(options = {}) {
 
   return { store, stateDir, harness, inboundIdentity, begin, acknowledgeSession, createToolLaunch, actorCapability, actorForTool, remember, resolve, session, update, submit, flush, id,
     readState, writeState, stateFile: fileFor, getCapturePolicy, captureMode, createContent,
-    captureObservation, writeObservation, readObservation, submitCaptured, closeObservation,
+    captureObservation, writeObservation, readObservation, submitCaptured, closeObservation, closeDispatchObservation,
     knownPersona, knownSkill, captureBrainCommand, captureSkill, now: clock };
 }
 

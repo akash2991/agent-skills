@@ -40,6 +40,13 @@ function nativeJSON(value) {
       result[key] = visit(descriptor.value, depth + 1);
     }
     ancestors.delete(raw);
+    // Only known native binary shapes, not JSON prose/tool schemas that merely
+    // describe an image/file or a field named inlineData/image_url.
+    if (!array && ((['image', 'audio', 'file', 'document'].includes(result.type)
+      && ((typeof result.data === 'string' && typeof result.mimeType === 'string' && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(result.mimeType))
+        || (result.source?.type === 'base64' && typeof result.source.data === 'string')))
+      || (result.type === 'input_audio' && typeof result.input_audio?.data === 'string' && typeof result.input_audio.format === 'string')
+      || (typeof result.inlineData?.mimeType === 'string' && typeof result.inlineData.data === 'string'))) fail('unsupported');
     return result;
   }
   return visit(value, 0);
@@ -115,15 +122,13 @@ function createController(pi, options = {}) {
       try { json[field] = nativeJSON(data(raw, field)); }
       catch (error) { failures[field] = { status: error.contentStatus || 'unsupported' }; }
     }
-    const projected = flow.createContent(json);
-    // The shared credential redactor does not yet understand runtime actor
-    // capabilities. Refuse the entire affected surface, not a leaking prefix.
-    // Also exclude native binary blocks; this adapter makes no media guarantee.
-    const unsafe = /BRAIN_TRACE_LAUNCH_ID|--actor(?:[=\s]|\\[nr])|"type":"(?:image|audio|file)"|"(?:image_url|inlineData)":/i;
+    const inbound = data(flow.inboundIdentity, 'nonce') || data(flow.inboundIdentity, 'capability');
+    const literals = [...mintedCapabilities];
+    if (typeof inbound === 'string' && /^[a-z0-9_-]{32,128}$/i.test(inbound) && !mintedCapabilities.has(inbound)) literals.push(inbound);
+    const projected = flow.createContent(json, { additionalSensitiveLiterals: literals });
     const result = { ...projected, ...failures };
-    for (const field of ['input', 'output']) if (Object.hasOwn(result[field], 'value')) {
-      const json = JSON.stringify(result[field].value);
-      if (capabilityBudgetExceeded || unsafe.test(json) || [...mintedCapabilities].some(nonce => json.includes(nonce))) result[field] = { status: 'unsupported' };
+    if (capabilityBudgetExceeded) {
+      for (const field of ['input', 'output']) if (Object.hasOwn(raw, field)) result[field] = { status: 'refused_size' };
     }
     return result;
   }
@@ -145,6 +150,22 @@ function createController(pi, options = {}) {
     const result = flow.closeObservation(key); // Deletes ONLY after durable queue/pending handoff.
     if (session && !flow.readObservation(key)) { keySet(openKeys, session).delete(key); saveIndex(session); }
     return result;
+  }
+  function retryDispatches(session) {
+    if (!session || !flow.readObservation) return;
+    const index = flow.readState(indexKey(session));
+    for (const key of index?.keys || []) keySet(openKeys, session).add(key);
+    for (const key of index?.blocked || []) keySet(blockedKeys, session).add(key);
+    for (const key of [...keySet(blockedKeys, session)]) {
+      const saved = flow.readObservation(key);
+      const identity = flow.readState(`pi-dispatch:${key}`)?.identity;
+      const result = saved && identity ? flow.closeDispatchObservation?.(key, identity) : undefined;
+      if (!flow.readObservation(key)) {
+        keySet(blockedKeys, session).delete(key); saveIndex(session);
+      } else if (!result || result.unsupported) flow.writeState('health', {
+        ...(flow.readState('health') || {}), piDispatchExactChildBindingUnavailable: true
+      });
+    }
   }
   function finishContent(key, run, record, output) {
     const saved = flow.readObservation(key);
@@ -260,6 +281,8 @@ function createController(pi, options = {}) {
     }
     inputCapture = undefined;
     submitRoot(state, 'unknown');
+    retryDispatches(run.nativeSessionId);
+    retryDispatches(run.parentSessionId);
     return state;
   }
 
@@ -300,6 +323,7 @@ function createController(pi, options = {}) {
       // Load the ENTIRE suffix before any handoff rewrites the index. A crash
       // after transferring its prefix must not strand later body checkpoints.
       for (const key of index?.keys || []) keySet(openKeys, session).add(key);
+      retryDispatches(session);
       for (const key of index?.keys || []) {
         const capture = flow.readObservation(key);
         // A known deferred child can resume this actor after restart. Keep its
@@ -352,7 +376,7 @@ function createController(pi, options = {}) {
       const file = message.details?.sessionFile || message.details?.sessionPath;
       const saved = typeof file === 'string' && flow?.readState(`pi-child-parent:${file}`);
       const waiting = saved?.run && roots.get(saved.run.rootSpanId);
-      if (waiting) { waiting.pending.delete(pendingId(file)); saveRoot(waiting); }
+      if (waiting) { waiting.pending.delete(pendingId(file)); saveRoot(waiting); retryDispatches(waiting.run.nativeSessionId); }
     }
     if (message?.role === 'assistant' && state) {
       const outcome = message.stopReason === 'aborted' ? 'aborted' : message.stopReason === 'error' ? 'error' : 'completed';
@@ -387,8 +411,11 @@ function createController(pi, options = {}) {
       // Only a non-secret exact lineage nonce crosses the subprocess boundary.
       // No credentials, prompt, or arbitrary context is added to argv/env.
       if (!/^[a-z0-9_-]{32,128}$/i.test(binding.nonce || '')) throw new Error('Invalid launch binding');
-      if (mintedCapabilities.size < 4096) mintedCapabilities.add(binding.nonce);
-      else capabilityBudgetExceeded = true;
+      if (mintedCapabilities.has(binding.nonce) || mintedCapabilities.size < CONTENT_LIMITS.additionalLiterals - 1) mintedCapabilities.add(binding.nonce);
+      else {
+        capabilityBudgetExceeded = true;
+        try { flow.writeState('health', { ...(flow.readState('health') || {}), piCapabilityBudgetExceeded: true }); } catch {}
+      }
       event.input.command = `export BRAIN_TRACE_LAUNCH_ID='${binding.nonce}'\n${event.input.command}`;
     }
     // execution_start precedes tool_call in Pi 1.3. Save the later execution
@@ -433,16 +460,28 @@ function createController(pi, options = {}) {
     const tool = tools.get(key);
     if (!tool) return;
     const state = tool.state;
-    if (/^(subagent|subagent_resume)$/.test(tool.name) && !event.isError) {
+    if (/^(subagent|subagent_resume)$/.test(tool.name) && !event.isError && !event.result?.details?.error) {
       const details = event.result?.details || {};
       const file = details.sessionFile || details.sessionPath;
+      if (tool.contentKey) {
+        // Classify BEFORE publishing the binding or body. A successful dispatch
+        // must never replay as a duplicate TOOL, even if the child is unknown.
+        keySet(openKeys, state.run.nativeSessionId).delete(tool.contentKey);
+        keySet(blockedKeys, state.run.nativeSessionId).add(tool.contentKey); saveIndex(state.run.nativeSessionId);
+      }
+      const completeDispatch = () => {
+        if (!tool.contentKey) return;
+        const saved = flow.readObservation(tool.contentKey);
+        if (saved && mode() === saved.captureGrant.captureMode) checkpoint(tool.contentKey, state.run, toolRecord(tool, 'completed'), {
+          ...saved.record.content, output: content(() => ({ output: { source: 'tool_execution_end', ...present(event, ['result', 'isError']),
+            completeness: 'native-provided-only', artifactExpansion: false,
+            nativeTruncated: Boolean(data(data(data(event, 'result'), 'details'), 'truncation')?.truncated) } })).output
+        });
+        if (typeof details.id === 'string') flow.writeState(`pi-dispatch:${tool.contentKey}`, {
+          identity: flow.store.referenceLaunch({ launchId: details.id })
+        });
+      };
       if (typeof details.id === 'string' && typeof file === 'string') {
-        if (tool.contentKey) {
-          // Classify BEFORE publishing the child binding or updating its body.
-          // Even a crash here must not replay the open dispatch as a TOOL.
-          keySet(openKeys, state.run.nativeSessionId).delete(tool.contentKey);
-          keySet(blockedKeys, state.run.nativeSessionId).add(tool.contentKey); saveIndex(state.run.nativeSessionId);
-        }
         const persona = optionalPersona(details.agent, ctx.cwd);
         const agentName = optionalLabel(details.name);
         flow.store.createLaunch(flow.resolve(state.run) || state.run, { launchId: details.id,
@@ -452,19 +491,16 @@ function createController(pi, options = {}) {
         flow.writeState(`pi-child-parent:${file}`, { run: state.run });
         if (details.status === 'started') state.pending.add(pendingId(file));
         saveRoot(state);
-        if (tool.contentKey) {
-          // Flow has no typed child-dispatch attachment API. Never stash a
-          // body on a launch/run or overwrite the child's prompt/answer.
-          // Explicitly retain a body-free unsupported result on this private
-          // checkpoint, NOT a duplicate successful dispatch TOOL export.
-          const saved = flow.readObservation(tool.contentKey);
-          checkpoint(tool.contentKey, state.run, toolRecord(tool, 'unknown'), {
-            ...saved.record.content, output: { status: 'unsupported' }
-          });
-          flow.writeState('health', { ...(flow.readState('health') || {}), piDispatchContentUnsupported: true });
-        }
+        completeDispatch();
+        retryDispatches(state.run.nativeSessionId);
         tools.delete(key);
         return; // Actual child AGENT replaces the successful dispatch TOOL.
+      }
+      if (tool.contentKey) {
+        completeDispatch();
+        retryDispatches(state.run.nativeSessionId);
+        tools.delete(key);
+        return; // Retain typed dispatch until exact native binding, never guess.
       }
     }
     const failed = event.isError || (/^(subagent|subagent_resume)$/.test(tool.name) && Boolean(event.result?.details?.error));
@@ -486,6 +522,7 @@ function createController(pi, options = {}) {
     closeGeneration(state, state.outcome === 'completed' ? 'interrupted' : state.outcome);
     if (!state.pending.size && ['completed', 'aborted', 'error'].includes(state.outcome)) state.endedAt = clock();
     submitRoot(state, state.pending.size && !event.aborted ? 'unknown' : state.outcome);
+    retryDispatches(state.run.nativeSessionId);
     const delivery = await flow.flush({ timeoutMs: 2500 });
     setStatus(state.pending.size ? `brain tracing: ${mode()}; awaiting child`
       : delivery?.accepted > 0 ? `brain tracing: ${mode()}; transport accepted (not ingestion verified)`
