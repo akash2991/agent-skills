@@ -168,6 +168,22 @@ function redactCredentials(text, additionalPattern) {
   return text;
 }
 const credentialKey = key => /^(?:password|passwd|secret|client[-_]?secret|api[-_]?key|access[-_]?token|refresh[-_]?token|token|authorization|proxy[-_]?authorization|cookie|set[-_]?cookie|(?:aws[-_]?)?(?:secret[-_]?access[-_]?key|access[-_]?key[-_]?id)|private[-_]?key)$/i.test(key);
+// Concrete native binary payloads, not prose or schemas describing media.
+// Called only on our own descriptor-validated JSON clone, never native getters.
+function nativeBinaryShape(value) {
+  const source = value.source;
+  const mime = text => typeof text === 'string' && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(text);
+  return (['image', 'audio', 'file', 'document'].includes(value.type)
+    && ((typeof value.data === 'string' && mime(value.mimeType))
+      || (source?.type === 'base64' && typeof source.data === 'string')
+      || (value.type === 'file' && typeof value.file?.file_data === 'string')))
+    || (value.type === 'base64' && typeof value.data === 'string'
+      && (mime(value.media_type) || mime(value.mimeType)))
+    || (value.type === 'input_audio' && typeof value.input_audio?.data === 'string'
+      && typeof value.input_audio.format === 'string')
+    || (typeof value.inlineData?.data === 'string' && mime(value.inlineData.mimeType))
+    || (typeof value.inline_data?.data === 'string' && mime(value.inline_data.mime_type));
+}
 function contentFailure(status) { throw Object.assign(new Error('Content refused'), { contentStatus: status }); }
 function plain(value) {
   return value && typeof value === 'object' && !isProxy(value)
@@ -245,6 +261,7 @@ function projectContent(value, options = {}) {
       else result[safeKey] = visit(descriptor.value, depth + 1);
     }
     ancestors.delete(raw);
+    if (!array && nativeBinaryShape(result)) contentFailure('unsupported');
     return result;
   }
   try {
