@@ -365,3 +365,56 @@ test('any failed run on the head blocks the merge, even one a later run supersed
   ] };
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
 });
+
+test('the branch is deleted from the remote that points at the merged repository, never a guessed origin', () => {
+  const { remoteFor } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-'));
+  const g = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  g(['init', '-q', '-b', 'main']);
+  g(['remote', 'add', 'origin', 'git@github.com:fork-owner/app.git']);
+  g(['remote', 'add', 'upstream', 'https://github.com/org/app.git']);
+  // a mirror on another host with the same repository path is never the one deleted from
+  g(['remote', 'add', 'backup', 'https://github.backup.example/org/app.git']);
+  const cwd = process.cwd(); process.chdir(dir);
+  try {
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('fork-owner/app'), 'origin');
+    // a remote that fetches from org/app but pushes to someone else's repository is not the one to delete from
+    g(['remote', 'add', 'split', 'https://github.com/org/app.git']);
+    g(['remote', 'set-url', '--push', 'split', 'https://github.com/someone/fork.git']);
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('ORG/App'), 'upstream');
+    assert.throws(() => remoteFor('someone/else'), /no git remote fetches and pushes someone\/else; nothing was merged/);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a remote branch is deleted only at the merged commit; a branch that moved is kept; a gone one counts as done', () => {
+  const { deleteRemoteBranch } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lease-'));
+  const bare = path.join(dir, 'remote.git');
+  const work = path.join(dir, 'work');
+  const g = (args, cwd = work) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+  execFileSync('git', ['clone', '-q', bare, work]);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  g(['push', '-q', 'origin', 'main']);
+  g(['checkout', '-q', '-b', 'ENG-1-x']);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'work']);
+  g(['push', '-q', 'origin', 'ENG-1-x']);
+  const merged = g(['rev-parse', 'HEAD']);
+  const cwd = process.cwd();
+  process.chdir(work);
+  try {
+    // the branch moves after the merge: its new commit is kept
+    g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'more']);
+    g(['push', '-q', 'origin', 'ENG-1-x']);
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', merged), 'kept');
+    assert.ok(g(['ls-remote', '--heads', 'origin', 'ENG-1-x']).includes('ENG-1-x'));
+    // at the merged commit it is deleted
+    const now = g(['rev-parse', 'HEAD']);
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'deleted');
+    assert.strictEqual(g(['ls-remote', '--heads', 'origin', 'ENG-1-x']), '');
+    // already gone (automatic head-branch deletion) is done
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'gone');
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
