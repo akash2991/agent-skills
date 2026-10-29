@@ -72,7 +72,7 @@ function checkPrTitle(title, env = process.env) {
 function parseNumstat(numstat) {
   return numstat.split('\0').filter(Boolean).map(record => {
     const [added, deleted, ...rest] = record.split('\t');
-    return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
+    return { path: rest.join('\t'), added: Number(added) || 0, deleted: Number(deleted) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
   }).filter(f => !LOCKFILES.test(f.path));
 }
 
@@ -115,9 +115,18 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
   }
   const changed = files.map(f => f.path);
-  const missing = requiredChangelogs(changed, allChangelogs).filter(c => {
+  // A changelog the PR touches must gain a line, including one it deletes while its service stays (listChangelogs
+  // gives only live services' changelogs, so a removed service's deleted changelog is not in the list).
+  const touched = allChangelogs.filter(c => changed.includes(c));
+  const required = [...new Set([...requiredChangelogs(changed, allChangelogs), ...touched])];
+  const missing = required.filter(c => {
     const entry = files.find(f => f.path === c);
-    return !entry || entry.added < 1;
+    if (entry && entry.added >= 1) return false;
+    // A changelog moved within its service: the file that takes its place must gain more lines than the old one lost,
+    // so a pure move, or a copy that shrank the history, does not pass. The global changelog is never moved this way.
+    const dir = serviceDir(c);
+    if (!entry || dir === '') return true;
+    return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && serviceDir(f.path) === dir && f.added > entry.deleted);
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
@@ -152,7 +161,8 @@ function listChangelogs(base, head = 'HEAD') {
   const headFiles = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', head]).split('\0').filter(Boolean);
   const mergeBase = base ? git(['merge-base', base, head]).trim() : null;
   const baseFiles = mergeBase ? git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', mergeBase]).split('\0').filter(Boolean) : [];
-  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && !f.startsWith('templates/');
+  // A root CHANGELOG.md is not a P13 changelog (see GLOBAL_CHANGELOGS); only nested ones and docs/CHANGELOG.md count.
+  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && f !== 'CHANGELOG.md' && !f.startsWith('templates/');
   const headSet = new Set(headFiles);
   // A folder is live when any file lies beneath it, not only directly in it.
   const liveDirs = new Set();

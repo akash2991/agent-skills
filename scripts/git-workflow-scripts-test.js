@@ -324,7 +324,7 @@ test('a service removed by the PR is not required; a service that stays is, with
   const run = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
   run(['init', '-q', '-b', 'main']);
   const put = (f, body = 'x') => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), body); };
-  put('docs/CHANGELOG.md'); put('services/old/CHANGELOG.md'); put('services/old/a.ts'); put('services/api/docs/CHANGELOG.md'); put('services/api/a.ts');
+  put('docs/CHANGELOG.md'); put('CHANGELOG.md'); put('services/old/CHANGELOG.md'); put('services/old/a.ts'); put('services/api/docs/CHANGELOG.md'); put('services/api/a.ts');
   run(['add', '-A']); run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base']);
   run(['rm', '-q', '-r', 'services/old']); run(['add', '-A']);
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'head']);
@@ -364,4 +364,20 @@ test('any failed run on the head blocks the merge, even one a later run supersed
     { workflowName: 'ci', name: 'pr-rules', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:05:00Z' },
   ] };
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
+});
+
+test('deleting a live service changelog fails P13; a removed service changelog is not required', () => {
+  const live = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const deletedLive = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md'), live);
+  assert.match(deletedLive[0], /services\/api\/CHANGELOG\.md/);
+  // Moving a service changelog to docs/ (or a root one to docs/) passes when the new file gains the line.
+  const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved), []);
+  // a pure move of the same 9 lines, or a copy that keeps fewer lines, loses history and fails
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n9\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved).length, 1);
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n1\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved).length, 1);
+  // a root changelog never stands in for the global one
+  assert.strictEqual(check.checkChangelog(pn('2\t0\tCHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md', 'docs/CHANGELOG.md']).length, 1);
+  const removed = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/old/CHANGELOG.md\n0\t4\tservices/old/a.ts'), ['docs/CHANGELOG.md']);
+  assert.deepStrictEqual(removed, []);
 });
