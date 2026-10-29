@@ -58,6 +58,8 @@ function isApproved(view) {
     const login = r.author && r.author.login;
     if (!login || (view.author && login === view.author.login)) continue;
     if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
+    // Only people with a standing role in the repository (owner, member, collaborator) can approve; any other login is not a reviewer.
+    if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(r.authorAssociation)) continue;
     newest.set(login, { state: r.state, oid: r.commit && r.commit.oid });
   }
   const verdicts = [...newest.values()];
@@ -99,8 +101,18 @@ function main(argv) {
   // removed afterwards, once GitHub reports the PR merged, and only for origin's own non-fork branch.
   gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
   const after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state']));
-  if (after.state === 'MERGED' && !view.isCrossRepository) {
-    gh(['api', '--method', 'DELETE', `repos/${repo}/git/refs/heads/${view.headRefName}`]);
+  // 2: a merge queue only enqueues. Nothing is deleted until GitHub reports the PR merged.
+  if (after.state !== 'MERGED') {
+    console.error(`merge-pr: PR #${pr} is ${after.state}, not MERGED: it was queued or not merged. Nothing was deleted; check the queue, then run this again.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!view.isCrossRepository) {
+    try { gh(['api', '--method', 'DELETE', `repos/${repo}/git/refs/heads/${view.headRefName}`]); }
+    catch (err) {
+      // Already gone (for example GitHub's automatic head-branch deletion) is the outcome P7 asks for.
+      if (!/does not exist|Not Found|404|422/.test(String(err.stderr || err.message))) throw err;
+    }
   }
   // gh deletes the head branch only when it lives in the repository merged into; a fork's branch stays and P7 is not complete.
   if (view.isCrossRepository) {
@@ -112,7 +124,7 @@ function main(argv) {
     console.error(`merge-pr: local branch ${view.headRefName} not deleted (${String(err.stderr || err.message).trim()}); P7 is not complete: delete it by hand from the worktree that holds it`);
     process.exitCode = 1;
   }
-  console.log(`merged #${pr} with a merge commit; branch ${view.headRefName} deleted on the remote`);
+  console.log(`merged #${pr} with a merge commit; branch ${view.headRefName} ${view.isCrossRepository ? 'lives in the fork' : 'removed on the remote'}`);
 }
 
 if (require.main === module) main(process.argv.slice(2));

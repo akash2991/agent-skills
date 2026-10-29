@@ -202,7 +202,7 @@ test('only the newest run of each check counts: a re-run after a fix clears the 
 test('an approval counts from a reviewer other than the author, on the current head only', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('agent', 'APPROVED')] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED', 'h1')] }), false, 'approval of an older commit');
@@ -238,7 +238,7 @@ test('two workflows with a job of the same name are separate checks: a failing t
 test('a COMMENTED review is a reply, not a verdict: it neither approves nor overrides a request for changes', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head } });
+  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r1', 'COMMENTED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r2', 'CHANGES_REQUESTED'), rev('r2', 'COMMENTED')] }), false);
 });
@@ -307,7 +307,7 @@ test('a branch default with a trailing newline from git is still protected', () 
 test('a change request stays in force after a new push until its reviewer approves or dismisses it', () => {
   const author = { login: 'agent' };
   const h2 = 'h2';
-  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r2', 'APPROVED', h2)] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
@@ -366,4 +366,12 @@ test('a commit status and a check run with the same name are different checks', 
     { workflowName: 'ci', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
   ]);
   assert.strictEqual(runs.length, 2);
+});
+
+test('an approval counts only from a reviewer with a standing role in the repository', () => {
+  const author = { login: 'agent' };
+  const head = 'h2';
+  const rev = (login, state, association) => ({ author: { login }, state, commit: { oid: head }, authorAssociation: association });
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('stranger', 'APPROVED', 'NONE')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('teammate', 'APPROVED', 'COLLABORATOR')] }), true);
 });
