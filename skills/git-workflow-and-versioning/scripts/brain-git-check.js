@@ -147,11 +147,19 @@ function git(args) {
 // service still has files at the head. A removed or renamed service has nothing left to log, so its changelog is not
 // required. NUL-delimited output keeps non-ASCII names intact.
 function listChangelogs(base, head = 'HEAD') {
-  const headFiles = git(['ls-tree', '-r', '-z', '--name-only', head]).split('\0').filter(Boolean);
-  const baseFiles = base ? git(['ls-tree', '-r', '-z', '--name-only', base]).split('\0').filter(Boolean) : [];
+  // --full-tree: paths are root-relative from any directory, as the diff's are. The base is the merge base, so a
+  // changelog added to main after the branch forked is not required of the branch.
+  const headFiles = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', head]).split('\0').filter(Boolean);
+  const mergeBase = base ? git(['merge-base', base, head]).trim() : null;
+  const baseFiles = mergeBase ? git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', mergeBase]).split('\0').filter(Boolean) : [];
   const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && !f.startsWith('templates/');
   const headSet = new Set(headFiles);
-  const liveDirs = new Set(headFiles.map(f => f.split('/').slice(0, -1).join('/')));
+  // A folder is live when any file lies beneath it, not only directly in it.
+  const liveDirs = new Set();
+  for (const f of headFiles) {
+    const parts = f.split('/').slice(0, -1);
+    for (let i = 0; i <= parts.length; i++) liveDirs.add(parts.slice(0, i).join('/'));
+  }
   const onlyOnBase = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
   return [...headFiles.filter(isChangelog), ...onlyOnBase];
 }
