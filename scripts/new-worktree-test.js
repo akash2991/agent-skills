@@ -41,12 +41,12 @@ test('create and remove make a sibling worktree on a new branch', () => {
   run(['init', '-q', '-b', 'main']);
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
-  const out = execFileSync('node', [script, 'create', 'ENG-7-demo', '--persona', 'backend-engineer'], { cwd: repo, encoding: 'utf8' });
+  const out = execFileSync('node', [script, 'create', 'ENG-7-demo', '--owner', 'tester', '--persona', 'backend-engineer'], { cwd: repo, encoding: 'utf8' });
   assert.match(out, /export COMPOSE_PROJECT_NAME='eng-7-demo'/);
   assert.ok(fs.existsSync(path.join(parent, 'ENG-7-demo', '.git')));
   assert.strictEqual(run(['rev-parse', '--abbrev-ref', 'HEAD'], path.join(parent, 'ENG-7-demo')).trim(), 'ENG-7-demo');
   // from inside the worktree the main checkout is still found
-  execFileSync('node', [script, 'remove', 'ENG-7-demo'], { cwd: path.join(parent, 'ENG-7-demo'), encoding: 'utf8', stdio: 'pipe' }).toString();
+  execFileSync('node', [script, 'remove', 'ENG-7-demo', '--owner', 'tester'], { cwd: path.join(parent, 'ENG-7-demo'), encoding: 'utf8', stdio: 'pipe' }).toString();
   assert.ok(!fs.existsSync(path.join(parent, 'ENG-7-demo')));
   fs.rmSync(parent, { recursive: true, force: true });
 });
@@ -66,13 +66,13 @@ test('agents created one after another claim disjoint host ports', () => {
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
   const portsOf = out => out.split('\n').filter(l => /HOST_PORT_/.test(l)).map(l => l.split('=')[1].replace(/'/g, ''));
-  const a = portsOf(execFileSync('node', [script, 'create', 'ENG-8-a', '--persona', 'web-engineer', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
-  const b = portsOf(execFileSync('node', [script, 'create', 'ENG-9-b', '--persona', 'web-engineer', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
+  const a = portsOf(execFileSync('node', [script, 'create', 'ENG-8-a', '--owner', 'tester', '--persona', 'web-engineer', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
+  const b = portsOf(execFileSync('node', [script, 'create', 'ENG-9-b', '--owner', 'tester', '--persona', 'web-engineer', '--ports', '2'], { cwd: repo, encoding: 'utf8' }));
   assert.strictEqual(a.length, 2);
   assert.strictEqual(b.length, 2);
   assert.deepStrictEqual(a.filter(p => b.includes(p)), []);
-  execFileSync('node', [script, 'remove', 'ENG-8-a'], { cwd: repo, encoding: 'utf8' });
-  execFileSync('node', [script, 'remove', 'ENG-9-b'], { cwd: repo, encoding: 'utf8' });
+  execFileSync('node', [script, 'remove', 'ENG-8-a', '--owner', 'tester'], { cwd: repo, encoding: 'utf8' });
+  execFileSync('node', [script, 'remove', 'ENG-9-b', '--owner', 'tester'], { cwd: repo, encoding: 'utf8' });
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
@@ -98,8 +98,8 @@ test('running create again for the same ticket reuses the worktree', () => {
   run(['init', '-q', '-b', 'main']);
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
-  execFileSync('node', [script, 'create', 'ENG-11-again', '--persona', 'scout'], { cwd: repo, encoding: 'utf8' });
-  const again = execFileSync('node', [script, 'create', 'ENG-11-again', '--persona', 'scout'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  execFileSync('node', [script, 'create', 'ENG-11-again', '--owner', 'tester', '--persona', 'scout'], { cwd: repo, encoding: 'utf8' });
+  const again = execFileSync('node', [script, 'create', 'ENG-11-again', '--owner', 'tester', '--persona', 'scout'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   assert.match(again, /export AGENT_NAME='ENG-11-again \(scout\)'/);
   fs.rmSync(parent, { recursive: true, force: true });
 });
@@ -107,7 +107,7 @@ test('running create again for the same ticket reuses the worktree', () => {
 test('create needs a persona, which goes into the agent name', () => {
   const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
   for (const args of [[], ['--persona'], ['--persona', 'Backend Engineer']]) {
-    const r = require('child_process').spawnSync('node', [script, 'create', 'ENG-12-p', ...args, '--dry-run'], { encoding: 'utf8' });
+    const r = require('child_process').spawnSync('node', [script, 'create', 'ENG-12-p', '--owner', 'tester', ...args, '--dry-run'], { encoding: 'utf8' });
     assert.strictEqual(r.status, 2, args.join(' '));
     assert.match(r.stderr, /--persona/);
   }
@@ -154,5 +154,33 @@ test('remove works only on what the ledger holds for this owner, with a clean wo
   const ledger = JSON.parse(fs.readFileSync(path.join(repo, '.git', 'brain-env-ledger.json'), 'utf8'));
   assert.strictEqual(ledger['ENG-21-mine'], undefined);
 
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a second owner cannot take over an environment, reuse it, or read a corrupt ledger into an empty one', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'takeover-'));
+  const repo = path.join(parent, 'app');
+  const run = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  fs.mkdirSync(repo);
+  run(['init', '-q', '-b', 'main']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+  const node = args => spawnSync('node', [script, ...args], { cwd: repo, encoding: 'utf8' });
+
+  assert.strictEqual(node(['create', 'ENG-30-x', '--persona', 'be', '--owner', 'alice']).status, 0);
+  // another owner's create is refused, whether or not the directory exists
+  let r = node(['create', 'ENG-30-x', '--persona', 'be', '--owner', 'mallory']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /belongs to alice/);
+  // an owner is required
+  r = node(['create', 'ENG-31-y', '--persona', 'be']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /--owner <name> is required/);
+  // a corrupt ledger stops every command rather than reading as empty
+  fs.writeFileSync(path.join(repo, '.git', 'brain-env-ledger.json'), '{"ENG-30-x": ');
+  r = node(['remove', 'ENG-30-x', '--owner', 'alice']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /does not parse/);
+  assert.ok(fs.existsSync(path.join(parent, 'ENG-30-x')));
   fs.rmSync(parent, { recursive: true, force: true });
 });

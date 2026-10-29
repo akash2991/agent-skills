@@ -715,6 +715,12 @@
           "det",
           "scripts/run-evals.js",
           ""
+        ],
+        [
+          "Every convention rule ID is cited by a flow step",
+          "det",
+          "scripts/check-rule-coverage.js",
+          ""
         ]
       ]
     },

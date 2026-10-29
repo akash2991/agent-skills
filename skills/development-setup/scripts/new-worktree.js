@@ -83,8 +83,19 @@ function ledgerFile(root) {
   return path.join(path.resolve(root, git(['rev-parse', '--git-common-dir'], root)), 'brain-env-ledger.json');
 }
 
+// A missing ledger is empty. A ledger that exists but does not parse is an error: treating it as empty would make
+// every entry look "not in the ledger" and let the next write erase them.
 function readLedger(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (err) { if (err.code === 'ENOENT') return {}; throw err; }
+  try { return JSON.parse(text); } catch { throw new Error(`${file} does not parse; fix or restore it before creating or removing environments`); }
+}
+
+// Write to a temporary file and rename it over the ledger, so a crash leaves the old ledger or the new one, never half.
+function writeLedger(file, all) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(all, null, 2));
+  fs.renameSync(tmp, file);
 }
 
 function claimFile(root) {
@@ -109,15 +120,19 @@ async function withLock(file, fn) {
       let age;
       try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; } // released between the two calls
       if (age > 60000) { fs.rmSync(lock, { force: true }); continue; }
-      if (attempt > 600) throw new Error(`port claim file is locked: ${lock}`);
+      if (attempt > 600) throw new Error(`lock file is held by another run: ${lock}`);
       await new Promise(r => setTimeout(r, 100));
     }
   }
   try { return await fn(); } finally { fs.rmSync(lock, { force: true }); }
 }
 
-function defaultOwner() {
-  return process.env.AGENT_NAME || require('os').userInfo().username;
+// The owner is the name the agent declares with --owner on create and on remove. It guards against mistakes between
+// agents on one machine; it is not an authentication, since anyone who can run the script can type any name.
+function requireOwner(rest) {
+  const owner = optionValue(rest, '--owner');
+  if (!owner) throw new Error('--owner <name> is required: the same name on create and on remove');
+  return owner;
 }
 
 function optionValue(argv, flag) {
@@ -140,7 +155,7 @@ async function main(argv) {
   const p = plan(name, root);
   const dryRun = rest.includes('--dry-run');
   if (cmd === 'remove') {
-    const owner = optionValue(rest, '--owner') || defaultOwner();
+    const owner = requireOwner(rest);
     const ledger = ledgerFile(root);
     const entry = readLedger(ledger)[p.name];
     if (!entry) throw new Error(`${p.name} is not in the ledger: this script did not create it, so it is not removed`);
@@ -148,17 +163,22 @@ async function main(argv) {
     if (path.resolve(entry.worktree) !== path.resolve(p.worktree)) throw new Error(`ledger path ${entry.worktree} does not match ${p.worktree}`);
     const registered = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
     if (!registered) throw new Error(`${p.worktree} is not a worktree of this repository; refusing to remove it`);
-    const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree);
-    if (onBranch !== entry.branch) throw new Error(`${p.worktree} is on ${onBranch}, not ${entry.branch}; refusing to remove it`);
-    if (git(['status', '--porcelain', '--untracked-files=all'], p.worktree) !== '') {
-      throw new Error(`${p.worktree} has uncommitted or untracked changes; commit or stash them first, then remove`);
+    if (fs.existsSync(p.worktree)) {
+      const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree);
+      if (onBranch !== entry.branch) throw new Error(`${p.worktree} is on ${onBranch}, not ${entry.branch}; refusing to remove it`);
+      if (git(['status', '--porcelain', '--untracked-files=all'], p.worktree) !== '') {
+        throw new Error(`${p.worktree} has uncommitted or untracked changes; commit or stash them first, then remove`);
+      }
+      // No --force: git refuses a worktree with changes, and the branch is kept (a merged branch is deleted by its PR's cleanup).
+      git(['worktree', 'remove', p.worktree], root);
+    } else {
+      // The directory was deleted by hand: git only needs its record pruned, and the ledger and ports are released.
+      git(['worktree', 'prune'], root);
     }
-    // No --force: git refuses a worktree with changes, and the branch is kept (a merged branch is deleted by its PR's cleanup).
-    git(['worktree', 'remove', p.worktree], root);
     await withLock(ledger, () => {
       const all = readLedger(ledger);
       delete all[p.name];
-      fs.writeFileSync(ledger, JSON.stringify(all, null, 2));
+      writeLedger(ledger, all);
     });
     const file = claimFile(root);
     await withLock(file, () => {
@@ -169,6 +189,10 @@ async function main(argv) {
     console.log(`removed ${p.worktree}; branch ${entry.branch} kept`);
     return;
   }
+  // Refuse before anything is created: an owner is required, and an environment another owner holds is not taken over.
+  const declared = requireOwner(rest);
+  const existing = readLedger(ledgerFile(root))[p.name];
+  if (existing && existing.owner !== declared) throw new Error(`${p.name} belongs to ${existing.owner}, not ${declared}; refusing to take it over`);
   const base = optionValue(rest, '--base') || defaultBase(root, { fetch: !dryRun });
   const count = Number(optionValue(rest, '--ports') || 0);
   // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
@@ -190,7 +214,10 @@ async function main(argv) {
   if (dryRun) {
     console.error(`would run: git worktree add ${git(['branch', '--list', p.branch], root) ? '' : `-b ${p.branch} `}${p.worktree} ${base}`);
   } else if (fs.existsSync(p.worktree)) {
-    // Reuse only this repository's worktree on this branch; any other directory with the name is someone else's.
+    // Reuse only this repository's worktree on this branch, and only for the owner the ledger already holds. Reuse never
+    // takes ownership: a worktree the ledger does not know is not adopted.
+    const entry = readLedger(ledgerFile(root))[p.name];
+    if (!entry || entry.owner !== requireOwner(rest)) throw new Error(`${p.worktree} exists and is not an environment of this owner; refusing to reuse it`);
     const listed = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
     const onBranch = listed && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
     if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
@@ -214,11 +241,14 @@ async function main(argv) {
   }
   if (!dryRun) {
     const ledger = ledgerFile(root);
+    const owner = requireOwner(rest);
     await withLock(ledger, () => {
       const all = readLedger(ledger);
-      all[p.name] = { owner: optionValue(rest, '--owner') || defaultOwner(), branch: p.branch, worktree: p.worktree,
+      // An entry that already exists keeps its owner: create cannot take over another agent's environment.
+      if (all[p.name] && all[p.name].owner !== owner) throw new Error(`${p.name} belongs to ${all[p.name].owner}, not ${owner}; refusing to take it over`);
+      all[p.name] = { owner, branch: p.branch, worktree: p.worktree,
         ports, composeProject: p.composeProject, createdAt: new Date().toISOString() };
-      fs.writeFileSync(ledger, JSON.stringify(all, null, 2));
+      writeLedger(ledger, all);
     });
   }
   console.log(`export AGENT_NAME=${shellQuote(`${p.name} (${persona})`)}`);
