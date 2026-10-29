@@ -10,6 +10,7 @@ const check = require('../skills/git-workflow-and-versioning/scripts/brain-git-c
 const { mergeBlockers } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 const { install, MARKER } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
 const { checkCommitMessage } = check;
+const pn = text => check.parseNumstat(text.replace(/\n/g, '\0'));
 
 const GOOD = [
   'feat(login): add the login form [ENG-123]',
@@ -42,8 +43,8 @@ test('LINEAR_TEAM narrows the ticket pattern', () => {
 });
 
 test('a merge commit needs only the ticket id', () => {
-  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}), []);
-  assert.strictEqual(check.checkCommitMessage('Merge pull request #4', {}).length, 1);
+  assert.deepStrictEqual(check.checkCommitMessage('Merge pull request #4 [ENG-123]', {}, { mergeCommit: true }), []);
+  assert.strictEqual(check.checkCommitMessage('Merge pull request #4', {}, { mergeCommit: true }).length, 1);
 });
 
 test('branch names are <ticket>-<slug>', () => {
@@ -60,25 +61,25 @@ test('PR titles start with the ticket id', () => {
 });
 
 test('size counts changed lines and files, skipping lockfiles', () => {
-  const files = check.parseNumstat('300\t50\tsrc/a.ts\n5\t5\tpackage-lock.json\n-\t-\tlogo.png');
+  const files = pn('300\t50\tsrc/a.ts\n5\t5\tpackage-lock.json\n-\t-\tlogo.png');
   assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'logo.png']);
   assert.deepStrictEqual(check.checkSize(files, '', {}), []);
 });
 
 test('an oversized PR fails unless the body records an exception', () => {
-  const big = check.parseNumstat('401\t0\tsrc/a.ts');
+  const big = pn('401\t0\tsrc/a.ts');
   assert.strictEqual(check.checkSize(big, '', {}).length, 1);
   assert.deepStrictEqual(check.checkSize(big, 'Size-exception: one generated migration', {}), []);
   assert.strictEqual(check.checkSize(big, 'Size-exception:', {}).length, 1);
-  assert.strictEqual(check.checkSize(check.parseNumstat(Array(11).fill('1\t0\tx').map((l, i) => l + i).join('\n')), '', {}).length, 1);
+  assert.strictEqual(check.checkSize(pn(Array(11).fill('1\t0\tx').map((l, i) => l + i).join('\n')), '', {}).length, 1);
   assert.deepStrictEqual(check.checkSize(big, '', { BRAIN_PR_MAX_LINES: '500' }), []);
 });
 
 test('a changelog line is required in the global file and in the service it touches', () => {
   const all = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
-  assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tsrc/a.ts'), all).length, 1);
-  assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all).length, 1);
-  assert.deepStrictEqual(check.checkChangelog(check.parseNumstat('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tsrc/a.ts'), all).length, 1);
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all).length, 1);
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
 });
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
@@ -108,8 +109,8 @@ const { hookBody } = require('../skills/git-workflow-and-versioning/scripts/inst
 const { originRepo, latestRuns, isApproved } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 
 test('a deleted changelog does not satisfy P13; an added line does', () => {
-  assert.strictEqual(checkChangelog(numstat('0\t100\tdocs/CHANGELOG.md')).length, 1);
-  assert.deepStrictEqual(checkChangelog(numstat('2\t0\tdocs/CHANGELOG.md')), []);
+  assert.strictEqual(checkChangelog(pn('0\t100\tdocs/CHANGELOG.md')).length, 1);
+  assert.deepStrictEqual(checkChangelog(pn('2\t0\tdocs/CHANGELOG.md')), []);
 });
 
 test('pre-push judges the remote ref being updated, not the local name', () => {
@@ -145,9 +146,9 @@ test('a changelog is required in the global file and in each service the change 
   const all = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/web/CHANGELOG.md'];
   assert.deepStrictEqual(requiredChangelogs(['services/api/src/a.ts'], all).sort(), ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
   assert.deepStrictEqual(requiredChangelogs(['README.md'], all), ['docs/CHANGELOG.md']);
-  const onlyService = check.checkChangelog(check.parseNumstat('3\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all);
+  const onlyService = check.checkChangelog(pn('3\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all);
   assert.match(onlyService[0], /CHANGELOG\.md/);
-  assert.deepStrictEqual(check.checkChangelog(check.parseNumstat('1\t0\tdocs/CHANGELOG.md\n2\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n2\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
 });
 
 test('a release branch and main are not held to the branch name', () => {
@@ -209,7 +210,7 @@ test('an approval counts from a reviewer other than the author, on the current h
 });
 
 test('a repository with no changelog fails P13 rather than passing silently', () => {
-  assert.strictEqual(check.checkChangelog(check.parseNumstat('1\t0\tsrc/a.ts'), []).length, 1);
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tsrc/a.ts'), []).length, 1);
 });
 
 const { isPending } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
@@ -264,7 +265,7 @@ test('the hook accepts a local fixup or squash commit; CI does not, and an unsqu
 
 test('a comma-separated scope is accepted, and git merge subjects need no trailers but a ticket', () => {
   assert.deepStrictEqual(checkCommitMessage('fix(git-workflow,dev-setup,linear): x [ENG-1]\n\nModel: m\nThinking-effort: h\nHarness: c', {}), []);
-  assert.deepStrictEqual(checkCommitMessage('Merge pull request #4 from o/ENG-1 [ENG-1]', {}), []);
+  assert.deepStrictEqual(checkCommitMessage('Merge pull request #4 from o/ENG-1 [ENG-1]', {}, { mergeCommit: true }), []);
   assert.strictEqual(checkCommitMessage('Merge sort for reports [ENG-1]', {}).length, 4);
 });
 
@@ -291,12 +292,12 @@ test('a queued run is newer than any finished one, so the finished pass cannot h
 });
 
 test('a merge into the branch from the remote default branch needs no trailers, only the ticket', () => {
-  assert.deepStrictEqual(checkCommitMessage("Merge remote-tracking branch 'origin/main' into ENG-1-login", {}), []);
-  assert.ok(checkCommitMessage("Merge remote-tracking branch 'origin/main'", {}).length > 0);
+  assert.deepStrictEqual(checkCommitMessage("Merge remote-tracking branch 'origin/main' into ENG-1-login", {}, { mergeCommit: true }), []);
+  assert.ok(checkCommitMessage("Merge remote-tracking branch 'origin/main'", {}, { mergeCommit: true }).length > 0);
 });
 
 test('a repository with only service changelogs fails P13, and a service changelog does not stand in for the global one', () => {
-  assert.match(check.checkChangelog(check.parseNumstat('1\t0\tservices/api/CHANGELOG.md\n1\t0\tREADME.md'), ['services/api/CHANGELOG.md'])[0], /no global changelog/);
+  assert.match(check.checkChangelog(pn('1\t0\tservices/api/CHANGELOG.md\n1\t0\tREADME.md'), ['services/api/CHANGELOG.md'])[0], /no global changelog/);
 });
 
 test('a branch default with a trailing newline from git is still protected', () => {
@@ -314,8 +315,8 @@ test('a change request stays in force after a new push until its reviewer approv
 });
 
 test('a root CHANGELOG.md is not the global changelog: a generated root file never satisfies P13', () => {
-  assert.match(check.checkChangelog(check.parseNumstat('2\t0\tCHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md'])[0], /no global changelog \(docs\/CHANGELOG\.md\)/);
-  assert.strictEqual(check.checkChangelog(check.parseNumstat('2\t0\tdocs/CHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md', 'docs/CHANGELOG.md']).length, 0);
+  assert.match(check.checkChangelog(pn('2\t0\tCHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md'])[0], /no global changelog \(docs\/CHANGELOG\.md\)/);
+  assert.strictEqual(check.checkChangelog(pn('2\t0\tdocs/CHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md', 'docs/CHANGELOG.md']).length, 0);
 });
 
 test('a service changelog the PR deletes is still required, from the base branch list', () => {
@@ -323,4 +324,46 @@ test('a service changelog the PR deletes is still required, from the base branch
   const head = ['docs/CHANGELOG.md'];
   const req = check.requiredChangelogs(['services/api/src/a.ts'], [...new Set([...head, ...base])]);
   assert.deepStrictEqual(req.sort(), ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
+});
+
+const { listChangelogs } = check;
+const { latestRuns: lr } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+
+test('a service removed by the PR is not required; a service that stays is, with its docs/ changelog too', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-'));
+  const run = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  run(['init', '-q', '-b', 'main']);
+  const put = (f, body = 'x') => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), body); };
+  put('docs/CHANGELOG.md'); put('services/old/CHANGELOG.md'); put('services/old/a.ts'); put('services/api/docs/CHANGELOG.md'); put('services/api/a.ts');
+  run(['add', '-A']); run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base']);
+  run(['rm', '-q', '-r', 'services/old']); run(['add', '-A']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'head']);
+  const cwd = process.cwd(); process.chdir(dir);
+  try {
+    const found = listChangelogs('HEAD~1', 'HEAD').sort();
+    assert.deepStrictEqual(found, ['docs/CHANGELOG.md', 'services/api/docs/CHANGELOG.md']);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a changelog in a service docs/ folder is the one required for that service', () => {
+  assert.deepStrictEqual(check.requiredChangelogs(['services/api/src/a.ts'], ['docs/CHANGELOG.md', 'services/api/docs/CHANGELOG.md']).sort(),
+    ['docs/CHANGELOG.md', 'services/api/docs/CHANGELOG.md']);
+});
+
+test('a non-ASCII path is read as its real name from NUL-delimited output', () => {
+  const files = check.parseNumstat('2\t0\tservices/caf\u00e9/a.ts\0');
+  assert.strictEqual(files[0].path, 'services/caf\u00e9/a.ts');
+});
+
+test('a single-parent commit titled like a merge is held to the anatomy', () => {
+  const errors = checkCommitMessage("Merge branch 'ENG-1-work' into main", {}, { mergeCommit: false });
+  assert.ok(errors.length >= 4, errors.join('; '));
+});
+
+test('a commit status and a check run with the same name are different checks', () => {
+  const runs = lr([
+    { context: 'test', state: 'FAILURE', createdAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'ci', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
+  ]);
+  assert.strictEqual(runs.length, 2);
 });

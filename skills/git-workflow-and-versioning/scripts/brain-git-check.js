@@ -14,6 +14,7 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const TYPES = 'feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert';
 // git's own merge subjects: "Merge pull request #n ..." and "Merge branch ...". Anything else starting "Merge " is a commit.
@@ -28,7 +29,7 @@ function ticketSource(env = process.env) {
 
 // allowFixup is for the local commit-msg hook only: autosquash folds fixup!/squash! commits before a PR merges, and CI
 // (which runs without it) rejects any that are left unsquashed.
-function checkCommitMessage(raw, env = process.env, { allowFixup = false } = {}) {
+function checkCommitMessage(raw, env = process.env, { allowFixup = false, mergeCommit = false } = {}) {
   const message = raw.split(/\r?\n/).filter(l => !l.startsWith('#')).join('\n').trim();
   const ticket = ticketSource(env);
   const subject = message.split('\n')[0] || '';
@@ -38,7 +39,7 @@ function checkCommitMessage(raw, env = process.env, { allowFixup = false } = {})
   const errors = [];
   if (revert && !new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('revert commit: name the ticket id it belongs to (P2)');
   if (allowFixup && /^(fixup! |squash! )/.test(subject)) return [];
-  if (GIT_MERGE.test(subject)) {
+  if (mergeCommit && GIT_MERGE.test(subject)) {
     if (!new RegExp(`\\b${ticket}\\b`).test(message)) errors.push('merge commit: put the ticket id in the message (P15)');
     return errors;
   }
@@ -66,10 +67,11 @@ function checkPrTitle(title, env = process.env) {
   return [];
 }
 
-// numstat is the output of `git diff --numstat`: "<added>\t<deleted>\t<path>", binary files as "-\t-\t<path>".
+// numstat is the output of `git diff --numstat -z`: "<added>\t<deleted>\t<path>\0" per file, binary files "-\t-".
+// NUL-delimited output is never quoted, so a non-ASCII path arrives as the name it has.
 function parseNumstat(numstat) {
-  return numstat.split('\n').filter(Boolean).map(line => {
-    const [added, deleted, ...rest] = line.split('\t');
+  return numstat.split('\0').filter(Boolean).map(record => {
+    const [added, deleted, ...rest] = record.split('\t');
     return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
   }).filter(f => !LOCKFILES.test(f.path));
 }
@@ -97,8 +99,10 @@ function requiredChangelogs(changedPaths, allChangelogs) {
     if (CHANGELOG.test(p) || p.startsWith('templates/')) continue;
     const dir = p.split('/').slice(0, -1);
     while (dir.length) {
-      const candidate = [...dir, 'CHANGELOG.md'].join('/');
-      if (allChangelogs.includes(candidate)) { required.add(candidate); break; }
+      const here = [...dir, 'CHANGELOG.md'].join('/');
+      const inDocs = [...dir, 'docs', 'CHANGELOG.md'].join('/');
+      const found = [here, inDocs].find(c => allChangelogs.includes(c));
+      if (found) { required.add(found); break; }
       dir.pop();
     }
   }
@@ -139,14 +143,24 @@ function git(args) {
 }
 
 // Every CHANGELOG.md tracked in the repository; the PR's own checkout is the source of truth.
-// Every CHANGELOG.md the PR touches or could require: those in the checkout and those on the base branch. A changelog the
-// PR deletes is still on the base branch, so the service it belongs to still needs its entry (P13).
-// ':/' anchors the pattern at the repository root, so a run from a subdirectory sees the same paths as the diff.
-function listChangelogs(base) {
-  const here = git(['ls-files', '--full-name', '--', ':/*CHANGELOG.md']).split('\n');
-  const onBase = base ? git(['ls-tree', '-r', '--name-only', base]).split('\n') : [];
-  return [...new Set([...here, ...onBase.filter(f => /(^|\/)CHANGELOG\.md$/.test(f))])]
-    .filter(f => f && !f.startsWith('templates/'));
+// Every changelog the PR could require: those in the head tree, plus a changelog that exists only on the base while its
+// service still has files at the head. A removed or renamed service has nothing left to log, so its changelog is not
+// required. NUL-delimited output keeps non-ASCII names intact.
+function listChangelogs(base, head = 'HEAD') {
+  const headFiles = git(['ls-tree', '-r', '-z', '--name-only', head]).split('\0').filter(Boolean);
+  const baseFiles = base ? git(['ls-tree', '-r', '-z', '--name-only', base]).split('\0').filter(Boolean) : [];
+  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && !f.startsWith('templates/');
+  const headSet = new Set(headFiles);
+  const liveDirs = new Set(headFiles.map(f => f.split('/').slice(0, -1).join('/')));
+  const onlyOnBase = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
+  return [...headFiles.filter(isChangelog), ...onlyOnBase];
+}
+
+// The service directory a changelog belongs to: its folder, or the folder above docs/.
+function serviceDir(changelog) {
+  const parts = changelog.split('/').slice(0, -1);
+  if (parts[parts.length - 1] === 'docs') parts.pop();
+  return parts.join('/');
 }
 
 // The repository's default branch, as far as this checkout knows it. Pushes to it are refused like pushes to main.
@@ -170,7 +184,9 @@ function main(argv) {
   const [cmd, ...rest] = argv;
   if (cmd === 'commit-msg') {
     if (!rest[0]) { console.error('usage: commit-msg <message-file>'); process.exit(2); }
-    return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true }));
+    // A merge is in progress while MERGE_HEAD exists; only then is git's own merge subject exempt.
+    const mergeCommit = fs.existsSync(path.join(git(['rev-parse', '--git-dir']).trim(), 'MERGE_HEAD'));
+    return report(checkCommitMessage(fs.readFileSync(rest[0], 'utf8'), process.env, { allowFixup: true, mergeCommit }));
   }
   if (cmd === 'branch') {
     const name = rest[0] || git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
@@ -181,8 +197,10 @@ function main(argv) {
     if (!base) { console.error('usage: commits --base <ref> [--head <ref>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
     const errors = [];
-    for (const sha of git(['rev-list', `${base}..${head}`]).split('\n').filter(Boolean)) {
-      for (const e of checkCommitMessage(git(['log', '-1', '--format=%B', sha]))) errors.push(`${sha.slice(0, 8)}: ${e}`);
+    for (const line of git(['rev-list', '--parents', `${base}..${head}`]).split('\n').filter(Boolean)) {
+      const [sha, ...parents] = line.split(' ');
+      const mergeCommit = parents.length > 1;
+      for (const e of checkCommitMessage(git(['log', '-1', '--format=%B', sha]), process.env, { mergeCommit })) errors.push(`${sha.slice(0, 8)}: ${e}`);
     }
     return report(errors);
   }
@@ -193,12 +211,12 @@ function main(argv) {
     const base = optionValue(rest, '--base');
     if (!base) { console.error('usage: pr --base <ref> [--head <ref>] [--title <t>]'); process.exit(2); }
     const head = optionValue(rest, '--head') || 'HEAD';
-    const files = parseNumstat(git(['diff', '--numstat', '--no-renames', `${base}...${head}`]));
+    const files = parseNumstat(git(['diff', '--numstat', '-z', '--no-renames', `${base}...${head}`]));
     const body = process.env.PR_BODY || '';
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, listChangelogs(base)),
+      ...checkChangelog(files, listChangelogs(base, head)),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');
@@ -207,4 +225,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs };

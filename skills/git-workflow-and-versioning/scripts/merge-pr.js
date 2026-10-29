@@ -33,7 +33,8 @@ function originRepo() {
 function latestRuns(checks) {
   const byKey = new Map();
   for (const c of checks) {
-    const key = `${c.workflowName || ''}/${c.name || c.context}`;
+    // A commit status (`context`) and a check run (`name`, `workflowName`) are different providers: they never merge.
+    const key = c.context !== undefined && c.name === undefined ? `status:${c.context}` : `run:${c.workflowName || ''}/${c.name}`;
     // A run that has not started carries the zero time: it is newer than anything that finished.
     const raw = c.startedAt || c.createdAt || '';
     const when = !raw || raw.startsWith('0001-') ? Infinity : Date.parse(raw) || 0;
@@ -94,7 +95,13 @@ function main(argv) {
     process.exit(1);
   }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
-  gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--delete-branch', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
+  // No --delete-branch: a merge queue refuses that flag. The merge is pinned to the inspected head; the remote branch is
+  // removed afterwards, once GitHub reports the PR merged, and only for origin's own non-fork branch.
+  gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
+  const after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state']));
+  if (after.state === 'MERGED' && !view.isCrossRepository) {
+    gh(['api', '--method', 'DELETE', `repos/${repo}/git/refs/heads/${view.headRefName}`]);
+  }
   // gh deletes the head branch only when it lives in the repository merged into; a fork's branch stays and P7 is not complete.
   if (view.isCrossRepository) {
     console.error(`merge-pr: branch ${view.headRefName} lives in the fork and was not deleted; delete it in the fork (P7)`);
