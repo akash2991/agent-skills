@@ -94,18 +94,11 @@ function main(argv) {
   // Long-lived branches are never deleted: main, the default branch, and release/* (P16).
   const longLived = view.headRefName === 'main' || view.headRefName.startsWith('release/');
   if (!view.isCrossRepository && !longLived) {
-    // Delete only the commit that was merged: a branch that moved since the merge keeps its new commits.
-    let sha = null;
-    try { sha = JSON.parse(gh(['api', `repos/${repo}/git/ref/heads/${view.headRefName}`])).object.sha; }
-    catch (err) { if (!/does not exist|Not Found|404/.test(String(err.stderr || err.message))) throw err; }
-    if (sha && sha !== view.headRefOid) {
-      console.error(`merge-pr: ${view.headRefName} moved after the merge (${sha.slice(0, 8)}); it is kept`);
+    const outcome = deleteRemoteBranch(view.headRefName, view.headRefOid);
+    if (outcome === 'kept') {
+      console.error(`merge-pr: ${view.headRefName} moved after the merge; it is kept`);
       process.exitCode = 1;
       return;
-    }
-    if (sha) {
-      try { gh(['api', '--method', 'DELETE', `repos/${repo}/git/refs/heads/${view.headRefName}`]); }
-      catch (err) { if (!/does not exist|Not Found|404|422/.test(String(err.stderr || err.message))) throw err; }
     }
   }
   // gh deletes the head branch only when it lives in the repository merged into; a fork's branch stays and P7 is not complete.
@@ -129,4 +122,19 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { mergeBlockers, originRepo, isApproved, isPending };
+// Deletes origin's branch only while it is still at the commit that was merged. The lease is git's own check, so a push
+// that lands between the merge and the delete makes the delete refuse. Returns 'deleted', 'gone' (already removed, as
+// with GitHub's automatic head-branch deletion) or 'kept' (it moved).
+function deleteRemoteBranch(branch, mergedSha) {
+  if (!git(['ls-remote', '--heads', 'origin', `refs/heads/${branch}`]).trim()) return 'gone';
+  try {
+    git(['push', `--force-with-lease=refs/heads/${branch}:${mergedSha}`, 'origin', '--delete', `refs/heads/${branch}`]);
+    return 'deleted';
+  } catch (err) {
+    const text = String(err.stderr || err.message);
+    if (/stale info|rejected|failed to push/.test(text)) return 'kept';
+    throw err;
+  }
+}
+
+module.exports = { mergeBlockers, originRepo, isApproved, isPending, deleteRemoteBranch };
