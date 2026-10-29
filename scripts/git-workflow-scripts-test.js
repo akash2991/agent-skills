@@ -83,10 +83,12 @@ test('a changelog line is required in the global file and in the service it touc
 });
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
-  const ok = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  const approval = { author: { login: 'teammate' }, state: 'APPROVED', commit: { oid: 'h1' }, authorAssociation: 'MEMBER' };
+  const ok = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h1', author: { login: 'agent' }, reviews: [approval], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
-  assert.strictEqual(mergeBlockers({ ...ok, reviewDecision: 'REVIEW_REQUIRED' }).blockers.length, 1);
+  // approval comes from the reviews on this head, not from the repository's decision field
+  assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
   assert.deepStrictEqual(mergeBlockers({ ...ok, reviewDecision: null }, { reviewOptional: true }).blockers, []);
   assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
   assert.strictEqual(mergeBlockers({ ...ok, title: 'x', state: 'MERGED' }).blockers.length, 2);
@@ -106,7 +108,7 @@ test('hooks install once and never overwrite a foreign hook', () => {
 
 const { checkPushedRefs, checkChangelog, parseNumstat: numstat, ticketSource } = require('../skills/git-workflow-and-versioning/scripts/brain-git-check');
 const { hookBody } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
-const { originRepo, latestRuns, isApproved } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+const { originRepo, isApproved } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 
 test('a deleted changelog does not satisfy P13; an added line does', () => {
   assert.strictEqual(checkChangelog(pn('0\t100\tdocs/CHANGELOG.md')).length, 1);
@@ -189,20 +191,10 @@ test('merge-pr derives the repository from origin, not the default repository', 
   finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true }); }
 });
 
-test('only the newest run of each check counts: a re-run after a fix clears the old failure', () => {
-  const runs = latestRuns([
-    { name: 'pr-rules', conclusion: 'FAILURE', startedAt: '2026-10-26T10:00:00Z' },
-    { name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:05:00Z' },
-    { name: 'checks', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' },
-  ]);
-  assert.strictEqual(runs.length, 2);
-  assert.ok(runs.every(r => r.conclusion === 'SUCCESS'));
-});
-
 test('an approval counts from a reviewer other than the author, on the current head only', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('agent', 'APPROVED')] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED', 'h1')] }), false, 'approval of an older commit');
@@ -226,11 +218,10 @@ test('a run still in progress blocks the merge, even when an older run of the sa
 });
 
 test('two workflows with a job of the same name are separate checks: a failing test is not hidden', () => {
-  const runs = latestRuns([
+  const runs = [
     { workflowName: 'ci', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
     { workflowName: 'e2e', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
-  ]);
-  assert.strictEqual(runs.length, 2);
+  ];
   const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: runs };
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: test/);
 });
@@ -238,7 +229,7 @@ test('two workflows with a job of the same name are separate checks: a failing t
 test('a COMMENTED review is a reply, not a verdict: it neither approves nor overrides a request for changes', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head } });
+  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r1', 'COMMENTED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r2', 'CHANGES_REQUESTED'), rev('r2', 'COMMENTED')] }), false);
 });
@@ -307,7 +298,7 @@ test('a branch default with a trailing newline from git is still protected', () 
 test('a change request stays in force after a new push until its reviewer approves or dismisses it', () => {
   const author = { login: 'agent' };
   const h2 = 'h2';
-  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r2', 'APPROVED', h2)] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
@@ -327,7 +318,6 @@ test('a service changelog the PR deletes is still required, from the base branch
 });
 
 const { listChangelogs } = check;
-const { latestRuns: lr } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 
 test('a service removed by the PR is not required; a service that stays is, with its docs/ changelog too', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-'));
@@ -360,10 +350,18 @@ test('a single-parent commit titled like a merge is held to the anatomy', () => 
   assert.ok(errors.length >= 4, errors.join('; '));
 });
 
-test('a commit status and a check run with the same name are different checks', () => {
-  const runs = lr([
-    { context: 'test', state: 'FAILURE', createdAt: '2026-10-26T10:00:00Z' },
-    { workflowName: 'ci', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
-  ]);
-  assert.strictEqual(runs.length, 2);
+test('an approval counts only from a reviewer with a standing role in the repository', () => {
+  const author = { login: 'agent' };
+  const head = 'h2';
+  const rev = (login, state, association) => ({ author: { login }, state, commit: { oid: head }, authorAssociation: association });
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('stranger', 'APPROVED', 'NONE')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('teammate', 'APPROVED', 'COLLABORATOR')] }), true);
+});
+
+test('any failed run on the head blocks the merge, even one a later run superseded', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:05:00Z' },
+  ] };
+  assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
 });

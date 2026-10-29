@@ -29,8 +29,9 @@ function assertName(kind, name) {
 }
 
 function includeSource(file) {
-  // Dev-machine provisioning lives in infra/, which is never copied; local Terraform state and variables never ship.
-  return !/(^|[\\/])(\.DS_Store|mcp\.json|\.terraform|[^/\\]*\.tfstate(\.[^/\\]*)?|terraform\.tfvars)$/.test(file);
+  // Dev-machine provisioning lives in infra/, which is never copied; local
+  // dependencies, Terraform state and variables never ship in project bundles.
+  return !/(^|[\\/])(\.DS_Store|mcp\.json|node_modules|\.terraform|[^/\\]*\.tfstate(\.[^/\\]*)?|terraform\.tfvars)$/.test(file);
 }
 
 function copy(from, to) {
@@ -106,6 +107,7 @@ function buildBrain(options = {}) {
   }
   validateSourceTree(root, 'references');
   validateSourceTree(root, 'templates');
+  validateSourceTree(root, 'runtime/langfuse');
   for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example']) validateManagedRelPath(rel, 'source path');
   for (const dir of ['.claude/commands', '.gemini/commands', 'commands', '.pi/prompts', '.codex/prompts']) {
     for (const f of brainCommandFiles(root, dir)) validateManagedRelPath(`${dir}/${f}`, 'source path');
@@ -130,7 +132,7 @@ function buildBrain(options = {}) {
     throw err;
   }
 
-  for (const f of ['references', 'templates']) copy(path.join(root, f), path.join(out, f));
+  for (const f of ['references', 'templates', 'runtime/langfuse']) copy(path.join(root, f), path.join(out, f));
   copy(path.join(root, 'project', 'SOUL.md'), path.join(out, 'SOUL.md'));
   copy(path.join(root, 'project', '.env.example'), path.join(out, '.env.example'));
   const skillList = skills.map(s => `- \`skills/${s}/SKILL.md\``).join('\n');

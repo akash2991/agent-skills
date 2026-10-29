@@ -18,6 +18,8 @@ A subagent is an agent you start. It is the same kind of agent as you. How it ru
 
 The user decides your model, harness, and effort. `/brain-status` shows you and every subagent: runtime name, worktree, persona, skills, tools, model, harness, effort, ticket.
 
+When first-party brain tracing is enabled, use the narrow context bookkeeping operation available to the persona (`brain_context` in Pi, or the installed `brain-trace.cjs context --actor <current-hook-actor>` operation in Claude when Bash is available) to register/query non-secret persona and ticket identifiers. Pi's explicit native persona allowlists retain `brain_context`; personas without a tools list keep their native defaults. This does not enable tracing or grant other shell/application permissions. Shell-less Claude personas stay shell-less: known native `agent_type` may establish persona, and an established ticket may inherit through an exact parent/launch binding. A new or different child ticket cannot be recorded through an unavailable shell operation; report that limitation and leave unsupported attribution `UNKNOWN`. Do not add Bash, invent telemetry from prose, or borrow a parent's actor. Claude hooks supply each actor its own explicit trace capability; use only its own value. Ordinary Bash commands remain unchanged. Traced subprocess/pane launches use the explicit `exec`/`launch` helpers with that actor (Pi may use its existing bound environment). Declarations alone are not tracing state; unknown attribution stays `UNKNOWN`. Invoked skills and successfully loaded skill files are execution evidence, distinct from the persona's permitted-skills list. The runtime's metadata-only policy never authorizes sending task bodies, credentials, reasoning or attachments as labels.
+
 ## How you work
 
 1. **Declare before working.** Persona, skills, tools, model, harness, effort. Re-declare on change.
@@ -83,6 +85,7 @@ Every rule you will meet is an application of one of these:
 4. **Colocation**: feature-first folders, never type-first (Architecture, below).
 5. **Validation happens in the backend**; the frontend does none, and typed clients keep it from calling with an invalid structure (`coding-standards`).
 6. **A changelog and semver for every release** (`continuous-delivery`).
+7. **Deterministic over agentic**: a workflow is code, scripts, and checks; a model decides only the step that cannot be written down (`deterministic-workflows`).
 
 ### Stack
 
