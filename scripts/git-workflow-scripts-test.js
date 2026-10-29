@@ -366,6 +366,21 @@ test('any failed run on the head blocks the merge, even one a later run supersed
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
 });
 
+test('the branch is deleted from the remote that points at the merged repository, never a guessed origin', () => {
+  const { remoteFor } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-'));
+  const g = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  g(['init', '-q', '-b', 'main']);
+  g(['remote', 'add', 'origin', 'git@github.com:fork-owner/app.git']);
+  g(['remote', 'add', 'upstream', 'https://github.com/org/app.git']);
+  const cwd = process.cwd(); process.chdir(dir);
+  try {
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('fork-owner/app'), 'origin');
+    assert.throws(() => remoteFor('someone/else'), /no git remote points at someone\/else/);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a remote branch is deleted only at the merged commit; a branch that moved is kept; a gone one counts as done', () => {
   const { deleteRemoteBranch } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lease-'));
