@@ -89,7 +89,7 @@ function main(argv) {
   }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
   // No --delete-branch: a merge queue refuses that flag. The merge is pinned to the inspected head; the remote branch is
-  // removed afterwards, once GitHub reports the PR merged, and only for origin's own non-fork branch.
+  // removed afterwards, once GitHub reports the PR merged, and only for a non-fork branch on the remote that fetches and pushes this repository.
   gh(['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', view.headRefOid, '--subject', `Merge pull request #${pr} [${ticket}]`]);
   const after = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'state']));
   // 2: a merge queue only enqueues. Nothing is deleted until GitHub reports the PR merged.
@@ -133,9 +133,6 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-// Deletes origin's branch only while it is still at the commit that was merged. The lease is git's own check, so a push
-// that lands between the merge and the delete makes the delete refuse. Returns 'deleted', 'gone' (already removed, as
-// with GitHub's automatic head-branch deletion) or 'kept' (it moved).
 // The remote whose fetch and push URLs both name the repository merged into (a remote can fetch from one repository
 // and push to another). Compared case-insensitively, on github.com only (an SSH alias or GitHub Enterprise host is
 // refused). Refuses when none does, so a branch is never deleted from the wrong repository.
@@ -151,7 +148,7 @@ function remoteFor(repo) {
     const pushes = git(['remote', 'get-url', '--push', '--all', name]).split('\n').filter(Boolean).map(nameOf);
     if (fetch === want && pushes.length && pushes.every(p => p === want)) return name;
   }
-  throw new Error(`no git remote fetches and pushes ${repo}; add one, or delete the branch by hand (P7)`);
+  throw new Error(`no git remote fetches and pushes ${repo}; nothing was merged: add a remote for github.com/${repo} and run this again`);
 }
 
 // Deletes the remote branch only while it is still at the commit that was merged. The lease is git's own check, so a

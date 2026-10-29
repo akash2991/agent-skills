@@ -384,7 +384,7 @@ test('the branch is deleted from the remote that points at the merged repository
     g(['remote', 'set-url', '--push', 'split', 'https://github.com/someone/fork.git']);
     assert.strictEqual(remoteFor('org/app'), 'upstream');
     assert.strictEqual(remoteFor('ORG/App'), 'upstream');
-    assert.throws(() => remoteFor('someone/else'), /no git remote fetches and pushes someone\/else/);
+    assert.throws(() => remoteFor('someone/else'), /no git remote fetches and pushes someone\/else; nothing was merged/);
   } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
