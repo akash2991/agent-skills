@@ -121,7 +121,9 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
   const required = [...new Set([...requiredChangelogs(changed, allChangelogs), ...touched])];
   const missing = required.filter(c => {
     const entry = files.find(f => f.path === c);
-    return !entry || entry.added < 1;
+    if (entry && entry.added >= 1) return false;
+    // A changelog moved within its service (deleted here, while the same service's new changelog gains the line) is satisfied.
+    return !files.some(f => f.added >= 1 && f.path !== c && allChangelogs.includes(f.path) && serviceDir(f.path) === serviceDir(c));
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
@@ -156,7 +158,8 @@ function listChangelogs(base, head = 'HEAD') {
   const headFiles = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', head]).split('\0').filter(Boolean);
   const mergeBase = base ? git(['merge-base', base, head]).trim() : null;
   const baseFiles = mergeBase ? git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', mergeBase]).split('\0').filter(Boolean) : [];
-  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && !f.startsWith('templates/');
+  // A root CHANGELOG.md is not a P13 changelog (see GLOBAL_CHANGELOGS); only nested ones and docs/CHANGELOG.md count.
+  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && f !== 'CHANGELOG.md' && !f.startsWith('templates/');
   const headSet = new Set(headFiles);
   // A folder is live when any file lies beneath it, not only directly in it.
   const liveDirs = new Set();
