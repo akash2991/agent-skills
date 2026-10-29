@@ -25,6 +25,11 @@ const WRITE = {
   pi: ['edit', 'write'],
 };
 
+// Pi's tracing extension exposes this metadata-only bookkeeping tool. It is a
+// harness capability exception, not permission to read or write application
+// data or use a shell. Pi ignores the name when the extension is not loaded.
+const PI_CONTEXT = 'brain_context';
+
 // Linear's read tools, as its MCP server names them.
 const LINEAR_READ = [
   'extract_images', 'get_agent_skill', 'get_attachment', 'get_diff', 'get_diff_threads', 'get_document',
@@ -95,6 +100,7 @@ function nativeTools(tools, harness) {
   const readOnly = labels.some(l => LABELS[l].readOnly);
   const out = [...READ[harness], ...(readOnly ? [] : WRITE[harness])];
   for (const label of labels) out.push(...(LABELS[label][harness] || []));
+  if (harness === 'pi') out.push(PI_CONTEXT);
   return [...new Set(out)];
 }
 
@@ -108,6 +114,8 @@ function nativePersona(source, harness) {
   if (!match) return content;
   const lines = match[1].split('\n');
   const { tools, skills } = parseFrontmatter(content);
+  // No tools line means the native default loadout, not an empty allowlist.
+  // Preserve it: adding a context-only list would remove application tools.
   if (tools === undefined) return content;
   // One `key: value` per line: a wrapped value would be read in part and
   // its continuation left behind in the copy.

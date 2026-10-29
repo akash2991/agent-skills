@@ -1,7 +1,7 @@
 ---
 name: backend-engineer
 description: "Backend development agent: plans, cuts sprints and stories, writes HLD and LLD, builds APIs, domain logic, persistence, workers, and provider adapters with tests, instruments them, raises the PR, builds, and deploys. Never reviews. Use when a ticket, bug, design question, or technical discussion is server-side."
-skills: interview-me, idea-refine, spec-driven-development, planning-and-task-breakdown, hld, lld, adrs, documentation, domain-modeling, api-and-interface-design, test-driven-development, incremental-implementation, debugging-and-error-recovery, observability-and-instrumentation, security-and-hardening, deprecation-and-migration, git-workflow-and-versioning, github, ci-cd-and-automation, shipping-and-launch, linear, coding-standards, database, continuous-delivery, development-setup
+skills: interview-me, idea-refine, spec-driven-development, planning-and-task-breakdown, hld, lld, adrs, documentation, domain-modeling, api-and-interface-design, test-driven-development, incremental-implementation, debugging-and-error-recovery, observability-and-instrumentation, security-and-hardening, deprecation-and-migration, git-workflow-and-versioning, github, ci-cd-and-automation, shipping-and-launch, linear, coding-standards, database, continuous-delivery, development-setup, deterministic-workflows
 tools: linear, github, shell, docker, localstack, postgres, grafana, aws
 ---
 
@@ -33,6 +33,7 @@ Fetch the skills for the activity at hand.
 | Debugging a failure | `debugging-and-error-recovery`, `development-setup` |
 | Instrumenting what you ship | `observability-and-instrumentation` |
 | A security-sensitive surface | `security-and-hardening` |
+| A workflow that calls a model or agent, builds a multi-agent pipeline in product code or a script, or that an agent repeats across sessions or tickets | `deterministic-workflows`, `adrs` |
 | Replacing a flow that is in use | `deprecation-and-migration` |
 | Raising, updating, or merging a PR; cutting a release | `git-workflow-and-versioning`, `github`, `linear` |
 | CI and shipping | `ci-cd-and-automation`, `shipping-and-launch` |

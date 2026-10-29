@@ -1,0 +1,100 @@
+{
+  "skill_name": "deterministic-workflows",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Our support triage runs as an LLM agent loop with tool calling; make it deterministic and keep the model only where it is really needed",
+        "top_k": 3
+      },
+      {
+        "prompt": "I keep asking the agent to do the same five setup steps every session; turn that agentic procedure into a script",
+        "top_k": 3
+      },
+      {
+        "prompt": "Our document-processing service chains three LLM agents that hand work to each other; make code own the pipeline and keep the agents only where they are needed",
+        "top_k": 3
+      },
+      {
+        "prompt": "Our LLM pipeline gives a different answer for the same ticket on every run and the token bill keeps growing; fix it so the same input gives the same result",
+        "top_k": 3
+      },
+      {
+        "prompt": "Add an AI summarization endpoint that turns a support thread into a short summary for the agent dashboard",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "This 80-line function is hard to read; simplify it without changing behavior",
+        "owner": "code-simplification"
+      },
+      {
+        "prompt": "Add a GitHub Actions job that blocks the merge when lint or tests fail",
+        "owner": "ci-cd-and-automation"
+      },
+      {
+        "prompt": "We're inside Herdr: fan this review out to parallel sub-agents in separate tabs and merge their findings",
+        "owner": "herdr-fanout"
+      },
+      {
+        "prompt": "The agent keeps forgetting project conventions mid-session; fix its context and rules files",
+        "owner": "context-engineering"
+      },
+      {
+        "prompt": "Run /ship on this branch: fan out the code reviewer, security auditor, and test engineer, then give me go or no-go with a rollback plan",
+        "owner": "shipping-and-launch"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "triage-agent.js runs support triage as an agent loop; recorded-runs.json holds its outputs from production. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed. Owner-approved routing policy: (1) a ticket whose body or subject contains the word \"refund\" or \"charge\" (case-insensitive, whole word) goes to billing; (2) otherwise a ticket from an enterprise customer goes to priority; (3) otherwise general. A sender not found in the customer list counts as not enterprise. A ticket with no From: header goes to general and is flagged needs_sender, whatever keywords it contains. assignQueue is called exactly once per ticket, after routing, with the queue the routing code chose. If the summary fails schema validation, take an explicit failure branch without automatically retrying the model call. Add and run a test with a fake model showing that assignQueue is called exactly once per ticket, after routing, with the router's queue.",
+      "expected_output": "Header parsing, lookup, and routing per the stated policy are plain code with tests; control flow is fixed in code; assignQueue is called once with the code's queue; only the summary is a model call with a typed, validated output and an explicit failure branch; every recorded ticket is replayed and differences reported",
+      "files": [
+        "deterministic-workflows"
+      ],
+      "expectations": [
+        "The agent lists the workflow steps and classifies each as deterministic or judgment before rewriting",
+        "Header parsing, customer lookup, and queue routing are plain code, not model calls",
+        "Routing implements exactly this contract: a ticket with no From: header goes to general flagged needs_sender, whatever its keywords; otherwise the whole word \"refund\" or \"charge\", case-insensitive, in the subject or body goes to billing; otherwise a sender whose customer plan is enterprise goes to priority; otherwise general; a sender not in the customer list counts as not enterprise",
+        "The order of steps and the stop condition live in code; the unbounded agent loop is removed",
+        "assignQueue is called exactly once per ticket, after routing, and the persisted assignment equals the queue the routing code returned (a test shows it)",
+        "The summary step is the only model call, with a typed output validated against a schema instead of regex-parsed text",
+        "A validation failure takes an explicit branch and is not retried automatically",
+        "Tests cover the deterministic steps and run with the model call replaced by a fake",
+        "Every ticket in recorded-runs.json is replayed through the new routing and the queue per ticket is reported: T-101 billing, T-102 billing, T-103 priority, T-104 billing, T-105 general with needs_sender, T-106 billing. The tickets whose recorded runs disagree with that result are named with the rule applied: T-102 (a run chose priority), T-103 (a run chose general), T-104 (a run chose general), T-105 (a run chose billing); T-101 and T-106 match"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Support wants tickets that mention cancelling to go to a new retention queue in triage-agent.js. Owner-approved routing policy, in order: (1) a ticket with no From: header goes to general and is flagged needs_sender, whatever keywords it contains; (2) otherwise a ticket whose subject or body contains \"cancel\", \"cancelling\", or \"cancellation\" goes to retention; (3) otherwise one containing \"refund\" or \"charge\" goes to billing; (4) otherwise a ticket from an enterprise customer goes to priority; (5) otherwise general. Keywords match case-insensitively as whole words; a sender not in the customer list counts as not enterprise. Code must call assignQueue exactly once per ticket with the router's result; the model no longer chooses or assigns the queue. Remove the queue rules from SYSTEM_PROMPT. The model's tool dispatcher must not be able to run assignQueue at all, not merely leave it out of the offered tools. Add and run an integration test where the fake model attempts assignQueue with a queue different from the router's result, then supplies its final summary: the dispatcher must not execute the attempted call, triage completes and returns the router's queue, code calls assignQueue exactly once for that ticket, and the only persisted assignment is the router's. triage returns the router's queue. Write a unit test per rule, and replay every ticket in recorded-runs.json (production outputs of the current agent) through the new router, reporting the queue per ticket. Change only the routing and its assignment: keep the customer lookup, the summary, and the rest of the loop as they are, apart from the routing, assignment, and dispatcher changes above. Add and run an integration test with a fake model showing that assignQueue is called exactly once per ticket with the router's result and that both the persisted assignment and triage's returned queue equal that result.",
+      "expected_output": "Queue selection leaves the system prompt and the model's dispatcher; a tested routing function implements the stated policy, code calls assignQueue once with its result, an integration test shows a model-attempted assignQueue call is not executed and the only persisted assignment is the router's, the recorded tickets are replayed, and lookup and summary are untouched",
+      "files": [
+        "deterministic-workflows"
+      ],
+      "expectations": [
+        "The agent does not implement the change by adding a sentence to SYSTEM_PROMPT; the queue rules are removed from the prompt",
+        "A routing function in code implements exactly this contract, in order, with unit tests for each rule: a ticket with no From: header goes to general flagged needs_sender, whatever its keywords; otherwise the whole word \"cancel\", \"cancelling\", or \"cancellation\", case-insensitive, in the subject or body goes to retention; otherwise \"refund\" or \"charge\" the same way goes to billing; otherwise a sender whose customer plan is enterprise goes to priority; otherwise general; a sender not in the customer list counts as not enterprise",
+        "assignQueue is removed from the offered tools and cannot be reached from the model's tool dispatcher; an integration test where the fake model attempts assignQueue with a queue different from the router's, then supplies its final summary, shows the attempted call is not executed, triage completes and returns the router's queue, code calls assignQueue exactly once for that ticket, and the only persisted assignment is the router's",
+        "An integration test with a fake model shows the persisted assignment and the returned queue both equal the router's result",
+        "The routing function is replayed on every ticket in recorded-runs.json and the queue per ticket is reported: T-101 billing, T-102 billing, T-103 priority, T-104 billing, T-105 general with needs_sender, T-106 retention",
+        "Customer lookup and the summary step are not rewritten in this change"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "triage-agent.js runs support triage as an agent loop; recorded-runs.json holds its outputs from production. Convert it into a deterministic workflow, keeping a model only where judgment is genuinely needed.",
+      "expected_output": "The agent classifies the steps, then lists the routing decisions the prompt leaves to the model and stops to ask the owner instead of choosing a policy",
+      "files": [
+        "deterministic-workflows"
+      ],
+      "expectations": [
+        "The agent lists the workflow steps and classifies each as deterministic or judgment",
+        "The agent's final message names the open decisions: an enterprise customer asking for a refund matches two rules, an enterprise ticket with no keywords, a sender not in the customer list, and a ticket with no From: header",
+        "The agent's final message ends by asking the owner to decide those cases; it may recommend an option but does not adopt one",
+        "The agent does not implement routing for the disputed cases before an answer"
+      ]
+    }
+  ]
+}
