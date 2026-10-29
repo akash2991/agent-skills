@@ -365,3 +365,11 @@ test('any failed run on the head blocks the merge, even one a later run supersed
   ] };
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
 });
+
+test('deleting a live service changelog fails P13; a removed service changelog is not required', () => {
+  const live = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const deletedLive = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), live);
+  assert.match(deletedLive[0], /services\/api\/CHANGELOG\.md/);
+  const removed = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/old/CHANGELOG.md\n0\t4\tservices/old/a.ts'), ['docs/CHANGELOG.md']);
+  assert.deepStrictEqual(removed, []);
+});

@@ -115,7 +115,11 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
   }
   const changed = files.map(f => f.path);
-  const missing = requiredChangelogs(changed, allChangelogs).filter(c => {
+  // A changelog the PR touches must gain a line, including one it deletes while its service stays (listChangelogs
+  // gives only live services' changelogs, so a removed service's deleted changelog is not in the list).
+  const touched = allChangelogs.filter(c => changed.includes(c));
+  const required = [...new Set([...requiredChangelogs(changed, allChangelogs), ...touched])];
+  const missing = required.filter(c => {
     const entry = files.find(f => f.path === c);
     return !entry || entry.added < 1;
   });
