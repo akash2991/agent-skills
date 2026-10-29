@@ -375,3 +375,11 @@ test('an approval counts only from a reviewer with a standing role in the reposi
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('stranger', 'APPROVED', 'NONE')] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('teammate', 'APPROVED', 'COLLABORATOR')] }), true);
 });
+
+test('any failed run on the head blocks the merge, even one a later run superseded', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:05:00Z' },
+  ] };
+  assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
+});

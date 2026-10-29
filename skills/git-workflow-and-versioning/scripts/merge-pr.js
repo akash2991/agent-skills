@@ -74,7 +74,9 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   if (view.state !== 'OPEN') blockers.push(`PR is ${view.state}, not OPEN`);
   const ticket = new RegExp(`^(${ticketSource(env)})(:|\\s)`).exec(view.title || '');
   if (!ticket) blockers.push('PR title does not start with the ticket id (P10)');
-  const checks = latestRuns(view.statusCheckRollup || []);
+  // Every run on the head counts. A failed run blocks the merge until a new commit replaces the head: a re-run of the
+  // same commit that now passes does not clear it. A run still in progress blocks too.
+  const checks = view.statusCheckRollup || [];
   if (!checks.length) blockers.push('no CI checks have reported on this head; wait for them (P12)');
   const pending = checks.filter(isPending);
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
