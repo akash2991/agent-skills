@@ -81,7 +81,12 @@ function main(argv) {
     process.exit(1);
   }
   // The remote is resolved before the merge: if none points at this repository, nothing is merged and nothing is deleted.
-  const remote = view.isCrossRepository ? null : remoteFor(repo);
+  // Long-lived branches and fork branches are never deleted here, so they need no remote.
+  const longLivedHead = view.headRefName === 'main' || view.headRefName.startsWith('release/');
+  let remote = null;
+  if (!view.isCrossRepository && !longLivedHead) {
+    try { remote = remoteFor(repo); } catch (err) { console.error(`merge-pr: ${err.message}`); process.exit(1); }
+  }
   // Merge only the head that was inspected: a push after the view fails the merge instead of merging unchecked code.
   // No --delete-branch: a merge queue refuses that flag. The merge is pinned to the inspected head; the remote branch is
   // removed afterwards, once GitHub reports the PR merged, and only for origin's own non-fork branch.
@@ -94,8 +99,7 @@ function main(argv) {
     return;
   }
   // Long-lived branches are never deleted: main, the default branch, and release/* (P16).
-  const longLived = view.headRefName === 'main' || view.headRefName.startsWith('release/');
-  if (!view.isCrossRepository && !longLived) {
+  if (!view.isCrossRepository && !longLivedHead) {
     let outcome;
     try { outcome = deleteRemoteBranch(view.headRefName, view.headRefOid, remote); } catch (err) {
       console.error(`merge-pr: ${err.message}; P7 is not complete: delete ${view.headRefName} on the remote by hand`);
@@ -114,7 +118,7 @@ function main(argv) {
     process.exitCode = 1;
   }
   // The local branch may be checked out in another worktree (P6) or hold unpushed work: report it, do not hide it.
-  if (!longLived) {
+  if (!longLivedHead) {
     try { git(['branch', '-d', view.headRefName]); } catch (err) {
       const text = String(err.stderr || err.message);
       // No local branch at all (merged from another checkout) is already the outcome P7 asks for.
@@ -132,32 +136,48 @@ if (require.main === module) main(process.argv.slice(2));
 // Deletes origin's branch only while it is still at the commit that was merged. The lease is git's own check, so a push
 // that lands between the merge and the delete makes the delete refuse. Returns 'deleted', 'gone' (already removed, as
 // with GitHub's automatic head-branch deletion) or 'kept' (it moved).
-// The remote that points at the repository merged into: a clone may keep it under another name than origin, and a
-// fork-first clone has its own origin. Refuses when none does, so a branch is never deleted from the wrong repository.
+// The remote whose fetch and push URLs both name the repository merged into (a remote can fetch from one repository
+// and push to another). Compared case-insensitively, on a GitHub host only. Refuses when none does, so a branch is never
+// deleted from the wrong repository.
 function remoteFor(repo) {
-  for (const name of git(['remote']).split('\n').filter(Boolean)) {
-    const url = git(['remote', 'get-url', name]).trim();
+  const want = repo.toLowerCase();
+  const nameOf = url => {
+    const host = (url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '';
     const m = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
-    if (m && `${m[1]}/${m[2]}` === repo) return name;
+    return m && /github/i.test(host) ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+  };
+  for (const name of git(['remote']).split('\n').filter(Boolean)) {
+    const fetch = nameOf(git(['remote', 'get-url', name]).trim());
+    const pushes = git(['remote', 'get-url', '--push', '--all', name]).split('\n').filter(Boolean).map(nameOf);
+    if (fetch === want && pushes.length && pushes.every(p => p === want)) return name;
   }
-  throw new Error(`no git remote points at ${repo}; add one, or delete the branch by hand (P7)`);
+  throw new Error(`no git remote fetches and pushes ${repo}; add one, or delete the branch by hand (P7)`);
 }
 
 // Deletes the remote branch only while it is still at the commit that was merged. The lease is git's own check, so a
-// push that lands between the merge and the delete makes the delete refuse ('kept'). A branch already gone is done.
+// push that lands between the merge and the delete makes the delete refuse. Refused on a stale lease, the branch is
+// re-listed: gone (removed by GitHub meanwhile) counts as done; at another commit it is kept; otherwise it throws.
 // Any other failure is thrown with git's own message. The pre-push hook is skipped: a deletion has nothing for it to check.
 function deleteRemoteBranch(branch, mergedSha, remote = 'origin') {
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   const ref = `refs/heads/${branch}`;
-  const listed = execFileSync('git', ['ls-remote', '--heads', remote, ref], { encoding: 'utf8', env }).trim();
-  if (!listed) return 'gone';
+  const listedSha = () => {
+    const out = execFileSync('git', ['ls-remote', '--heads', remote, ref], { encoding: 'utf8', env }).trim();
+    return out ? out.split(/\s/)[0] : '';
+  };
+  if (!listedSha()) return 'gone';
   try {
     execFileSync('git', ['push', '--no-verify', `--force-with-lease=${ref}:${mergedSha}`, remote, '--delete', ref], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     return 'deleted';
   } catch (err) {
     const text = String(err.stderr || err.message).trim();
-    if (/stale info/.test(text)) return 'kept';
     if (/remote ref does not exist/.test(text)) return 'gone';
+    if (/stale info/.test(text)) {
+      const now = listedSha();
+      if (!now) return 'gone';
+      if (now !== mergedSha) return 'kept';
+      throw new Error(`git refused to delete ${branch} although it is at the merged commit: ${text}`);
+    }
     throw new Error(`git push --delete ${branch} failed: ${text}`);
   }
 }
