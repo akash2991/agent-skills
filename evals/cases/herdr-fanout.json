@@ -43,6 +43,19 @@
         "Prompts without --wait, then waits and reads each agent by pane id",
         "Synthesizes and de-duplicates the findings, verifies claims before relaying them, and closes only tabs it created"
       ]
+    },
+    {
+      "id": 2,
+      "kind": "dialogue",
+      "prompt": "HERDR_ENV=1 and first-party brain metadata-only tracing is enabled. Start approved Pi and Claude agents in their existing old-base worktree panes. Someone suggests exporting TRACEPARENT in the parent terminal is enough to get one Langfuse tree. Model, harness, effort, persona and tickets have already been approved.",
+      "expected_output": "Uses the installed exact-lineage helper for the supported harnesses and explicit owned idle panes/cwds, passes only approved non-secret identifiers, and verifies actual child tracing instead of claiming daemon environment inheritance",
+      "expectations": [
+        "Does not assume parent-terminal environment reaches daemon-created panes or use ambient TRACEPARENT as proof",
+        "Uses brain-trace.cjs launch with exact pane, harness, cwd, native model/effort and known persona/ticket identifiers",
+        "Does not pass credentials or task bodies as tracing labels or change saved trust decisions",
+        "Keeps adapter/native readiness distinct from Langfuse ingestion and does not blindly relaunch after unconfirmed startup",
+        "Notes that stock Pi old-base worktrees require the explicitly installed project-gated bootstrap, without claiming support for unrelated harnesses"
+      ]
     }
   ]
 }
