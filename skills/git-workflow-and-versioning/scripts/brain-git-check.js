@@ -72,7 +72,7 @@ function checkPrTitle(title, env = process.env) {
 function parseNumstat(numstat) {
   return numstat.split('\0').filter(Boolean).map(record => {
     const [added, deleted, ...rest] = record.split('\t');
-    return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
+    return { path: rest.join('\t'), added: Number(added) || 0, deleted: Number(deleted) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
   }).filter(f => !LOCKFILES.test(f.path));
 }
 
@@ -122,8 +122,11 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
   const missing = required.filter(c => {
     const entry = files.find(f => f.path === c);
     if (entry && entry.added >= 1) return false;
-    // A changelog moved within its service (deleted here, while the same service's new changelog gains the line) is satisfied.
-    return !files.some(f => f.added >= 1 && f.path !== c && allChangelogs.includes(f.path) && serviceDir(f.path) === serviceDir(c));
+    // A changelog moved within its service: the file that takes its place must gain more lines than the old one lost,
+    // so a pure move, or a copy that shrank the history, does not pass. The global changelog is never moved this way.
+    const dir = serviceDir(c);
+    if (!entry || dir === '') return true;
+    return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && serviceDir(f.path) === dir && f.added > entry.deleted);
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
