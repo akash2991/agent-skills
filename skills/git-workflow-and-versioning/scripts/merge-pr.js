@@ -137,14 +137,14 @@ if (require.main === module) main(process.argv.slice(2));
 // that lands between the merge and the delete makes the delete refuse. Returns 'deleted', 'gone' (already removed, as
 // with GitHub's automatic head-branch deletion) or 'kept' (it moved).
 // The remote whose fetch and push URLs both name the repository merged into (a remote can fetch from one repository
-// and push to another). Compared case-insensitively, on a GitHub host only. Refuses when none does, so a branch is never
-// deleted from the wrong repository.
+// and push to another). Compared case-insensitively, on github.com only (an SSH alias or GitHub Enterprise host is
+// refused). Refuses when none does, so a branch is never deleted from the wrong repository.
 function remoteFor(repo) {
   const want = repo.toLowerCase();
   const nameOf = url => {
     const host = (url.match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/) || [])[1] || '';
     const m = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
-    return m && /github/i.test(host) ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+    return m && host.toLowerCase() === 'github.com' ? `${m[1]}/${m[2]}`.toLowerCase() : null;
   };
   for (const name of git(['remote']).split('\n').filter(Boolean)) {
     const fetch = nameOf(git(['remote', 'get-url', name]).trim());

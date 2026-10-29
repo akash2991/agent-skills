@@ -373,6 +373,8 @@ test('the branch is deleted from the remote that points at the merged repository
   g(['init', '-q', '-b', 'main']);
   g(['remote', 'add', 'origin', 'git@github.com:fork-owner/app.git']);
   g(['remote', 'add', 'upstream', 'https://github.com/org/app.git']);
+  // a mirror on another host with the same repository path is never the one deleted from
+  g(['remote', 'add', 'backup', 'https://github.backup.example/org/app.git']);
   const cwd = process.cwd(); process.chdir(dir);
   try {
     assert.strictEqual(remoteFor('org/app'), 'upstream');
