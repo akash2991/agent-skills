@@ -122,6 +122,10 @@ main ──●──●──●──●──●──●──●──●─
 | P15 | **Merge with a regular merge commit, not a squash**, so commit ids quoted in review threads stay findable. Never squash. Put the ticket id in the merge commit message. |
 | P16 | Branching/merge defaults may be overridden when the service has a recorded reason (for example release branches). |
 
+## Enforced by script
+
+P2, P3, P5, P10, P11, and P13 are checked by `scripts/brain-git-check.js` instead of by memory; P7, P10, P12, and P15 are carried out by `scripts/merge-pr.js`. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks. A PR over the size limit records `Size-exception: <reason>` in its body rather than growing silently. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12); that stays with the author and the reviewer.
+
 ## The Save Point Pattern
 
 ```
@@ -221,7 +225,7 @@ git log --grep="validation" --oneline
 
 ## Release & Versioning
 
-Releases follow semver and add a `CHANGELOG.md` entry listing the tickets. Commits are how *you* track change; a **version** is how your *consumers* track it. The moment anything else depends on your code — another team, a published package, a deployed client — "latest on main" stops being a sufficient answer to "what am I running, and is it safe to upgrade?" A version number and a changelog are the contract that answers it.
+Releases follow semver and add an entry to the project changelog, `docs/CHANGELOG.md` (the brain's documentation map), listing the tickets. Commits are how *you* track change; a **version** is how your *consumers* track it. The moment anything else depends on your code — another team, a published package, a deployed client — "latest on main" stops being a sufficient answer to "what am I running, and is it safe to upgrade?" A version number and a changelog are the contract that answers it.
 
 ### Semantic Versioning
 
