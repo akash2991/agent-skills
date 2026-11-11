@@ -97,7 +97,7 @@ Typical paths, the skipped states recorded:
 - **A large feature**: one planning issue runs `Triage` → `Spec` → `Design` → `Planned` and produces the project, its milestones, and their issues; then each issue runs `Todo` → `In Progress` → `In Review` → `Merged` → `Done`; the milestone's usable outcome gets a `QA` issue before the milestone closes; the project completes when its last milestone's issues are `Done`.
 - **A one-shot override** (M3): `Todo` → `In Review`, the skipped states named in the note.
 
-The agent doing the work moves the issue, with a status update on every move (M5). A parent issue never runs ahead of its sub-issues; a milestone closes when its issues are `Done` and its outcome is verified, with a project update.
+The agent doing the work moves the issue, with a status update on every move (M5). `scripts/linear-status.js check <from> <to>` says whether a move is legal and names the states it skips; `render` writes the status update from the fields you give it, and refuses an illegal move, a skip with no reason, or a `Blocked` update without its blocker block. The legal moves are `transitions` in `workflow.json`. A parent issue never runs ahead of its sub-issues; a milestone closes when its issues are `Done` and its outcome is verified, with a project update.
 
 ## Interaction with other skills
 

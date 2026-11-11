@@ -60,10 +60,20 @@ test('PR titles start with the ticket id', () => {
   assert.strictEqual(check.checkPrTitle(undefined, {}).length, 1);
 });
 
-test('size counts changed lines and files, skipping lockfiles', () => {
+test('size skips lockfiles, but the changelog check still sees them', () => {
   const files = pn('300\t50\tsrc/a.ts\n5\t5\tpackage-lock.json\n-\t-\tlogo.png');
-  assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'logo.png']);
+  assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'package-lock.json', 'logo.png']);
   assert.deepStrictEqual(check.checkSize(files, '', {}), []);
+  // A huge lockfile and an eleventh file that is a lockfile must not count toward the size limits.
+  assert.deepStrictEqual(check.checkSize(pn('10\t0\tsrc/a.ts\n5000\t0\tpackage-lock.json'), '', {}), []);
+  const tenSources = Array.from({ length: 10 }, (_, i) => `1\t0\tsrc/f${i}.ts`).join('\n');
+  assert.deepStrictEqual(check.checkSize(pn(`${tenSources}\n9000\t0\tbun.lock`), '', {}), []);
+});
+
+test('a lockfile change in a service still requires that service changelog', () => {
+  const files = pn('3\t0\tservices/api/package-lock.json\n1\t0\tdocs/CHANGELOG.md');
+  const errors = check.checkChangelog(files, ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
+  assert.match(errors[0], /services\/api\/CHANGELOG\.md/);
 });
 
 test('an oversized PR fails unless the body records an exception', () => {
@@ -411,4 +421,57 @@ test('a removed service changelog moves only into a new file; a rewritten existi
   // the destination is new in this PR (10 added, 0 deleted): passes
   const newFile = pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
   assert.deepStrictEqual(check.checkChangelog(newFile, moved, movedFrom, baseNoDocs), []);
+});
+
+test('the branch is deleted from the remote that points at the merged repository, never a guessed origin', () => {
+  const { remoteFor } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-'));
+  const g = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  g(['init', '-q', '-b', 'main']);
+  g(['remote', 'add', 'origin', 'git@github.com:fork-owner/app.git']);
+  g(['remote', 'add', 'upstream', 'https://github.com/org/app.git']);
+  // a mirror on another host with the same repository path is never the one deleted from
+  g(['remote', 'add', 'backup', 'https://github.backup.example/org/app.git']);
+  const cwd = process.cwd(); process.chdir(dir);
+  try {
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('fork-owner/app'), 'origin');
+    // a remote that fetches from org/app but pushes to someone else's repository is not the one to delete from
+    g(['remote', 'add', 'split', 'https://github.com/org/app.git']);
+    g(['remote', 'set-url', '--push', 'split', 'https://github.com/someone/fork.git']);
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('ORG/App'), 'upstream');
+    assert.throws(() => remoteFor('someone/else'), /no git remote fetches and pushes someone\/else; nothing was merged/);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a remote branch is deleted only at the merged commit; a branch that moved is kept; a gone one counts as done', () => {
+  const { deleteRemoteBranch } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lease-'));
+  const bare = path.join(dir, 'remote.git');
+  const work = path.join(dir, 'work');
+  const g = (args, cwd = work) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+  execFileSync('git', ['clone', '-q', bare, work]);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  g(['push', '-q', 'origin', 'main']);
+  g(['checkout', '-q', '-b', 'ENG-1-x']);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'work']);
+  g(['push', '-q', 'origin', 'ENG-1-x']);
+  const merged = g(['rev-parse', 'HEAD']);
+  const cwd = process.cwd();
+  process.chdir(work);
+  try {
+    // the branch moves after the merge: its new commit is kept
+    g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'more']);
+    g(['push', '-q', 'origin', 'ENG-1-x']);
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', merged), 'kept');
+    assert.ok(g(['ls-remote', '--heads', 'origin', 'ENG-1-x']).includes('ENG-1-x'));
+    // at the merged commit it is deleted
+    const now = g(['rev-parse', 'HEAD']);
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'deleted');
+    assert.strictEqual(g(['ls-remote', '--heads', 'origin', 'ENG-1-x']), '');
+    // already gone (automatic head-branch deletion) is done
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'gone');
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow map</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5b6573; --line: #dde1e7;
+    --det: #1f6feb; --mixed: #8250df; --agent: #bf6a02; --human: #6e7781;
+    --det-bg: #e3eeff; --mixed-bg: #efe6ff; --agent-bg: #fff0d9; --human-bg: #eceef1;
+    --focus: #1f6feb;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1116; --panel: #161b22; --ink: #e6e9ee; --muted: #9aa4b2; --line: #2b323c;
+    --det: #6aa6ff; --mixed: #b794ff; --agent: #f0a54a; --human: #8b95a3;
+    --det-bg: #14274a; --mixed-bg: #2a1f4a; --agent-bg: #3b2a0f; --human-bg: #232932;
+    --focus: #6aa6ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1116; --panel: #161b22; --ink: #e6e9ee; --muted: #9aa4b2; --line: #2b323c;
+      --det: #6aa6ff; --mixed: #b794ff; --agent: #f0a54a; --human: #8b95a3;
+      --det-bg: #14274a; --mixed-bg: #2a1f4a; --agent-bg: #3b2a0f; --human-bg: #232932;
+      --focus: #6aa6ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; max-width: 70ch; }
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 16px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  button, select, input[type="search"] { font: inherit; color: var(--ink); }
+  .seg button { border: 0; background: transparent; padding: 7px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; text-align: left; cursor: pointer; }
+  .card[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+  .card .n { font-size: 30px; font-weight: 650; line-height: 1.1; }
+  .card .l { font-weight: 600; }
+  .card .d { color: var(--muted); font-size: 13px; }
+  .card.det .n, .card.det .l { color: var(--det); }
+  .card.mixed .n, .card.mixed .l { color: var(--mixed); }
+  .card.agent .n, .card.agent .l { color: var(--agent); }
+  .stack { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--human-bg); }
+  .stack > i { display: block; }
+  .stackrow { margin: 0 0 14px; }
+  .stackrow .cap { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+  .c-code, .c-deterministic { background: var(--det); }
+  .c-mixed { background: var(--mixed); }
+  .c-agent { background: var(--agent); }
+  .c-human { background: var(--human); }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 18px 0 12px; }
+  select, input[type="search"] { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+  .area { margin: 22px 0 8px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  details.flow { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  details.flow > summary { list-style: none; cursor: pointer; padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
+  details.flow > summary::-webkit-details-marker { display: none; }
+  .name { font-weight: 600; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; white-space: nowrap; }
+  .badge.deterministic { color: var(--det); background: var(--det-bg); }
+  .badge.mixed { color: var(--mixed); background: var(--mixed-bg); }
+  .badge.agent { color: var(--agent); background: var(--agent-bg); }
+  .badge.human { color: var(--human); background: var(--human-bg); }
+  .mini { grid-column: 1 / -1; display: flex; gap: 2px; height: 6px; }
+  .mini i { flex: 1; border-radius: 2px; }
+  .body { padding: 2px 14px 14px; border-top: 1px solid var(--line); }
+  .body p { margin: 10px 0; color: var(--muted); }
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li { display: grid; grid-template-columns: 74px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  ol.steps li:first-child { border-top: 0; }
+  .who { font-size: 12px; font-weight: 600; text-align: center; padding: 2px 0; border-radius: 6px; align-self: start; }
+  .who.code { color: var(--det); background: var(--det-bg); }
+  .who.agent { color: var(--agent); background: var(--agent-bg); }
+  .who.human { color: var(--human); background: var(--human-bg); }
+  .meta { color: var(--muted); font-size: 13px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--human-bg); padding: 1px 5px; border-radius: 4px; }
+  .gap { color: var(--agent); font-weight: 600; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  footer { margin-top: 32px; color: var(--muted); font-size: 13px; max-width: 80ch; }
+  @media (max-width: 520px) { ol.steps li { grid-template-columns: 1fr; } .who { justify-self: start; padding: 2px 10px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub">Each flow is split into steps. A step is <b>code</b> when a script runs it, <b>agent</b> when a model does it, and <b>human</b> when the owner decides. A flow is deterministic when every step is code, agent-taken when every step is the agent's, and mixed otherwise. Human decisions are gates and do not count.</p>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="View">
+      <button type="button" data-view="today" aria-pressed="true">Today</button>
+      <button type="button" data-view="target" aria-pressed="false">After conversion</button>
+    </div>
+    <span class="meta" id="viewnote"></span>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="stackrow"><div class="cap"><span>Flows</span><span id="flowcap"></span></div><div class="stack" id="flowstack"></div></div>
+  <div class="stackrow"><div class="cap"><span>Steps</span><span id="stepcap"></span></div><div class="stack" id="stepstack"></div></div>
+
+  <div class="filters">
+    <select id="area" aria-label="Area"></select>
+    <input id="q" type="search" placeholder="Search flows, steps, rule ids" aria-label="Search">
+    <label class="chk"><input id="gaps" type="checkbox"> only flows with steps that can become code</label>
+    <button type="button" id="toggle">Expand all</button>
+  </div>
+
+  <div id="list"></div>
+
+  <footer>
+    "Today" counts a deterministic step as code only when it names a script, hook, or workflow file in this repository (the path is checked when the page is built). Whether a project has installed that script or hook is not checked, and a step with no file is a rule that asks an agent to do it by hand. "After conversion" assumes every deterministic step is scripted. Which steps are deterministic, judgment, or human is a classification kept in <code>docs/flow-map.json</code>; change it there and run <code>node scripts/build-flow-map.js</code>.
+  </footer>
+</main>
+
+<script id="data" type="application/json">__FLOW_DATA__</script>
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('data').textContent);
+  var state = { view: 'today', cls: 'all', area: 'all', q: '', gaps: false, open: false };
+  var LABEL = { deterministic: 'Deterministic', mixed: 'Mixed', agent: 'Agent-taken', human: 'Human only' };
+  var DESC = { deterministic: 'every step runs as code', mixed: 'code and agent steps together', agent: 'every step is the agent’s' };
+  var WHO = { code: 'code', agent: 'agent', human: 'human' };
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function pct(n, total) { return total ? Math.round(n * 100 / total) + '%' : '0%'; }
+  function convertible(f) { return f.steps.some(function (s) { return s.kind === 'det' && s.today === 'agent'; }); }
+  function totals() { return state.view === 'today' ? D.totals.today : D.totals.target; }
+  function stepTotals() { return state.view === 'today' ? D.totals.stepsToday : D.totals.stepsTarget; }
+
+  function stack(node, parts, total) {
+    node.textContent = '';
+    parts.forEach(function (p) {
+      if (!p.n) return;
+      var i = el('i', p.cls); i.style.width = (p.n * 100 / total) + '%'; i.title = p.label + ': ' + p.n; node.appendChild(i);
+    });
+  }
+
+  function renderSummary() {
+    var t = totals(), cards = document.getElementById('cards');
+    cards.textContent = '';
+    ['deterministic', 'mixed', 'agent'].forEach(function (c) {
+      var b = el('button', 'card ' + (c === 'deterministic' ? 'det' : c)); b.type = 'button';
+      b.setAttribute('aria-pressed', String(state.cls === c));
+      b.appendChild(el('div', 'n', String(t[c])));
+      b.appendChild(el('div', 'l', LABEL[c]));
+      b.appendChild(el('div', 'd', pct(t[c], D.totals.flows) + ' of flows, ' + DESC[c]));
+      b.onclick = function () { state.cls = state.cls === c ? 'all' : c; render(); };
+      cards.appendChild(b);
+    });
+    var n = D.totals.flows, st = stepTotals(), ns = st.code + st.agent + st.human;
+    stack(document.getElementById('flowstack'), [
+      { n: t.deterministic, cls: 'c-deterministic', label: 'Deterministic' }, { n: t.mixed, cls: 'c-mixed', label: 'Mixed' },
+      { n: t.agent, cls: 'c-agent', label: 'Agent-taken' }, { n: t.human, cls: 'c-human', label: 'Human only' }], n);
+    document.getElementById('flowcap').textContent = t.deterministic + ' deterministic · ' + t.mixed + ' mixed · ' + t.agent + ' agent-taken (of ' + n + ')';
+    stack(document.getElementById('stepstack'), [
+      { n: st.code, cls: 'c-code', label: 'Code' }, { n: st.agent, cls: 'c-agent', label: 'Agent' }, { n: st.human, cls: 'c-human', label: 'Human' }], ns);
+    document.getElementById('stepcap').textContent = st.code + ' code · ' + st.agent + ' agent · ' + st.human + ' human (of ' + ns + ')';
+    var a = D.totals.stepsToday, b2 = D.totals.stepsTarget;
+    document.getElementById('viewnote').textContent = state.view === 'today'
+      ? (b2.code - a.code) + ' steps are rule text that a script could run'
+      : 'if all ' + (b2.code - a.code) + ' remaining deterministic steps were scripted';
+  }
+
+  function matches(f) {
+    if (state.cls !== 'all' && f[state.view] !== state.cls) return false;
+    if (state.area !== 'all' && f.area !== state.area) return false;
+    if (state.gaps && !convertible(f)) return false;
+    if (!state.q) return true;
+    var hay = (f.name + ' ' + f.summary + ' ' + f.steps.map(function (s) { return s.name + ' ' + s.rules + ' ' + (s.enforcedBy || ''); }).join(' ')).toLowerCase();
+    return hay.indexOf(state.q.toLowerCase()) !== -1;
+  }
+
+  function renderFlow(f) {
+    var d = el('details', 'flow'); d.open = state.open;
+    var s = el('summary');
+    s.appendChild(el('span', 'name', f.name));
+    s.appendChild(el('span', 'badge ' + f[state.view], LABEL[f[state.view]]));
+    var mini = el('div', 'mini');
+    f.steps.forEach(function (st) { mini.appendChild(el('i', 'c-' + st[state.view])); });
+    s.appendChild(mini); d.appendChild(s);
+    var body = el('div', 'body');
+    if (f.summary) body.appendChild(el('p', null, f.summary));
+    var ol = el('ol', 'steps');
+    f.steps.forEach(function (st) {
+      var li = el('li');
+      li.appendChild(el('span', 'who ' + st[state.view], WHO[st[state.view]]));
+      var c = el('div'); c.appendChild(el('div', null, st.name));
+      var meta = el('div', 'meta');
+      if (st.rules) meta.appendChild(document.createTextNode('Rules ' + st.rules + ' · '));
+      if (st.kind === 'det' && st.enforcedBy) { meta.appendChild(document.createTextNode('runs as ')); meta.appendChild(el('code', null, st.enforcedBy)); }
+      else if (st.kind === 'det') {
+        var g = el('span', state.view === 'today' ? 'gap' : '', state.view === 'today' ? 'can become code: a rule asks the agent to do it by hand' : 'to be scripted');
+        meta.appendChild(g);
+      } else if (st.kind === 'judgment') meta.appendChild(document.createTextNode('needs judgment'));
+      else meta.appendChild(document.createTextNode('the owner decides'));
+      c.appendChild(meta); li.appendChild(c); ol.appendChild(li);
+    });
+    body.appendChild(ol); d.appendChild(body);
+    return d;
+  }
+
+  function renderList() {
+    var list = document.getElementById('list'); list.textContent = '';
+    var shown = 0;
+    D.areas.forEach(function (area) {
+      var fs = D.flows.filter(function (f) { return f.area === area && matches(f); });
+      if (!fs.length) return;
+      list.appendChild(el('div', 'area', area + ' (' + fs.length + ')'));
+      fs.forEach(function (f) { list.appendChild(renderFlow(f)); shown++; });
+    });
+    if (!shown) list.appendChild(el('div', 'empty', 'No flows match these filters.'));
+    document.getElementById('toggle').textContent = state.open ? 'Collapse all' : 'Expand all';
+  }
+
+  function render() {
+    document.querySelectorAll('[data-view]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.view === state.view)); });
+    renderSummary(); renderList();
+  }
+
+  document.getElementById('title').textContent = D.title;
+  var sel = document.getElementById('area');
+  [['all', 'All areas']].concat(D.areas.map(function (a) { return [a, a]; })).forEach(function (p) {
+    var o = el('option', null, p[1]); o.value = p[0]; sel.appendChild(o);
+  });
+  sel.onchange = function () { state.area = sel.value; renderList(); };
+  document.getElementById('q').oninput = function (e) { state.q = e.target.value; renderList(); };
+  document.getElementById('gaps').onchange = function (e) { state.gaps = e.target.checked; renderList(); };
+  document.getElementById('toggle').onclick = function () { state.open = !state.open; renderList(); };
+  document.querySelectorAll('[data-view]').forEach(function (b) { b.onclick = function () { state.view = b.dataset.view; render(); }; });
+  render();
+})();
+</script>
+</body>
+</html>
