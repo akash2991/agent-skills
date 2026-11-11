@@ -60,10 +60,20 @@ test('PR titles start with the ticket id', () => {
   assert.strictEqual(check.checkPrTitle(undefined, {}).length, 1);
 });
 
-test('size counts changed lines and files, skipping lockfiles', () => {
+test('size skips lockfiles, but the changelog check still sees them', () => {
   const files = pn('300\t50\tsrc/a.ts\n5\t5\tpackage-lock.json\n-\t-\tlogo.png');
-  assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'logo.png']);
+  assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'package-lock.json', 'logo.png']);
   assert.deepStrictEqual(check.checkSize(files, '', {}), []);
+  // A huge lockfile and an eleventh file that is a lockfile must not count toward the size limits.
+  assert.deepStrictEqual(check.checkSize(pn('10\t0\tsrc/a.ts\n5000\t0\tpackage-lock.json'), '', {}), []);
+  const tenSources = Array.from({ length: 10 }, (_, i) => `1\t0\tsrc/f${i}.ts`).join('\n');
+  assert.deepStrictEqual(check.checkSize(pn(`${tenSources}\n9000\t0\tbun.lock`), '', {}), []);
+});
+
+test('a lockfile change in a service still requires that service changelog', () => {
+  const files = pn('3\t0\tservices/api/package-lock.json\n1\t0\tdocs/CHANGELOG.md');
+  const errors = check.checkChangelog(files, ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
+  assert.match(errors[0], /services\/api\/CHANGELOG\.md/);
 });
 
 test('an oversized PR fails unless the body records an exception', () => {

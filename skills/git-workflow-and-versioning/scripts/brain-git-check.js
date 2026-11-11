@@ -73,15 +73,17 @@ function parseNumstat(numstat) {
   return numstat.split('\0').filter(Boolean).map(record => {
     const [added, deleted, ...rest] = record.split('\t');
     return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
-  }).filter(f => !LOCKFILES.test(f.path));
+  });
 }
 
 function checkSize(files, body = '', env = process.env) {
   const maxLines = Number(env.BRAIN_PR_MAX_LINES) || 400;
   const maxFiles = Number(env.BRAIN_PR_MAX_FILES) || 10;
-  const lines = files.reduce((n, f) => n + f.lines, 0);
-  if ((lines <= maxLines && files.length <= maxFiles) || SIZE_EXCEPTION.test(body)) return [];
-  return [`PR changes ${lines} lines in ${files.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
+  // Lockfiles are generated: they are left out of the size count only. The changelog check still sees them (P13).
+  const counted = files.filter(f => !LOCKFILES.test(f.path));
+  const lines = counted.reduce((n, f) => n + f.lines, 0);
+  if ((lines <= maxLines && counted.length <= maxFiles) || SIZE_EXCEPTION.test(body)) return [];
+  return [`PR changes ${lines} lines in ${counted.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
 }
 
 // A changelog must gain a line; deleting or leaving the file untouched does not satisfy P13.
