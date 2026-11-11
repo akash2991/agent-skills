@@ -72,7 +72,7 @@ function checkPrTitle(title, env = process.env) {
 function parseNumstat(numstat) {
   return numstat.split('\0').filter(Boolean).map(record => {
     const [added, deleted, ...rest] = record.split('\t');
-    return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
+    return { path: rest.join('\t'), added: Number(added) || 0, deleted: Number(deleted) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
   });
 }
 
@@ -113,7 +113,7 @@ function requiredChangelogs(changedPaths, allChangelogs) {
 
 // `removed` lists the changelogs absent at head (the base-only ones from listChangelogs). Only a removed changelog may be
 // moved, and only into a sibling in its service that is new in this PR (absent from `baseChangelogs`, the merge base's
-// changelogs) and gains at least one line; a rewritten existing sibling does not count. A live changelog that shrinks
+// changelogs) and gains at least as many lines as the removed file lost; a rewritten existing sibling does not count. A live changelog that shrinks
 // still fails. Without a base list every changelog is treated as existing, so no move passes.
 function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = [], baseChangelogs = allChangelogs) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
@@ -129,12 +129,12 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = 
     const entry = files.find(f => f.path === c);
     if (entry && entry.added >= 1) return false;
     // A changelog moved within its service: the file that takes its place must be a new changelog (a real move creates
-    // it; a rewrite of one that already existed does not) and gain a line. The global changelog is never moved this way,
+    // it; a rewrite of one that already existed does not) and keep every line the old one had. The global changelog is never moved this way,
     // and a changelog that still exists at head is not moved, so it must gain a line itself.
     const dir = serviceDir(c);
     if (!entry || dir === '' || !removed.includes(c)) return true;
     return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && !baseChangelogs.includes(f.path)
-      && serviceDir(f.path) === dir && f.added >= 1);
+      && serviceDir(f.path) === dir && f.added >= entry.deleted);
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
