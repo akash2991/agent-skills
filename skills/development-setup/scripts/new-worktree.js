@@ -73,7 +73,16 @@ function defaultBase(root, { fetch = true } = {}) {
   catch { return 'main'; }
   if (!fetch) return `origin/${name}`;
   try { git(['fetch', '--quiet', 'origin', name], root); return `origin/${name}`; }
-  catch { return name; }
+  catch {
+    // A failed fetch never silently bases the work on a stale local branch: use the cached remote-tracking ref, or stop.
+    try {
+      git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`], root);
+    } catch {
+      throw new Error(`cannot fetch origin/${name} and no cached copy exists; pass --base <ref>`);
+    }
+    console.error(`warning: fetch of origin/${name} failed; basing on the cached origin/${name}`);
+    return `origin/${name}`;
+  }
 }
 
 // Ports this agent claims are recorded in the common git dir so agents started in parallel do not get the same ones.
@@ -155,12 +164,16 @@ async function main(argv) {
     const file = claimFile(root);
     ports = await withLock(file, async () => {
       const claims = readClaims(file);
+      // A reused worktree keeps the ports it already claimed, so its running containers keep their host ports.
+      const kept = reuse ? (claims[p.name] || []).slice(0, count) : [];
       const claimed = new Set(Object.entries(claims).filter(([k]) => k !== p.name).flatMap(([, v]) => v));
-      const found = await freePorts(count, new Set([...usedHostPorts(psOutput), ...claimed]));
-      if (found.length < count) throw new Error(`only ${found.length} of ${count} host ports are free; free some or ask for fewer`);
-      claims[p.name] = found;
+      const more = count - kept.length;
+      const found = more > 0 ? await freePorts(more, new Set([...usedHostPorts(psOutput), ...claimed, ...kept])) : [];
+      if (found.length < more) throw new Error(`only ${found.length} of ${more} host ports are free; free some or ask for fewer`);
+      const all = [...kept, ...found];
+      claims[p.name] = all;
       if (!dryRun) fs.writeFileSync(file, JSON.stringify(claims, null, 2));
-      return found;
+      return all;
     });
   }
   if (dryRun) {

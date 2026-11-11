@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
+const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -102,6 +103,31 @@ test('running create again for the same ticket reuses the worktree', () => {
   const again = execFileSync('node', [script, 'create', 'ENG-11-again', '--persona', 'scout'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   assert.match(again, /export AGENT_NAME='ENG-11-again \(scout\)'/);
   fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('reusing a worktree keeps the host ports it already claimed, even while a service holds one', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'reuse-ports-'));
+  const repo = path.join(parent, 'app');
+  const run = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+  fs.mkdirSync(repo);
+  run(['init', '-q', '-b', 'main']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const script = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+  const create = () => execFileSync('node', [script, 'create', 'ENG-13-ports', '--persona', 'scout', '--ports', '2'],
+    { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const port = (out, n) => out.match(new RegExp(`HOST_PORT_${n}='(\\d+)'`))[1];
+  const first = create();
+  // A running service holds the first port on localhost, as a dev server would.
+  const service = net.createServer();
+  await new Promise((resolve, reject) => service.once('error', reject).listen(Number(port(first, 1)), '127.0.0.1', resolve));
+  try {
+    const again = create();
+    assert.strictEqual(port(again, 1), port(first, 1));
+    assert.strictEqual(port(again, 2), port(first, 2));
+  } finally {
+    await new Promise(resolve => service.close(resolve));
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 test('create needs a persona, which goes into the agent name', () => {
