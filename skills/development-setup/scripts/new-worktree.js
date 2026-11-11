@@ -32,12 +32,14 @@ function usedHostPorts(dockerPs) {
   return ports;
 }
 
+// A port is free only when it binds on localhost and on every interface: a dev server on 127.0.0.1 and one on 0.0.0.0 both count.
 function canListen(port) {
-  return new Promise(resolve => {
+  const bindsOn = host => new Promise(resolve => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
-    server.listen(port, () => server.close(() => resolve(true)));
+    server.listen({ port, host, exclusive: true }, () => server.close(() => resolve(true)));
   });
+  return bindsOn('127.0.0.1').then(ok => ok && bindsOn(undefined));
 }
 
 async function freePorts(count, used, start = 20000, end = 29999) {
@@ -136,6 +138,15 @@ async function main(argv) {
   }
   const base = optionValue(rest, '--base') || defaultBase(root, { fetch: !dryRun });
   const count = Number(optionValue(rest, '--ports') || 0);
+  // Refuse a foreign directory before any port is claimed, so a refusal leaves no claim behind.
+  let reuse = false;
+  if (!dryRun && fs.existsSync(p.worktree)) {
+    // Reuse only this repository's worktree on this branch; any other directory with the name is someone else's.
+    const listed = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
+    const onBranch = listed && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
+    if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
+    reuse = true;
+  }
   // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
   let ports = [];
   if (count) {
@@ -154,11 +165,7 @@ async function main(argv) {
   }
   if (dryRun) {
     console.error(`would run: git worktree add ${git(['branch', '--list', p.branch], root) ? '' : `-b ${p.branch} `}${p.worktree} ${base}`);
-  } else if (fs.existsSync(p.worktree)) {
-    // Reuse only this repository's worktree on this branch; any other directory with the name is someone else's.
-    const listed = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
-    const onBranch = listed && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
-    if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
+  } else if (reuse) {
     console.error(`reusing existing worktree ${p.worktree}`);
   } else {
     try {
