@@ -109,7 +109,9 @@ function requiredChangelogs(changedPaths, allChangelogs) {
   return [...required];
 }
 
-function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
+// `removed` lists the changelogs absent at head (the base-only ones from listChangelogs). Only a removed changelog may be
+// replaced by a sibling in its service that gains more lines than it lost; a live changelog that shrinks still fails.
+function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = []) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
   if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
@@ -123,9 +125,10 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
     const entry = files.find(f => f.path === c);
     if (entry && entry.added >= 1) return false;
     // A changelog moved within its service: the file that takes its place must gain more lines than the old one lost,
-    // so a pure move, or a copy that shrank the history, does not pass. The global changelog is never moved this way.
+    // so a pure move, or a copy that shrank the history, does not pass. The global changelog is never moved this way,
+    // and a changelog that still exists at head is not moved, so it must gain a line itself.
     const dir = serviceDir(c);
-    if (!entry || dir === '') return true;
+    if (!entry || dir === '' || !removed.includes(c)) return true;
     return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && serviceDir(f.path) === dir && f.added > entry.deleted);
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
@@ -155,7 +158,7 @@ function git(args) {
 // Every changelog the PR could require: those in the head tree, plus a changelog that exists only on the base while its
 // service still has files at the head. A removed or renamed service has nothing left to log, so its changelog is not
 // required. NUL-delimited output keeps non-ASCII names intact.
-function listChangelogs(base, head = 'HEAD') {
+function changelogInventory(base, head = 'HEAD') {
   // --full-tree: paths are root-relative from any directory, as the diff's are. The base is the merge base, so a
   // changelog added to main after the branch forked is not required of the branch.
   const headFiles = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', head]).split('\0').filter(Boolean);
@@ -170,8 +173,13 @@ function listChangelogs(base, head = 'HEAD') {
     const parts = f.split('/').slice(0, -1);
     for (let i = 0; i <= parts.length; i++) liveDirs.add(parts.slice(0, i).join('/'));
   }
-  const onlyOnBase = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
-  return [...headFiles.filter(isChangelog), ...onlyOnBase];
+  const removed = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
+  return { live: headFiles.filter(isChangelog), removed };
+}
+
+function listChangelogs(base, head = 'HEAD') {
+  const { live, removed } = changelogInventory(base, head);
+  return [...live, ...removed];
 }
 
 // The service directory a changelog belongs to: its folder, or the folder above docs/.
@@ -231,10 +239,11 @@ function main(argv) {
     const head = optionValue(rest, '--head') || 'HEAD';
     const files = parseNumstat(git(['diff', '--numstat', '-z', '--no-renames', `${base}...${head}`]));
     const body = process.env.PR_BODY || '';
+    const { live, removed } = changelogInventory(base, head);
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, listChangelogs(base, head)),
+      ...checkChangelog(files, [...live, ...removed], removed),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');
@@ -243,4 +252,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };
