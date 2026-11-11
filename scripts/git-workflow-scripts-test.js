@@ -395,9 +395,12 @@ test('deleting a live service changelog fails P13; a removed service changelog i
   const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
   const baseHas = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
   assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, ['services/api/CHANGELOG.md'], baseHas), []);
-  // a new destination that gains a line passes even when it is shorter than the removed file: the rule is one gained line
+  // a new destination that keeps every line of the removed file passes
   const movedFrom = ['services/api/CHANGELOG.md'];
   assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n9\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas), []);
+  // a new destination that keeps fewer lines than the removed file lost is a shrink and fails
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n8\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n1\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
   // a new destination that gains no line fails
   assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n0\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
   // the same numstat without the removed set is not a move: the old changelog still exists at head
