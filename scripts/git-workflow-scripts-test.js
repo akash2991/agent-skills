@@ -374,25 +374,41 @@ test('pruning a live service changelog fails P13 even when a sibling in the same
   assert.strictEqual(errors.length, 1);
   assert.match(errors[0], /services\/api\/CHANGELOG\.md/);
   // the same numstat passes once the old file is absent at head (a real move)
-  assert.deepStrictEqual(check.checkChangelog(pruned, moved, ['services/api/CHANGELOG.md']), []);
+  assert.deepStrictEqual(check.checkChangelog(pruned, moved, ['services/api/CHANGELOG.md'], ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']), []);
 });
 
 test('deleting a live service changelog fails P13; a removed service changelog is not required', () => {
   const live = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
   const deletedLive = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md'), live);
   assert.match(deletedLive[0], /services\/api\/CHANGELOG\.md/);
-  // Moving a service changelog to docs/ (or a root one to docs/) passes when the new file gains the line.
+  // Moving a service changelog to docs/ (or a root one to docs/) passes when the new file is new and gains the line.
   const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
-  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, ['services/api/CHANGELOG.md']), []);
-  // a pure move of the same 9 lines, or a copy that keeps fewer lines, loses history and fails
+  const baseHas = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, ['services/api/CHANGELOG.md'], baseHas), []);
+  // a new destination that gains a line passes even when it is shorter than the removed file: the rule is one gained line
   const movedFrom = ['services/api/CHANGELOG.md'];
-  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n9\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom).length, 1);
-  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n1\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom).length, 1);
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n9\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas), []);
+  // a new destination that gains no line fails
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n0\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
   // the same numstat without the removed set is not a move: the old changelog still exists at head
   assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved).length, 1);
-  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom), []);
+  // without the base list no changelog is known to be new, so no move passes
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom).length, 1);
   // a root changelog never stands in for the global one
   assert.strictEqual(check.checkChangelog(pn('2\t0\tCHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md', 'docs/CHANGELOG.md']).length, 1);
   const removed = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/old/CHANGELOG.md\n0\t4\tservices/old/a.ts'), ['docs/CHANGELOG.md']);
   assert.deepStrictEqual(removed, []);
+});
+
+test('a removed service changelog moves only into a new file; a rewritten existing sibling fails', () => {
+  const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  const movedFrom = ['services/api/CHANGELOG.md'];
+  const baseWithDocs = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  const baseNoDocs = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  // the destination existed at the merge base and was rewritten (10 added, 10 deleted): fails
+  const rewritten = pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t10\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
+  assert.strictEqual(check.checkChangelog(rewritten, moved, movedFrom, baseWithDocs).length, 1);
+  // the destination is new in this PR (10 added, 0 deleted): passes
+  const newFile = pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
+  assert.deepStrictEqual(check.checkChangelog(newFile, moved, movedFrom, baseNoDocs), []);
 });

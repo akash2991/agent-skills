@@ -110,8 +110,10 @@ function requiredChangelogs(changedPaths, allChangelogs) {
 }
 
 // `removed` lists the changelogs absent at head (the base-only ones from listChangelogs). Only a removed changelog may be
-// replaced by a sibling in its service that gains more lines than it lost; a live changelog that shrinks still fails.
-function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = []) {
+// moved, and only into a sibling in its service that is new in this PR (absent from `baseChangelogs`, the merge base's
+// changelogs) and gains at least one line; a rewritten existing sibling does not count. A live changelog that shrinks
+// still fails. Without a base list every changelog is treated as existing, so no move passes.
+function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = [], baseChangelogs = allChangelogs) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
   if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
@@ -124,12 +126,13 @@ function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = 
   const missing = required.filter(c => {
     const entry = files.find(f => f.path === c);
     if (entry && entry.added >= 1) return false;
-    // A changelog moved within its service: the file that takes its place must gain more lines than the old one lost,
-    // so a pure move, or a copy that shrank the history, does not pass. The global changelog is never moved this way,
+    // A changelog moved within its service: the file that takes its place must be a new changelog (a real move creates
+    // it; a rewrite of one that already existed does not) and gain a line. The global changelog is never moved this way,
     // and a changelog that still exists at head is not moved, so it must gain a line itself.
     const dir = serviceDir(c);
     if (!entry || dir === '' || !removed.includes(c)) return true;
-    return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && serviceDir(f.path) === dir && f.added > entry.deleted);
+    return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && !baseChangelogs.includes(f.path)
+      && serviceDir(f.path) === dir && f.added >= 1);
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
@@ -174,7 +177,7 @@ function changelogInventory(base, head = 'HEAD') {
     for (let i = 0; i <= parts.length; i++) liveDirs.add(parts.slice(0, i).join('/'));
   }
   const removed = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
-  return { live: headFiles.filter(isChangelog), removed };
+  return { live: headFiles.filter(isChangelog), removed, base: baseFiles.filter(isChangelog) };
 }
 
 function listChangelogs(base, head = 'HEAD') {
@@ -239,11 +242,11 @@ function main(argv) {
     const head = optionValue(rest, '--head') || 'HEAD';
     const files = parseNumstat(git(['diff', '--numstat', '-z', '--no-renames', `${base}...${head}`]));
     const body = process.env.PR_BODY || '';
-    const { live, removed } = changelogInventory(base, head);
+    const { live, removed, base: baseChangelogs } = changelogInventory(base, head);
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, [...live, ...removed], removed),
+      ...checkChangelog(files, [...live, ...removed], removed, baseChangelogs),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');
