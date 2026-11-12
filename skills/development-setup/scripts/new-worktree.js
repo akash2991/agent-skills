@@ -135,7 +135,7 @@ function claimedElsewhere(claims, repo, name) {
   const ports = new Set();
   for (const [r, envs] of Object.entries(claims)) {
     if (Array.isArray(envs)) {
-      if (r !== name) for (const port of envs) ports.add(port);
+      for (const port of envs) ports.add(port);
       continue;
     }
     for (const [n, list] of Object.entries(envs)) {
@@ -153,9 +153,13 @@ function claimedElsewhere(claims, repo, name) {
 // Atomicity: the token is written to a staging file and hard-linked to the lock name. link fails if the lock exists and
 // publishes a complete file in one step, so no contender can read an empty or half-written lock.
 //
-// Stale reclamation: a contender that judges the holder dead renames the lock to a name only it uses. Of the contenders
-// that judged the same dead lock, one rename wins and the others find nothing to rename. If the renamed file is not the
-// token that was judged dead (the lock was republished in between), it is linked back to the lock name.
+// Stale reclamation: a dead token is removed only by the contender that creates the reclaim marker for that exact token
+// (an exclusive create, so one contender at a time). While the marker exists, nobody else removes that lock, and the
+// remover re-checks that the lock still holds the dead token. A lock already replaced by a live holder is left alone.
+// Only a live holder can publish a new lock, and only when the name is free, so the check cannot race with a publish.
+// A marker older than MARKER_TIMEOUT_MS is left by a crashed contender and is removed.
+const MARKER_TIMEOUT_MS = 10000;
+
 function holderAlive(text) {
   const pid = Number(String(text).split(' ')[0]);
   if (!pid) return false;
@@ -184,14 +188,25 @@ function readToken(lock) {
   try { return fs.readFileSync(lock, 'utf8'); } catch (err) { if (err.code === 'ENOENT') return null; throw err; }
 }
 
+// Returns true when this call held the reclaim marker (and removed the lock only if it was still the dead token),
+// false when another contender holds the marker.
 function reclaimStale(lock, judged) {
-  const grabbed = `${lock}.stale.${unique()}`;
-  try { fs.renameSync(lock, grabbed); } catch (err) { if (err.code === 'ENOENT') return; throw err; }
-  if (fs.readFileSync(grabbed, 'utf8') !== judged) {
-    // We took a lock published after we judged the dead one: put it back if the name is still free.
-    try { fs.linkSync(grabbed, lock); } catch (err) { if (err.code !== 'EEXIST') throw err; }
+  const digest = require('crypto').createHash('sha256').update(judged).digest('hex').slice(0, 16);
+  const marker = `${lock}.reclaim-${digest}`;
+  try {
+    fs.writeFileSync(marker, unique(), { flag: 'wx' });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    try { if (Date.now() - fs.statSync(marker).mtimeMs > MARKER_TIMEOUT_MS) fs.rmSync(marker, { force: true }); } catch { /* gone */ }
+    return false;
   }
-  fs.rmSync(grabbed, { force: true });
+  try {
+    // Only the marker holder removes this lock, so it is still the dead one unless it was already removed.
+    if (readToken(lock) === judged) fs.rmSync(lock, { force: true });
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+  return true;
 }
 
 async function withLock(file, fn) {
@@ -201,8 +216,8 @@ async function withLock(file, fn) {
   let attempt = 0;
   while (!publish(lock, token)) {
     const held = readToken(lock);
-    if (held === null) continue; // released between the two calls
-    if (!holderAlive(held)) { reclaimStale(lock, held); continue; }
+    const reclaimed = held !== null && !holderAlive(held) && reclaimStale(lock, held);
+    if (reclaimed) continue;
     if (attempt++ > 600) throw new Error(`lock file is held by another run: ${lock}`);
     await new Promise(r => setTimeout(r, 100));
   }
@@ -356,4 +371,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).catch(err => { console.error(`new-worktree: ${err.message}`); process.exit(1); });
 }
 
-module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock, ledgerFile, lifecycleFile, repoKey, claimFile, readJson };
+module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock, reclaimStale, ledgerFile, lifecycleFile, repoKey, claimFile, readJson };

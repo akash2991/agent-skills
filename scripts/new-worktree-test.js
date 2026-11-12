@@ -341,3 +341,33 @@ test('a remove that waits for the lifecycle lock checks ownership under it, so a
   assert.ok(fs.existsSync(path.join(parent, 'ENG-40-x')), 'the environment was deleted under the other owner');
   fs.rmSync(parent, { recursive: true, force: true });
 });
+
+test('a contender that judged a lock dead cannot remove the live lock that replaced it', () => {
+  const { reclaimStale } = require(SCRIPT);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'replace-'));
+  const lock = path.join(dir, 'claims.json.lock');
+  const dead = `${spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' }).pid} 0 0`;
+  fs.writeFileSync(lock, dead);
+  // contender A reclaims the dead lock; a live holder then publishes its own
+  assert.strictEqual(reclaimStale(lock, dead), true);
+  assert.ok(!fs.existsSync(lock));
+  const live = `${process.pid} 1 1`;
+  fs.writeFileSync(lock, live);
+  // contender B judged the same dead token before A acted, and arrives late
+  reclaimStale(lock, dead);
+  assert.strictEqual(fs.readFileSync(lock, 'utf8'), live);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a legacy flat claim keeps its ports for a repository that creates the same environment name', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-home-'));
+  fs.mkdirSync(path.join(home, '.agent-brain'));
+  fs.writeFileSync(path.join(home, '.agent-brain', 'port-claims.json'), JSON.stringify({ 'ENG-1-demo': [20000] }));
+  const repo = makeRepo('legacy-');
+  const r = spawnSync('node', [SCRIPT, 'create', 'ENG-1-demo', '--owner', 'tester', '--persona', 'web-engineer', '--ports', '1'],
+    { cwd: repo.repo, encoding: 'utf8', env: { ...process.env, HOME: home } });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.notStrictEqual(r.stdout.match(/HOST_PORT_1='(\d+)'/)[1], '20000');
+  fs.rmSync(repo.parent, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+});
