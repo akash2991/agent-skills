@@ -72,16 +72,18 @@ function checkPrTitle(title, env = process.env) {
 function parseNumstat(numstat) {
   return numstat.split('\0').filter(Boolean).map(record => {
     const [added, deleted, ...rest] = record.split('\t');
-    return { path: rest.join('\t'), added: Number(added) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
-  }).filter(f => !LOCKFILES.test(f.path));
+    return { path: rest.join('\t'), added: Number(added) || 0, deleted: Number(deleted) || 0, lines: (Number(added) || 0) + (Number(deleted) || 0) };
+  });
 }
 
 function checkSize(files, body = '', env = process.env) {
   const maxLines = Number(env.BRAIN_PR_MAX_LINES) || 400;
   const maxFiles = Number(env.BRAIN_PR_MAX_FILES) || 10;
-  const lines = files.reduce((n, f) => n + f.lines, 0);
-  if ((lines <= maxLines && files.length <= maxFiles) || SIZE_EXCEPTION.test(body)) return [];
-  return [`PR changes ${lines} lines in ${files.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
+  // Lockfiles are generated: they are left out of the size count only. The changelog check still sees them (P13).
+  const counted = files.filter(f => !LOCKFILES.test(f.path));
+  const lines = counted.reduce((n, f) => n + f.lines, 0);
+  if ((lines <= maxLines && counted.length <= maxFiles) || SIZE_EXCEPTION.test(body)) return [];
+  return [`PR changes ${lines} lines in ${counted.length} files; split it at ${maxLines} lines or ${maxFiles} files, or record "Size-exception: <reason>" in the PR body (P11)`];
 }
 
 // A changelog must gain a line; deleting or leaving the file untouched does not satisfy P13.
@@ -109,15 +111,30 @@ function requiredChangelogs(changedPaths, allChangelogs) {
   return [...required];
 }
 
-function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md']) {
+// `removed` lists the changelogs absent at head (the base-only ones from listChangelogs). Only a removed changelog may be
+// moved, and only into a sibling in its service that is new in this PR (absent from `baseChangelogs`, the merge base's
+// changelogs) and gains at least as many lines as the removed file lost; a rewritten existing sibling does not count. A live changelog that shrinks
+// still fails. Without a base list every changelog is treated as existing, so no move passes.
+function checkChangelog(files, allChangelogs = ['docs/CHANGELOG.md'], removed = [], baseChangelogs = allChangelogs) {
   // P13 needs a global changelog. A service changelog does not stand in for it, and a repository with none cannot pass.
   if (!GLOBAL_CHANGELOGS.some(c => allChangelogs.includes(c))) {
     return [`no global changelog (${GLOBAL_CHANGELOGS.join(' or ')}) in this repository, so P13 cannot be met: add one (P13)`];
   }
   const changed = files.map(f => f.path);
-  const missing = requiredChangelogs(changed, allChangelogs).filter(c => {
+  // A changelog the PR touches must gain a line, including one it deletes while its service stays (listChangelogs
+  // gives only live services' changelogs, so a removed service's deleted changelog is not in the list).
+  const touched = allChangelogs.filter(c => changed.includes(c));
+  const required = [...new Set([...requiredChangelogs(changed, allChangelogs), ...touched])];
+  const missing = required.filter(c => {
     const entry = files.find(f => f.path === c);
-    return !entry || entry.added < 1;
+    if (entry && entry.added >= 1) return false;
+    // A changelog moved within its service: the file that takes its place must be a new changelog (a real move creates
+    // it; a rewrite of one that already existed does not) and keep every line the old one had. The global changelog is never moved this way,
+    // and a changelog that still exists at head is not moved, so it must gain a line itself.
+    const dir = serviceDir(c);
+    if (!entry || dir === '' || !removed.includes(c)) return true;
+    return !files.some(f => f.path !== c && allChangelogs.includes(f.path) && !baseChangelogs.includes(f.path)
+      && serviceDir(f.path) === dir && f.added >= entry.deleted);
   });
   return missing.length ? [`no added changelog line in ${missing.join(', ')} (P13: global and per-service)`] : [];
 }
@@ -146,14 +163,28 @@ function git(args) {
 // Every changelog the PR could require: those in the head tree, plus a changelog that exists only on the base while its
 // service still has files at the head. A removed or renamed service has nothing left to log, so its changelog is not
 // required. NUL-delimited output keeps non-ASCII names intact.
-function listChangelogs(base, head = 'HEAD') {
-  const headFiles = git(['ls-tree', '-r', '-z', '--name-only', head]).split('\0').filter(Boolean);
-  const baseFiles = base ? git(['ls-tree', '-r', '-z', '--name-only', base]).split('\0').filter(Boolean) : [];
-  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && !f.startsWith('templates/');
+function changelogInventory(base, head = 'HEAD') {
+  // --full-tree: paths are root-relative from any directory, as the diff's are. The base is the merge base, so a
+  // changelog added to main after the branch forked is not required of the branch.
+  const headFiles = git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', head]).split('\0').filter(Boolean);
+  const mergeBase = base ? git(['merge-base', base, head]).trim() : null;
+  const baseFiles = mergeBase ? git(['ls-tree', '-r', '-z', '--full-tree', '--name-only', mergeBase]).split('\0').filter(Boolean) : [];
+  // A root CHANGELOG.md is not a P13 changelog (see GLOBAL_CHANGELOGS); only nested ones and docs/CHANGELOG.md count.
+  const isChangelog = f => /(^|\/)CHANGELOG\.md$/.test(f) && f !== 'CHANGELOG.md' && !f.startsWith('templates/');
   const headSet = new Set(headFiles);
-  const liveDirs = new Set(headFiles.map(f => f.split('/').slice(0, -1).join('/')));
-  const onlyOnBase = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
-  return [...headFiles.filter(isChangelog), ...onlyOnBase];
+  // A folder is live when any file lies beneath it, not only directly in it.
+  const liveDirs = new Set();
+  for (const f of headFiles) {
+    const parts = f.split('/').slice(0, -1);
+    for (let i = 0; i <= parts.length; i++) liveDirs.add(parts.slice(0, i).join('/'));
+  }
+  const removed = baseFiles.filter(f => isChangelog(f) && !headSet.has(f) && liveDirs.has(serviceDir(f)));
+  return { live: headFiles.filter(isChangelog), removed, base: baseFiles.filter(isChangelog) };
+}
+
+function listChangelogs(base, head = 'HEAD') {
+  const { live, removed } = changelogInventory(base, head);
+  return [...live, ...removed];
 }
 
 // The service directory a changelog belongs to: its folder, or the folder above docs/.
@@ -213,10 +244,11 @@ function main(argv) {
     const head = optionValue(rest, '--head') || 'HEAD';
     const files = parseNumstat(git(['diff', '--numstat', '-z', '--no-renames', `${base}...${head}`]));
     const body = process.env.PR_BODY || '';
+    const { live, removed, base: baseChangelogs } = changelogInventory(base, head);
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
       ...checkSize(files, body),
-      ...checkChangelog(files, listChangelogs(base, head)),
+      ...checkChangelog(files, [...live, ...removed], removed, baseChangelogs),
     ]);
   }
   console.error('usage: brain-git-check.js commit-msg <file> | branch [<name>] | commits --base <ref> | pr --base <ref>');
@@ -225,4 +257,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };

@@ -9,7 +9,7 @@ const path = require('path');
 const test = require('node:test');
 
 const { buildBrain, assertSafeOutput, splitFrontmatter } = require('./lib/build-brain');
-const { stripFencedCodeBlocks, frontmatterYamlErrors } = require('./lib/skill-lint');
+const { stripFencedCodeBlocks, frontmatterYamlErrors, parseFrontmatter } = require('./lib/skill-lint');
 const { pullInstall, planInstall, validateRelPath, mergeProjectAgents, STATE_PATH } = require('./lib/pull-install');
 const { labelErrors, nativeTools, nativePersona } = require('./lib/persona-tools');
 
@@ -28,9 +28,9 @@ function tmpDir(name) {
 
 function sourceFixture() {
   const root = tmpDir('source');
-  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'docs', 'infra', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
-    // A maintainer's local Terraform cache, variables, and plans are not part of the source.
-    fs.cpSync(path.join(ROOT, entry), path.join(root, entry), { recursive: true, filter: src => !/(^|[\\/])(\.terraform|terraform\.tfvars|[^/\\]*\.tfplan)$/.test(src) });
+  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'runtime', 'docs', 'infra', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
+    // Local dependencies and Terraform cache/variables/plans are not source.
+    fs.cpSync(path.join(ROOT, entry), path.join(root, entry), { recursive: true, filter: src => !/(^|[\\/])(node_modules|\.terraform|terraform\.tfvars|[^/\\]*\.tfplan)$/.test(src) });
   }
   return root;
 }
@@ -80,6 +80,18 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.equal(fs.readFileSync(path.join(target, '.agents/agents/backend-engineer.md'), 'utf8'), sourceBackend);
   for (const [host, harness] of [['.claude', 'claude'], ['.gemini', 'gemini'], ['.pi', 'pi']]) {
     assert.equal(fs.readFileSync(path.join(target, host, 'agents/backend-engineer.md'), 'utf8'), nativePersona(sourceBackend, harness));
+  }
+  const personaFiles = fs.readdirSync(path.join(ROOT, 'agents')).filter(file => file.endsWith('.md'));
+  assert.equal(personaFiles.length, 9, 'the pull fixture covers every shipped persona');
+  for (const file of personaFiles) {
+    const installed = fs.readFileSync(path.join(target, '.pi', 'agents', file), 'utf8');
+    const toolsLine = installed.match(/^tools: (.*)$/m);
+    const declared = parseFrontmatter(fs.readFileSync(path.join(ROOT, 'agents', file), 'utf8')).tools;
+    if (declared === undefined) assert.equal(toolsLine, null, `${file}: preserve the native default loadout, not a context-only restriction`);
+    else {
+      assert.ok(toolsLine, `${file}: installed Pi persona has a native tool allowlist`);
+      assert.equal(toolsLine[1].split(',').map(tool => tool.trim()).filter(tool => tool === 'brain_context').length, 1, `${file}: brain_context appears exactly once`);
+    }
   }
   assert.match(fs.readFileSync(path.join(target, '.claude/commands/brain.md'), 'utf8'), /\.claude\/skills\//);
   assert.match(fs.readFileSync(path.join(target, '.pi/prompts/brain.md'), 'utf8'), /\.pi\/agents\//);
@@ -186,8 +198,9 @@ test('shared documents stay at root; installed links are rebased without changin
     assert.equal(fs.readFileSync(path.join(target, host, 'skills/adrs/references/detail.md'), 'utf8'), nested.replace('../../../references/', '../../../../references/'));
     assert.deepEqual(fs.readFileSync(path.resolve(target, host, 'skills/adrs', '../../../templates/ADR.md')), fs.readFileSync(path.join(source, 'templates/ADR.md')));
   }
-  for (const host of ['.agents', '.claude', '.gemini', '.pi']) {
-    assert.equal(fs.readFileSync(path.join(target, host, 'agents/code-reviewer.md'), 'utf8'), sourcePersona.replaceAll('../references/', '../../references/'));
+  for (const [host, harness] of [['.agents', null], ['.claude', 'claude'], ['.gemini', 'gemini'], ['.pi', 'pi']]) {
+    const relocated = sourcePersona.replaceAll('../references/', '../../references/');
+    assert.equal(fs.readFileSync(path.join(target, host, 'agents/code-reviewer.md'), 'utf8'), harness ? nativePersona(relocated, harness) : relocated);
   }
   assert.equal(fs.readFileSync(personaFile, 'utf8'), sourcePersona);
   assert.equal(fs.readFileSync(skillFile, 'utf8'), sourceSkill);
@@ -301,7 +314,7 @@ test('brain files are replaced on first install and subsequent pulls without bac
   assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), expected);
   assert.deepEqual(fs.readFileSync(path.join(target, '.env.example')), fs.readFileSync(path.join(ROOT, 'project/.env.example')));
   assert.equal(fs.readFileSync(path.join(target, '.env'), 'utf8'), 'PROJECT_PRIVATE=untouched\n');
-  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')), ['install-state.json']);
+  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')).sort(), ['install-state.json', 'observability']);
 });
 
 test('updates and retired file pruning ignore local edits to brain-owned files', () => {
@@ -646,12 +659,41 @@ test('native persona copies carry harness tool names; the labels stay in the sou
   assert.match(gemini, /^Skills \(load each as the work needs it with activate_skill\): brownfield-adoption, /m);
   assert.doesNotMatch(nativePersona(scout, 'pi'), /^skills:/m, 'pi-herdr-agents would send /skill: for each at launch');
 
-  assert.match(nativePersona(scout, 'pi'), /^tools: read, grep, find, ls, bash, mcp, codemode, mcp__linear__extract_images, .*mcp__linear__get_issue, /m);
+  assert.match(nativePersona(scout, 'pi'), /^tools: read, grep, find, ls, bash, mcp, codemode, mcp__linear__extract_images, .*mcp__linear__get_issue, .*brain_context$/m);
   assert.doesNotMatch(nativePersona(scout, 'pi'), /mcp__linear__\*|tool_search|save_issue/);
+  assert.doesNotMatch(nativePersona(scout, 'pi'), /^tools:.*\b(edit|write)\b/m, 'Pi read-only persona gains no application write permission');
   assert.deepEqual(nativeTools('linear', 'claude'), ['Read', 'Glob', 'Grep', 'Skill', 'Edit', 'Write', 'mcp__linear']);
 
   const reviewer = fs.readFileSync(path.join(ROOT, 'agents/code-reviewer.md'), 'utf8');
-  for (const harness of ['claude', 'gemini', 'pi']) assert.equal(nativePersona(reviewer, harness), reviewer, 'no tools line, no change');
+  for (const harness of ['claude', 'gemini', 'pi']) assert.equal(nativePersona(reviewer, harness), reviewer, 'absence of an allowlist preserves native defaults, including available extension tools');
+
+  const productManager = fs.readFileSync(path.join(ROOT, 'agents/product-manager.md'), 'utf8');
+  const claudeProductManager = nativePersona(productManager, 'claude');
+  assert.doesNotMatch(claudeProductManager, /^tools:.*\bBash\b/m, 'Claude product-manager still has no shell');
+  assert.doesNotMatch(claudeProductManager, /brain_context/, 'the Pi extension tool is not inserted into Claude');
+  for (const file of fs.readdirSync(path.join(ROOT, 'agents')).filter(file => file.endsWith('.md'))) {
+    const source = fs.readFileSync(path.join(ROOT, 'agents', file), 'utf8');
+    for (const harness of ['claude', 'gemini']) assert.doesNotMatch(nativePersona(source, harness), /brain_context/, `${file}: no unknown Pi tool in ${harness}`);
+    const pi = nativePersona(source, 'pi');
+    const line = pi.match(/^tools: (.*)$/m);
+    const declared = parseFrontmatter(source).tools;
+    if (declared === undefined) {
+      assert.equal(line, null, `${file}: preserve unrestricted native defaults`);
+      assert.equal(pi, source);
+    } else {
+      const tools = line[1].split(',').map(tool => tool.trim());
+      assert.equal(tools.filter(tool => tool === 'brain_context').length, 1, `${file}: one Pi bookkeeping tool`);
+    }
+    // Synthetic loadout contract mirrors Pi's registered-name intersection;
+    // this is not claimed as execution of the installed native SDK.
+    for (const tracingRegistered of [true, false]) {
+      const registered = ['read', 'bash', 'edit', 'write', ...(tracingRegistered ? ['brain_context'] : [])];
+      const requested = line ? line[1].split(',').map(tool => tool.trim()) : registered;
+      const active = requested.filter(tool => registered.includes(tool));
+      assert.equal(active.includes('brain_context'), tracingRegistered, `${file}: bookkeeping follows registration without enabling telemetry`);
+      if (!line) assert.deepEqual(active, registered, `${file}: default application tools are not removed`);
+    }
+  }
 
   assert.deepEqual(labelErrors('linear, jira'), ['unknown tool label "jira"; add it to scripts/lib/persona-tools.js']);
   assert.deepEqual(labelErrors('linear, docker'), ['tool label "docker" is reached through the shell, which the persona does not list']);

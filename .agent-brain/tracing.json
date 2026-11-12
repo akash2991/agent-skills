@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "enabled": true,
+  "captureMode": "metadata-only",
+  "runtime": "runtime/langfuse"
+}

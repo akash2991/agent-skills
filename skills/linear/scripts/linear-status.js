@@ -65,8 +65,8 @@ function renderUpdate(f) {
     if (!f[key]) errors.push(`missing ${key}`);
   }
   if (f.review && !REVIEWS.test(f.review)) errors.push(`review must be opened, approved, merged, or "changes requested (n)": got "${f.review}"`);
-  // Any spelling of the state field is the state field: a lowercase or padded name must not skip the move checks.
-  const isState = typeof f.field === 'string' && f.field.trim().toLowerCase() === 'state';
+  // Any spelling of the state field is the state field: a lowercase, padded, or Linear-style "Status" name must not skip the move checks.
+  const isState = typeof f.field === 'string' && /^\s*(state|status)\s*$/i.test(f.field);
   const blocked = isState && f.to === 'Blocked';
   const blockerKeys = ['blockerType', 'blockerDependency', 'blockerRequirement', 'blockerOwner'];
   if (blocked) {

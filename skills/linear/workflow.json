@@ -25,8 +25,8 @@
     "Design":      ["Planned"],
     "Planned":     ["Todo"],
     "In Progress": ["In Review"],
-    "In Review":   ["Merged", "In Progress", "QA"],
-    "QA":          ["Merged", "Done"],
+    "In Review":   ["Merged", "In Progress"],
+    "QA":          ["Done"],
     "Merged":      ["Done"]
   }
 }

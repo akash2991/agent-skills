@@ -36,12 +36,14 @@ function usedHostPorts(dockerPs) {
   return ports;
 }
 
+// A port is free only when it binds on localhost and on every interface: a dev server on 127.0.0.1 and one on 0.0.0.0 both count.
 function canListen(port) {
-  return new Promise(resolve => {
+  const bindsOn = host => new Promise(resolve => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
-    server.listen(port, () => server.close(() => resolve(true)));
+    server.listen({ port, host, exclusive: true }, () => server.close(() => resolve(true)));
   });
+  return bindsOn('127.0.0.1').then(ok => ok && bindsOn(undefined));
 }
 
 async function freePorts(count, used, start = 20000, end = 29999) {
@@ -75,7 +77,16 @@ function defaultBase(root, { fetch = true } = {}) {
   catch { return 'main'; }
   if (!fetch) return `origin/${name}`;
   try { git(['fetch', '--quiet', 'origin', name], root); return `origin/${name}`; }
-  catch { return name; }
+  catch {
+    // A failed fetch never silently bases the work on a stale local branch: use the cached remote-tracking ref, or stop.
+    try {
+      git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`], root);
+    } catch {
+      throw new Error(`cannot fetch origin/${name} and no cached copy exists; pass --base <ref>`);
+    }
+    console.error(`warning: fetch of origin/${name} failed; basing on the cached origin/${name}`);
+    return `origin/${name}`;
+  }
 }
 
 // Ports this agent claims are recorded in the common git dir so agents started in parallel do not get the same ones.
@@ -214,6 +225,15 @@ async function main(argv) {
   if (!existing && fs.existsSync(p.worktree)) throw new Error(`${p.worktree} exists and the ledger does not record it; refusing to reuse it`);
   const base = optionValue(rest, '--base') || defaultBase(root, { fetch: !dryRun });
   const count = Number(optionValue(rest, '--ports') || 0);
+  // Refuse a foreign directory before any port is claimed, so a refusal leaves no claim behind.
+  let reuse = false;
+  if (!dryRun && fs.existsSync(p.worktree)) {
+    // Reuse only this repository's worktree on this branch; any other directory with the name is someone else's.
+    const listed = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
+    const onBranch = listed && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
+    if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
+    reuse = true;
+  }
   // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
   let ports = [];
   if (count) {
@@ -222,24 +242,21 @@ async function main(argv) {
     const file = claimFile();
     ports = await withLock(file, async () => {
       const claims = readClaims(file);
+      // A reused worktree keeps the ports it already claimed, so its running containers keep their host ports.
+      const kept = reuse ? (claims[p.name] || []).slice(0, count) : [];
       const claimed = new Set(Object.entries(claims).filter(([k]) => k !== p.name).flatMap(([, v]) => v));
-      const found = await freePorts(count, new Set([...usedHostPorts(psOutput), ...claimed]));
-      if (found.length < count) throw new Error(`only ${found.length} of ${count} host ports are free; free some or ask for fewer`);
-      claims[p.name] = found;
+      const more = count - kept.length;
+      const found = more > 0 ? await freePorts(more, new Set([...usedHostPorts(psOutput), ...claimed, ...kept])) : [];
+      if (found.length < more) throw new Error(`only ${found.length} of ${more} host ports are free; free some or ask for fewer`);
+      const all = [...kept, ...found];
+      claims[p.name] = all;
       if (!dryRun) fs.writeFileSync(file, JSON.stringify(claims, null, 2));
-      return found;
+      return all;
     });
   }
   if (dryRun) {
     console.error(`would run: git worktree add ${git(['branch', '--list', p.branch], root) ? '' : `-b ${p.branch} `}${p.worktree} ${base}`);
-  } else if (fs.existsSync(p.worktree)) {
-    // Reuse only this repository's worktree on this branch, and only for the owner the ledger already holds. Reuse never
-    // takes ownership: a worktree the ledger does not know is not adopted.
-    const entry = readLedger(ledgerFile(root))[p.name];
-    if (!entry || entry.owner !== requireOwner(rest)) throw new Error(`${p.worktree} exists and is not an environment of this owner; refusing to reuse it`);
-    const listed = git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(p.worktree)}`);
-    const onBranch = listed && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
-    if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
+  } else if (reuse) {
     console.error(`reusing existing worktree ${p.worktree}`);
   } else {
     try {

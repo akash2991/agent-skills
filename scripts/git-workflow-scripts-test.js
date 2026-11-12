@@ -60,10 +60,20 @@ test('PR titles start with the ticket id', () => {
   assert.strictEqual(check.checkPrTitle(undefined, {}).length, 1);
 });
 
-test('size counts changed lines and files, skipping lockfiles', () => {
+test('size skips lockfiles, but the changelog check still sees them', () => {
   const files = pn('300\t50\tsrc/a.ts\n5\t5\tpackage-lock.json\n-\t-\tlogo.png');
-  assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'logo.png']);
+  assert.deepStrictEqual(files.map(f => f.path), ['src/a.ts', 'package-lock.json', 'logo.png']);
   assert.deepStrictEqual(check.checkSize(files, '', {}), []);
+  // A huge lockfile and an eleventh file that is a lockfile must not count toward the size limits.
+  assert.deepStrictEqual(check.checkSize(pn('10\t0\tsrc/a.ts\n5000\t0\tpackage-lock.json'), '', {}), []);
+  const tenSources = Array.from({ length: 10 }, (_, i) => `1\t0\tsrc/f${i}.ts`).join('\n');
+  assert.deepStrictEqual(check.checkSize(pn(`${tenSources}\n9000\t0\tbun.lock`), '', {}), []);
+});
+
+test('a lockfile change in a service still requires that service changelog', () => {
+  const files = pn('3\t0\tservices/api/package-lock.json\n1\t0\tdocs/CHANGELOG.md');
+  const errors = check.checkChangelog(files, ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']);
+  assert.match(errors[0], /services\/api\/CHANGELOG\.md/);
 });
 
 test('an oversized PR fails unless the body records an exception', () => {
@@ -83,10 +93,12 @@ test('a changelog line is required in the global file and in the service it touc
 });
 
 test('merge is blocked unless open, ticketed, green, and approved', () => {
-  const ok = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  const approval = { author: { login: 'teammate' }, state: 'APPROVED', commit: { oid: 'h1' }, authorAssociation: 'MEMBER' };
+  const ok = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h1', author: { login: 'agent' }, reviews: [approval], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
-  assert.strictEqual(mergeBlockers({ ...ok, reviewDecision: 'REVIEW_REQUIRED' }).blockers.length, 1);
+  // approval comes from the reviews on this head, not from the repository's decision field
+  assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
   assert.deepStrictEqual(mergeBlockers({ ...ok, reviewDecision: null }, { reviewOptional: true }).blockers, []);
   assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
   assert.strictEqual(mergeBlockers({ ...ok, title: 'x', state: 'MERGED' }).blockers.length, 2);
@@ -106,7 +118,7 @@ test('hooks install once and never overwrite a foreign hook', () => {
 
 const { checkPushedRefs, checkChangelog, parseNumstat: numstat, ticketSource } = require('../skills/git-workflow-and-versioning/scripts/brain-git-check');
 const { hookBody } = require('../skills/git-workflow-and-versioning/scripts/install-hooks');
-const { originRepo, latestRuns, isApproved } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+const { originRepo, isApproved } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 
 test('a deleted changelog does not satisfy P13; an added line does', () => {
   assert.strictEqual(checkChangelog(pn('0\t100\tdocs/CHANGELOG.md')).length, 1);
@@ -189,20 +201,10 @@ test('merge-pr derives the repository from origin, not the default repository', 
   finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true }); }
 });
 
-test('only the newest run of each check counts: a re-run after a fix clears the old failure', () => {
-  const runs = latestRuns([
-    { name: 'pr-rules', conclusion: 'FAILURE', startedAt: '2026-10-26T10:00:00Z' },
-    { name: 'pr-rules', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:05:00Z' },
-    { name: 'checks', conclusion: 'SUCCESS', startedAt: '2026-10-26T10:01:00Z' },
-  ]);
-  assert.strictEqual(runs.length, 2);
-  assert.ok(runs.every(r => r.conclusion === 'SUCCESS'));
-});
-
 test('an approval counts from a reviewer other than the author, on the current head only', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid = head) => ({ author: { login }, state, commit: { oid }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('agent', 'APPROVED')] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r', 'APPROVED', 'h1')] }), false, 'approval of an older commit');
@@ -226,11 +228,10 @@ test('a run still in progress blocks the merge, even when an older run of the sa
 });
 
 test('two workflows with a job of the same name are separate checks: a failing test is not hidden', () => {
-  const runs = latestRuns([
+  const runs = [
     { workflowName: 'ci', name: 'test', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
     { workflowName: 'e2e', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
-  ]);
-  assert.strictEqual(runs.length, 2);
+  ];
   const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: runs };
   assert.match(mergeBlockers(view).blockers.join(), /CI is not green: test/);
 });
@@ -238,7 +239,7 @@ test('two workflows with a job of the same name are separate checks: a failing t
 test('a COMMENTED review is a reply, not a verdict: it neither approves nor overrides a request for changes', () => {
   const author = { login: 'agent' };
   const head = 'h2';
-  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head } });
+  const rev = (login, state) => ({ author: { login }, state, commit: { oid: head }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r1', 'COMMENTED')] }), true);
   assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('r1', 'APPROVED'), rev('r2', 'CHANGES_REQUESTED'), rev('r2', 'COMMENTED')] }), false);
 });
@@ -307,7 +308,7 @@ test('a branch default with a trailing newline from git is still protected', () 
 test('a change request stays in force after a new push until its reviewer approves or dismisses it', () => {
   const author = { login: 'agent' };
   const h2 = 'h2';
-  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid } });
+  const rev = (login, state, oid) => ({ author: { login }, state, commit: { oid }, authorAssociation: 'MEMBER' });
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
     rev('r1', 'CHANGES_REQUESTED', 'h1'), rev('r2', 'APPROVED', h2)] }), false);
   assert.strictEqual(isApproved({ author, headRefOid: h2, reviewDecision: '', reviews: [
@@ -327,14 +328,13 @@ test('a service changelog the PR deletes is still required, from the base branch
 });
 
 const { listChangelogs } = check;
-const { latestRuns: lr } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
 
 test('a service removed by the PR is not required; a service that stays is, with its docs/ changelog too', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-'));
   const run = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
   run(['init', '-q', '-b', 'main']);
   const put = (f, body = 'x') => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), body); };
-  put('docs/CHANGELOG.md'); put('services/old/CHANGELOG.md'); put('services/old/a.ts'); put('services/api/docs/CHANGELOG.md'); put('services/api/a.ts');
+  put('docs/CHANGELOG.md'); put('CHANGELOG.md'); put('services/old/CHANGELOG.md'); put('services/old/a.ts'); put('services/api/docs/CHANGELOG.md'); put('services/api/a.ts');
   run(['add', '-A']); run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base']);
   run(['rm', '-q', '-r', 'services/old']); run(['add', '-A']);
   run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'head']);
@@ -360,10 +360,121 @@ test('a single-parent commit titled like a merge is held to the anatomy', () => 
   assert.ok(errors.length >= 4, errors.join('; '));
 });
 
-test('a commit status and a check run with the same name are different checks', () => {
-  const runs = lr([
-    { context: 'test', state: 'FAILURE', createdAt: '2026-10-26T10:00:00Z' },
-    { workflowName: 'ci', name: 'test', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:01:00Z' },
-  ]);
-  assert.strictEqual(runs.length, 2);
+test('an approval counts only from a reviewer with a standing role in the repository', () => {
+  const author = { login: 'agent' };
+  const head = 'h2';
+  const rev = (login, state, association) => ({ author: { login }, state, commit: { oid: head }, authorAssociation: association });
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('stranger', 'APPROVED', 'NONE')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviewDecision: '', reviews: [rev('teammate', 'APPROVED', 'COLLABORATOR')] }), true);
+});
+
+test('any failed run on the head blocks the merge, even one a later run superseded', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', reviewDecision: 'APPROVED', statusCheckRollup: [
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'FAILURE', status: 'COMPLETED', startedAt: '2026-10-26T10:00:00Z' },
+    { workflowName: 'ci', name: 'pr-rules', conclusion: 'SUCCESS', status: 'COMPLETED', startedAt: '2026-10-26T10:05:00Z' },
+  ] };
+  assert.match(mergeBlockers(view).blockers.join(), /CI is not green: pr-rules/);
+});
+
+test('pruning a live service changelog fails P13 even when a sibling in the same service gains more lines', () => {
+  const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  // services/api/CHANGELOG.md still exists at head, so the sibling's gain does not excuse the shrink
+  const pruned = pn('1\t0\tdocs/CHANGELOG.md\n0\t5\tservices/api/CHANGELOG.md\n6\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
+  const errors = check.checkChangelog(pruned, moved, []);
+  assert.strictEqual(errors.length, 1);
+  assert.match(errors[0], /services\/api\/CHANGELOG\.md/);
+  // the same numstat passes once the old file is absent at head (a real move)
+  assert.deepStrictEqual(check.checkChangelog(pruned, moved, ['services/api/CHANGELOG.md'], ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md']), []);
+});
+
+test('deleting a live service changelog fails P13; a removed service changelog is not required', () => {
+  const live = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  const deletedLive = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md'), live);
+  assert.match(deletedLive[0], /services\/api\/CHANGELOG\.md/);
+  // Moving a service changelog to docs/ (or a root one to docs/) passes when the new file is new and gains the line.
+  const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  const baseHas = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, ['services/api/CHANGELOG.md'], baseHas), []);
+  // a new destination that keeps every line of the removed file passes
+  const movedFrom = ['services/api/CHANGELOG.md'];
+  assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n9\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas), []);
+  // a new destination that keeps fewer lines than the removed file lost is a shrink and fails
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n8\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n1\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
+  // a new destination that gains no line fails
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n0\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom, baseHas).length, 1);
+  // the same numstat without the removed set is not a move: the old changelog still exists at head
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved).length, 1);
+  // without the base list no changelog is known to be new, so no move passes
+  assert.strictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), moved, movedFrom).length, 1);
+  // a root changelog never stands in for the global one
+  assert.strictEqual(check.checkChangelog(pn('2\t0\tCHANGELOG.md\n1\t0\tsrc/a.ts'), ['CHANGELOG.md', 'docs/CHANGELOG.md']).length, 1);
+  const removed = check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/old/CHANGELOG.md\n0\t4\tservices/old/a.ts'), ['docs/CHANGELOG.md']);
+  assert.deepStrictEqual(removed, []);
+});
+
+test('a removed service changelog moves only into a new file; a rewritten existing sibling fails', () => {
+  const moved = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  const movedFrom = ['services/api/CHANGELOG.md'];
+  const baseWithDocs = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md', 'services/api/docs/CHANGELOG.md'];
+  const baseNoDocs = ['docs/CHANGELOG.md', 'services/api/CHANGELOG.md'];
+  // the destination existed at the merge base and was rewritten (10 added, 10 deleted): fails
+  const rewritten = pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t10\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
+  assert.strictEqual(check.checkChangelog(rewritten, moved, movedFrom, baseWithDocs).length, 1);
+  // the destination is new in this PR (10 added, 0 deleted): passes
+  const newFile = pn('1\t0\tdocs/CHANGELOG.md\n0\t9\tservices/api/CHANGELOG.md\n10\t0\tservices/api/docs/CHANGELOG.md\n1\t0\tservices/api/src/a.ts');
+  assert.deepStrictEqual(check.checkChangelog(newFile, moved, movedFrom, baseNoDocs), []);
+});
+
+test('the branch is deleted from the remote that points at the merged repository, never a guessed origin', () => {
+  const { remoteFor } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-'));
+  const g = args => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  g(['init', '-q', '-b', 'main']);
+  g(['remote', 'add', 'origin', 'git@github.com:fork-owner/app.git']);
+  g(['remote', 'add', 'upstream', 'https://github.com/org/app.git']);
+  // a mirror on another host with the same repository path is never the one deleted from
+  g(['remote', 'add', 'backup', 'https://github.backup.example/org/app.git']);
+  const cwd = process.cwd(); process.chdir(dir);
+  try {
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('fork-owner/app'), 'origin');
+    // a remote that fetches from org/app but pushes to someone else's repository is not the one to delete from
+    g(['remote', 'add', 'split', 'https://github.com/org/app.git']);
+    g(['remote', 'set-url', '--push', 'split', 'https://github.com/someone/fork.git']);
+    assert.strictEqual(remoteFor('org/app'), 'upstream');
+    assert.strictEqual(remoteFor('ORG/App'), 'upstream');
+    assert.throws(() => remoteFor('someone/else'), /no git remote fetches and pushes someone\/else; nothing was merged/);
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a remote branch is deleted only at the merged commit; a branch that moved is kept; a gone one counts as done', () => {
+  const { deleteRemoteBranch } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lease-'));
+  const bare = path.join(dir, 'remote.git');
+  const work = path.join(dir, 'work');
+  const g = (args, cwd = work) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+  execFileSync('git', ['clone', '-q', bare, work]);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  g(['push', '-q', 'origin', 'main']);
+  g(['checkout', '-q', '-b', 'ENG-1-x']);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'work']);
+  g(['push', '-q', 'origin', 'ENG-1-x']);
+  const merged = g(['rev-parse', 'HEAD']);
+  const cwd = process.cwd();
+  process.chdir(work);
+  try {
+    // the branch moves after the merge: its new commit is kept
+    g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'more']);
+    g(['push', '-q', 'origin', 'ENG-1-x']);
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', merged), 'kept');
+    assert.ok(g(['ls-remote', '--heads', 'origin', 'ENG-1-x']).includes('ENG-1-x'));
+    // at the merged commit it is deleted
+    const now = g(['rev-parse', 'HEAD']);
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'deleted');
+    assert.strictEqual(g(['ls-remote', '--heads', 'origin', 'ENG-1-x']), '');
+    // already gone (automatic head-branch deletion) is done
+    assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'gone');
+  } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });

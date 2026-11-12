@@ -157,6 +157,10 @@ function collectBuildFiles(buildRoot) {
     if (relative === 'README.md') continue;
     validateRelPath(relative, 'build path');
     const info = { ...fileInfo(abs), abs };
+    if (relative.startsWith('runtime/langfuse/')) {
+      add(`.agent-brain/observability/${relative.slice('runtime/langfuse/'.length)}`, info);
+      continue;
+    }
     if (relative.startsWith('skills/')) {
       for (const host of skillHosts) add(`${host}/${relative}`, relocateSharedLinks(relative, info));
       continue;
