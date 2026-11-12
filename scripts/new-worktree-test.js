@@ -2,12 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync, spawn, spawnSync } = require('child_process');
 const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { plan, usedHostPorts, freePorts, shellQuote } = require('../skills/development-setup/scripts/new-worktree');
+
+// Port claims live under the user's home: the tests use a scratch home (inherited by the scripts they spawn), never the real one.
+process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-test-home-'));
+process.on('exit', () => fs.rmSync(process.env.HOME, { recursive: true, force: true }));
 
 test('the worktree sits beside the main checkout and the compose project is lowercase', () => {
   assert.deepStrictEqual(plan('ENG-123-login', '/work/app'), {
@@ -208,5 +212,132 @@ test('a second owner cannot take over an environment, reuse it, or read a corrup
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /does not parse/);
   assert.ok(fs.existsSync(path.join(parent, 'ENG-30-x')));
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+const SCRIPT = path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'new-worktree.js');
+
+function makeRepo(prefix) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const repo = path.join(parent, 'app');
+  fs.mkdirSync(repo);
+  const run = args => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+  run(['init', '-q', '-b', 'main']);
+  run(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  return { parent, repo };
+}
+
+test('two repositories with the same environment name get different ports, and removing one keeps the other claim', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'home-'));
+  const env = { ...process.env, HOME: home };
+  const a = makeRepo('claims-a-');
+  const b = makeRepo('claims-b-');
+  const run = (repo, args) => spawnSync('node', [SCRIPT, ...args], { cwd: repo.repo, encoding: 'utf8', env });
+  const createArgs = ['create', 'ENG-1-demo', '--owner', 'tester', '--persona', 'web-engineer', '--ports', '1'];
+  const ra = run(a, createArgs);
+  const rb = run(b, createArgs);
+  assert.strictEqual(ra.status, 0, ra.stderr);
+  assert.strictEqual(rb.status, 0, rb.stderr);
+  const portA = ra.stdout.match(/HOST_PORT_1='(\d+)'/)[1];
+  const portB = rb.stdout.match(/HOST_PORT_1='(\d+)'/)[1];
+  assert.notStrictEqual(portA, portB);
+
+  const claimsFile = path.join(home, '.agent-brain', 'port-claims.json');
+  const claims = JSON.parse(fs.readFileSync(claimsFile, 'utf8'));
+  assert.strictEqual(Object.keys(claims).length, 2, 'one claim map per repository');
+
+  assert.strictEqual(run(a, ['remove', 'ENG-1-demo', '--owner', 'tester']).status, 0);
+  const after = JSON.parse(fs.readFileSync(claimsFile, 'utf8'));
+  assert.deepStrictEqual(Object.values(after).map(envs => envs['ENG-1-demo']), [[Number(portB)]]);
+
+  // ports stay exclusive across repositories: repository a's next claim cannot take b's port
+  const next = run(a, ['create', 'ENG-2-other', '--owner', 'tester', '--persona', 'web-engineer', '--ports', '1']);
+  assert.strictEqual(next.status, 0, next.stderr);
+  assert.notStrictEqual(next.stdout.match(/HOST_PORT_1='(\d+)'/)[1], portB);
+
+  fs.rmSync(a.parent, { recursive: true, force: true });
+  fs.rmSync(b.parent, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('separate processes contending for one lock never overlap, and a lock left by a dead pid is reclaimed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contend-'));
+  const file = path.join(dir, 'claims.json');
+  const log = path.join(dir, 'log.txt');
+  const worker = path.join(dir, 'worker.js');
+  fs.writeFileSync(worker, `
+    const { withLock } = require(${JSON.stringify(SCRIPT)});
+    const fs = require('fs');
+    const [file, log, rounds] = process.argv.slice(2);
+    (async () => {
+      for (let i = 0; i < Number(rounds); i++) {
+        await withLock(file, async () => {
+          fs.appendFileSync(log, 'enter ' + process.pid + '\\n');
+          await new Promise(r => setTimeout(r, 30));
+          fs.appendFileSync(log, 'leave ' + process.pid + '\\n');
+        });
+      }
+    })().catch(e => { console.error(e); process.exit(1); });
+  `);
+  const dead = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' }).pid;
+  fs.writeFileSync(`${file}.lock`, `${dead} 0 0`);
+
+  const workers = Array.from({ length: 6 }, () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [worker, file, log, '3'], { stdio: 'pipe' });
+    child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`worker exited ${code}`))));
+  }));
+  await Promise.all(workers);
+
+  const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+  assert.strictEqual(lines.length, 36);
+  for (let i = 0; i < lines.length; i += 2) {
+    const [enter, pidIn] = lines[i].split(' ');
+    const [leave, pidOut] = lines[i + 1].split(' ');
+    assert.strictEqual(enter, 'enter', lines.join('\n'));
+    assert.strictEqual(leave, 'leave', lines.join('\n'));
+    assert.strictEqual(pidIn, pidOut, `critical sections overlapped: ${lines[i]} / ${lines[i + 1]}`);
+  }
+  assert.strictEqual(fs.existsSync(`${file}.lock`), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a remove that waits for the lifecycle lock checks ownership under it, so another owner\'s environment is not deleted', async () => {
+  const { parent, repo } = makeRepo('race-');
+  const node = args => spawnSync('node', [SCRIPT, ...args], { cwd: repo, encoding: 'utf8' });
+  assert.strictEqual(node(['create', 'ENG-40-x', '--persona', 'be', '--owner', 'alice']).status, 0);
+  const ledgerFile = path.join(repo, '.git', 'brain-env-ledger.json');
+  const lifecycle = path.join(repo, '.git', 'brain-env-lifecycle');
+  const held = path.join(parent, 'held');
+  // A separate process holds the lifecycle lock and, while holding it, hands the environment to bob.
+  const holder = `
+    const { withLock } = require(${JSON.stringify(SCRIPT)});
+    const fs = require('fs');
+    withLock(${JSON.stringify(lifecycle)}, async () => {
+      fs.writeFileSync(${JSON.stringify(held)}, '');
+      await new Promise(r => setTimeout(r, 1000));
+      const ledger = JSON.parse(fs.readFileSync(${JSON.stringify(ledgerFile)}, 'utf8'));
+      ledger['ENG-40-x'].owner = 'bob';
+      fs.writeFileSync(${JSON.stringify(ledgerFile)}, JSON.stringify(ledger));
+    }).then(() => process.exit(0), e => { console.error(e); process.exit(1); });
+  `;
+  const h = spawn(process.execPath, ['-e', holder], { stdio: 'pipe' });
+  const holderExit = new Promise(resolve => h.on('exit', resolve));
+  for (let i = 0; !fs.existsSync(held); i++) {
+    assert.ok(i < 300, 'holder never took the lock');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+
+  let stderr = '';
+  const r = spawn(process.execPath, [SCRIPT, 'remove', 'ENG-40-x', '--owner', 'alice'], { cwd: repo, stdio: 'pipe' });
+  r.stderr.on('data', d => { stderr += d; });
+  let removeCode = null;
+  const removeExit = new Promise(resolve => r.on('exit', code => { removeCode = code; resolve(code); }));
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.strictEqual(removeCode, null, 'remove ran while the lifecycle lock was held');
+
+  await holderExit;
+  assert.strictEqual(await removeExit, 1, stderr);
+  assert.match(stderr, /belongs to bob, not alice/);
+  assert.ok(fs.existsSync(path.join(parent, 'ENG-40-x')), 'the environment was deleted under the other owner');
   fs.rmSync(parent, { recursive: true, force: true });
 });
