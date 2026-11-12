@@ -98,8 +98,10 @@ function writeLedger(file, all) {
   fs.renameSync(tmp, file);
 }
 
-function claimFile(root) {
-  return path.join(path.resolve(root, git(['rev-parse', '--git-common-dir'], root)), 'brain-port-claims.json');
+// Port claims are machine-wide (DS3): two repositories on this machine must not get the same host ports before their
+// containers start. The file lives in the user's home, not in one repository's git directory.
+function claimFile() {
+  return path.join(require('os').homedir(), '.agent-brain', 'port-claims.json');
 }
 
 function readClaims(file) {
@@ -108,23 +110,38 @@ function readClaims(file) {
 
 // Parallel agents must not read the same free ports: take an exclusive lock file in the common git dir around
 // read, probe and write. A lock left by a crashed run is removed once it is older than a minute.
+// A lock records the process that holds it. It is reclaimed only when that process is gone, never by age alone, and
+// release removes only the lock this run wrote.
+function holderAlive(text) {
+  const pid = Number(String(text).split(' ')[0]);
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+}
+
 async function withLock(file, fn) {
   const lock = `${file}.lock`;
+  const token = `${process.pid} ${Date.now()} ${Math.random()}`;
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
   for (let attempt = 0; ; attempt++) {
     try {
-      const fd = fs.openSync(lock, 'wx');
-      fs.closeSync(fd);
+      fs.writeFileSync(lock, token, { flag: 'wx' });
       break;
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
-      let age;
-      try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; } // released between the two calls
-      if (age > 60000) { fs.rmSync(lock, { force: true }); continue; }
+      let held;
+      try { held = fs.readFileSync(lock, 'utf8'); } catch { continue; } // released between the two calls
+      if (!holderAlive(held)) {
+        // the holder is gone: remove its lock only if it is still the same one
+        try { if (fs.readFileSync(lock, 'utf8') === held) fs.rmSync(lock, { force: true }); } catch { /* gone */ }
+        continue;
+      }
       if (attempt > 600) throw new Error(`lock file is held by another run: ${lock}`);
       await new Promise(r => setTimeout(r, 100));
     }
   }
-  try { return await fn(); } finally { fs.rmSync(lock, { force: true }); }
+  try { return await fn(); } finally {
+    try { if (fs.readFileSync(lock, 'utf8') === token) fs.rmSync(lock, { force: true }); } catch { /* already gone */ }
+  }
 }
 
 // The owner is the name the agent declares with --owner on create and on remove. It guards against mistakes between
@@ -180,7 +197,7 @@ async function main(argv) {
       delete all[p.name];
       writeLedger(ledger, all);
     });
-    const file = claimFile(root);
+    const file = claimFile();
     await withLock(file, () => {
       const claims = readClaims(file);
       delete claims[p.name];
@@ -193,6 +210,8 @@ async function main(argv) {
   const declared = requireOwner(rest);
   const existing = readLedger(ledgerFile(root))[p.name];
   if (existing && existing.owner !== declared) throw new Error(`${p.name} belongs to ${existing.owner}, not ${declared}; refusing to take it over`);
+  // A directory with this name that the ledger does not record is not ours to reuse: refuse before any port is claimed.
+  if (!existing && fs.existsSync(p.worktree)) throw new Error(`${p.worktree} exists and the ledger does not record it; refusing to reuse it`);
   const base = optionValue(rest, '--base') || defaultBase(root, { fetch: !dryRun });
   const count = Number(optionValue(rest, '--ports') || 0);
   // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
@@ -200,7 +219,7 @@ async function main(argv) {
   if (count) {
     let psOutput = '';
     try { psOutput = execFileSync('docker', ['ps', '--format', '{{.Ports}}'], { encoding: 'utf8' }); } catch { /* docker not running: only the bind test applies */ }
-    const file = claimFile(root);
+    const file = claimFile();
     ports = await withLock(file, async () => {
       const claims = readClaims(file);
       const claimed = new Set(Object.entries(claims).filter(([k]) => k !== p.name).flatMap(([, v]) => v));
@@ -229,7 +248,7 @@ async function main(argv) {
       git(exists ? ['worktree', 'add', p.worktree, p.branch] : ['worktree', 'add', '--no-track', '-b', p.branch, p.worktree, base], root);
     } catch (err) {
       if (count) {
-        const file = claimFile(root);
+        const file = claimFile();
         await withLock(file, () => {
           const claims = readClaims(file);
           delete claims[p.name];
