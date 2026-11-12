@@ -157,9 +157,9 @@ function claimedElsewhere(claims, repo, name) {
 // (an exclusive create, so one contender at a time). While the marker exists, nobody else removes that lock, and the
 // remover re-checks that the lock still holds the dead token. A lock already replaced by a live holder is left alone.
 // Only a live holder can publish a new lock, and only when the name is free, so the check cannot race with a publish.
-// A marker older than MARKER_TIMEOUT_MS is left by a crashed contender and is removed.
-const MARKER_TIMEOUT_MS = 10000;
-
+// A marker is never removed by age: a contender can be suspended between its check and its removal, so the marker stays
+// until it is removed by hand. A marker left by a crashed contender blocks reclaiming that one dead lock; the timeout
+// error names the lock so it can be cleared.
 function holderAlive(text) {
   const pid = Number(String(text).split(' ')[0]);
   if (!pid) return false;
@@ -197,7 +197,6 @@ function reclaimStale(lock, judged) {
     fs.writeFileSync(marker, unique(), { flag: 'wx' });
   } catch (err) {
     if (err.code !== 'EEXIST') throw err;
-    try { if (Date.now() - fs.statSync(marker).mtimeMs > MARKER_TIMEOUT_MS) fs.rmSync(marker, { force: true }); } catch { /* gone */ }
     return false;
   }
   try {
@@ -218,7 +217,7 @@ async function withLock(file, fn) {
     const held = readToken(lock);
     const reclaimed = held !== null && !holderAlive(held) && reclaimStale(lock, held);
     if (reclaimed) continue;
-    if (attempt++ > 600) throw new Error(`lock file is held by another run: ${lock}`);
+    if (attempt++ > 600) throw new Error(`lock file is held by another run: ${lock} (if no run is active, remove it and any ${lock}.reclaim-* file)`);
     await new Promise(r => setTimeout(r, 100));
   }
   try { return await fn(); } finally {

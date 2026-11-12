@@ -359,6 +359,23 @@ test('a contender that judged a lock dead cannot remove the live lock that repla
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('a reclaim marker is never expired by age, so a suspended reclaimer keeps its right to the dead lock', () => {
+  const { reclaimStale } = require(SCRIPT);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'marker-'));
+  const lock = path.join(dir, 'claims.json.lock');
+  const dead = `${spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' }).pid} 0 0`;
+  fs.writeFileSync(lock, dead);
+  const digest = require('crypto').createHash('sha256').update(dead).digest('hex').slice(0, 16);
+  const marker = `${lock}.reclaim-${digest}`;
+  fs.writeFileSync(marker, 'suspended reclaimer');
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(marker, old, old);
+  assert.strictEqual(reclaimStale(lock, dead), false);
+  assert.strictEqual(fs.readFileSync(lock, 'utf8'), dead);
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('a legacy flat claim keeps its ports for a repository that creates the same environment name', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-home-'));
   fs.mkdirSync(path.join(home, '.agent-brain'));
