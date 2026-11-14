@@ -115,6 +115,29 @@ Claude Bash input is never rewritten and hooks do not return permission decision
 
 Normal abort/error/shutdown hooks are best effort. SIGKILL, indefinitely lagging transcripts, provider-internal calls and unsupported native schemas cannot be promised complete capture. Unknown model labels are omitted; available usage/cost is not proof of a subscription bill. Other harnesses and application runtimes are not covered.
 
+## Langfuse v4
+
+Langfuse Cloud is v4-only from 2026-11-16. This runtime already sends the v4 shape:
+
+- **Ingestion:** OTLP/HTTP JSON to `/api/public/otel/v1/traces` with `x-langfuse-ingestion-version: 4`. Nothing uses the legacy `/api/public/ingestion`.
+- **SDK:** pinned to `@langfuse/otel` 6.0.1, compatible with Langfuse v4, on Node 22+.
+- **Attributes:** v4 queries observations directly, so a value only on the root is invisible on its children. Every span carries `session.id`, `langfuse.trace.tags`, `langfuse.environment`, `langfuse.release` and its JSON-encoded `langfuse.observation.metadata.*`. Filter by session, tag or metadata (persona, harness, project, ticket, when known).
+- **Trace name:** `langfuse.trace.name` is set only on a root AGENT span. A child span read on its own reports its own name as `traceName`. Do not filter children by trace name.
+- **Input/output:** there is no trace-level input/output. Full-content capture puts available input/output on the observation it belongs to, including the root AGENT. Each surface has `metadata.inputStatus` or `metadata.outputStatus`; `unavailable`, `unsupported` and `refused_size` surfaces have no value.
+
+### Reading data back
+
+`GET /api/public/traces` and `/api/public/traces/{id}` are removed on Langfuse Cloud from 2026-11-16. Use the Observations API v2:
+
+```
+GET /api/public/v2/observations?traceId=<id>&fields=core,basic,io,metadata,model,usage,trace_context
+```
+
+- **Fields:** only the requested groups come back: `io` for input/output, `model` for the model, `trace_context` for tags, release and `traceName`. Content-absence checks require `io`; a field left out of the request is not evidence of absent content.
+- **Metadata:** values over 200 characters are truncated. Add `expandMetadata` for keys you compare in full, for example `expandMetadata=skillsLoaded,skillsInvoked`.
+- **Pagination:** pass each response's `meta.cursor` as the next request's `cursor`, with the same filters and fields, until `meta.cursor` is absent. A short or empty page is not the end while a cursor is present (default limit 50, maximum 1000).
+- **Several traces:** group the rows by `traceId` yourself.
+
 ## Verification
 
 Installer consent and shared content-flow support do not themselves prove that a native adapter supplies all available fields. Integrate the corresponding Pi/Claude adapter revision before claiming full-content capture, then verify it natively. Offline suites exercise projections, protocol races, adapters, outbox retries and local synthetic HTTP. Native wiring tests use temporary configuration/trust stores without model calls. Live acceptance requires fetching actual observations after indexing delay and checking positive coverage, IDs/types/nesting, metadata, unique model/tool counts and outcomes. Metadata-only checks require absent content/canaries. Full-content checks instead require positive actual prompt/response/tool JSON coverage, intentional synthetic PII retention, credential-canary absence, explicit unavailable/unsupported/size statuses and replay behavior. Earlier metadata-only evidence does not prove full-content capture; fresh affected native runs and final-revision reviews remain necessary. Neither a passing test, an empty outbox nor HTTP 200 proves that by itself.
