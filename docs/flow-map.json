@@ -884,34 +884,22 @@
       "id": "claude-tracing",
       "name": "Trace a Claude Code session",
       "area": "Infrastructure",
-      "summary": "Native hooks hand each event to bounded processes; tracing may drop data but never slows or blocks the session.",
+      "summary": "Each hook event is processed in native order by a capped work process; tracing may drop data but never slows or blocks the session.",
       "steps": [
         [
-          "Hook receives the event and returns within its cap (inline events) or after a pipe handoff (all others)",
+          "Hook receives the event, spawns its work process, and waits at most the cap",
           "det",
           "runtime/langfuse/bootstrap-claude.cjs",
           null
         ],
         [
-          "Inline work: actor, prompt, model, PreToolUse and turn-ending events, killed with its process group past the cap",
+          "Work process applies the event and reads a budgeted transcript slice; killed with its process group past the cap",
           "det",
           "runtime/langfuse/claude.cjs",
           null
         ],
         [
-          "Admit at most 8 detached processes (3 per session) under the admit lock; drop the event when full",
-          "det",
-          "runtime/langfuse/claude.cjs",
-          null
-        ],
-        [
-          "Detached work: per-session ticket-ordered hook lock, budgeted transcript reconciliation that saves its cursor",
-          "det",
-          "runtime/langfuse/claude.cjs",
-          null
-        ],
-        [
-          "One flusher delivers the outbox to Langfuse; every exit and the lifetime cap kill the process group",
+          "One background uploader delivers captured records to Langfuse; its lifetime cap kills its process group",
           "det",
           "runtime/langfuse/export.cjs",
           null

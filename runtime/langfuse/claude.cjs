@@ -133,7 +133,7 @@ function scanTranscript(file, cursor, visit, diagnostic = () => {}, deadlineAt =
           const text = Buffer.concat([line, buffer.subarray(start, i)]).toString('utf8');
           let row;
           try { row = JSON.parse(text); } catch { diagnostic('transcript_invalid_row'); }
-          if (row && typeof row === 'object') visit(row, offset + i + 1);
+          if (row && typeof row === 'object') visit(row, offset + i + 1, stat.ino);
         } else diagnostic('transcript_line_refused_size');
         committed = offset + i + 1;
         line = Buffer.alloc(0);
@@ -497,7 +497,7 @@ function reconcileTranscript(flow, run, file, childId, deadlineAt = Infinity) {
   const cursorKey = key(flow, 'cursor', run.nativeSessionId, file);
   const cursor = flow.readState(cursorKey);
   const generations = new Map();
-  const next = scanTranscript(file, cursor, (row, position) => {
+  const next = scanTranscript(file, cursor, (row, position, inode) => {
     // Main transcripts can carry sidechain records. Never attribute these to
     // the root or infer a child from its name/path/most recent dispatch.
     if (row.agentId && row.agentId !== childId) return;
@@ -529,9 +529,12 @@ function reconcileTranscript(flow, run, file, childId, deadlineAt = Infinity) {
       startTime: state.startTime, endTime: state.endTime,
       ...(state.model ? { model: state.model, provider: 'anthropic' } : {}),
       usage: state.usage, outcome: 'completed' }));
-    // Publish in small batches inside the scan, so the scan's deadline also
-    // bounds publication (a replayed row only republishes the same ID).
-    if (generations.size >= 25) { submitRecords(flow, run, [...generations.values()]); generations.clear(); }
+    // Publish in small batches and save the cursor with each, so a hook killed
+    // at its cap still keeps the progress it made.
+    if (generations.size >= 25) {
+      submitRecords(flow, run, [...generations.values()]); generations.clear();
+      flow.writeState(cursorKey, { offset: position, inode });
+    }
   }, undefined, deadlineAt);
   if (generations.size) submitRecords(flow, run, [...generations.values()]);
   if (next) flow.writeState(cursorKey, next);
@@ -601,15 +604,6 @@ async function processClaudeHook(payload, options = {}) {
   contentEpoch(flow, run, transcript, now);
   const effort = EFFORTS.has(payload.effort?.level) ? payload.effort.level : undefined;
   if (effort) run = flow.update(run, { requestedEffort: effort });
-  if (options.reconcileOnly === true) {
-    // Follow-up of an inline terminal event: read the turn's last transcript
-    // rows without touching prompt, activity or terminal state.
-    reconcileTranscript(flow, run, transcript, childId, reconcileDeadline ?? Infinity);
-    reconcileContent(flow, run, transcript, childId, now, reconcileDeadline ?? Infinity);
-    if (options.flush !== false) await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
-    return null;
-  }
-
   if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
     const promptId = identity(payload.prompt_id);
     // Identified prompts can be deduplicated. Native versions that omit the
@@ -812,36 +806,25 @@ async function processClaudeHook(payload, options = {}) {
 }
 
 // Observability must never slow the session down; dropping data is acceptable.
-// A native hook therefore returns within a hard cap and moves all other work to
-// separate processes. Each runs in its own process group with a supervising
-// main thread and the work in a worker thread, so a synchronous native call
-// (lock wait, fsync, git) cannot delay the deadline: at the deadline the whole
-// group, subprocesses included, is killed. A thread alone is not enough:
-// process exit waits for a worker blocked in a native call.
-// - Inline events: the hook waits for an 'inline' process up to the cap and
-//   kills it past the cap. They are the actor events, which return
-//   additionalContext, and the rare order-sensitive prompt and model events,
-//   which must apply to the turn they belong to. No reconciliation or delivery.
-// - Every other event is piped (never written to disk) to an 'event' process
-//   and the hook exits. Event processes take the 'hook' lock in ticket order,
-//   reconcile within a budget, then one of them delivers ('flusher' lock); the
-//   rest leave a request.
+// Every hook event is processed in Claude's native hook order, by a work
+// process the hook waits for up to a hard cap. The work process runs in its own
+// process group, with the work in a worker thread and a supervising main
+// thread; at the cap the hook kills the whole group, subprocesses included (a
+// thread alone is not enough: process exit waits for a worker blocked in a
+// native call). The event is then dropped. Reading the transcript is bounded by
+// a small budget per hook and resumes at the saved cursor. Only delivery to
+// Langfuse runs in the background, by one uploader at a time; it publishes
+// records already captured and never touches turn state.
 const ACTOR_EVENTS = Object.freeze(['SessionStart', 'UserPromptSubmit', 'SubagentStart']);
-// PreToolUse is inline so a dispatch is bound to its caller before the tool
-// runs (and before its PostToolUse); it is registered only for these tools.
+const TERMINAL_EVENTS = Object.freeze(['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd']);
+// PreToolUse binds a dispatch to its caller; it is registered only for these.
 const PRE_TOOLS = Object.freeze(['Agent', 'Task', 'Skill']);
 const HOOK_MATCHERS = Object.freeze({ PreToolUse: PRE_TOOLS.join('|') });
-// Turn-ending events are inline too: every prompt, activity and terminal
-// mutation then happens in hooks Claude runs one after another, so no detached
-// event can interleave with them. Detached work never touches turn state.
-const TERMINAL_EVENTS = Object.freeze(['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd']);
-const INLINE_EVENTS = Object.freeze([...ACTOR_EVENTS, 'UserPromptExpansion', 'PostModelSwitch', 'PreToolUse', ...TERMINAL_EVENTS]);
-const LIMITS = Object.freeze({ inlineMs: 1500, inlineMaxMs: 5000, handoffMs: 1000, queueMs: 10000,
-  reconcileMs: 3000, flushPassMs: 2000, lifetimeMs: 60000, maxDetached: 8, maxPerSession: 3 });
+const LIMITS = Object.freeze({ inlineMs: 1500, inlineMaxMs: 5000, handoffMs: 1000,
+  reconcileMs: 300, flushPassMs: 2000, lifetimeMs: 60000 });
 const DETACHED = '--agent-brain-detached';
 // Overrides for slow machines and tests, clamped so the hook still fits under
-// Claude's 8-second native timeout and detached work stays short-lived.
-const sessionTag = sessionId => require('node:crypto').createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 16);
+// Claude's 8-second native timeout and the uploader stays short-lived.
 function limit(name, fallback, min, max, env = process.env) {
   const value = Number(env[name]);
   return Number.isFinite(value) && value > 0 ? Math.min(max, Math.max(min, value)) : fallback;
@@ -851,10 +834,12 @@ const killGroup = pid => { try { process.kill(-pid, 'SIGKILL'); } catch { /* alr
 function spawnWorkProcess(mode, receivedAt, lifetimeMs, extra = [], env = process.env) {
   return require('node:child_process').spawn(process.execPath,
     [__filename, DETACHED, mode, String(receivedAt), String(lifetimeMs), ...extra],
-    { detached: true, env, stdio: ['pipe', mode === 'inline' ? 'pipe' : 'ignore', 'ignore'] });
+    { detached: true, env, stdio: ['pipe', mode === 'event' ? 'pipe' : 'ignore', 'ignore'] });
 }
 
-function runInline(payload, receivedAt, options) {
+// The hook only spawns, pipes and waits: it performs no synchronous state I/O,
+// so a stalled filesystem or lock cannot hold it past the cap.
+function runEvent(payload, receivedAt, options) {
   return new Promise(resolve => {
     let child, done = false;
     const chunks = [];
@@ -869,7 +854,7 @@ function runInline(payload, receivedAt, options) {
     const timer = setTimeout(() => finish(null), cap);
     try {
       // The child's own lifetime is a backstop if this hook process is killed.
-      child = spawnWorkProcess('inline', receivedAt, cap + 500, options.acknowledgeSession === true ? ['ack'] : [], options.env);
+      child = spawnWorkProcess('event', receivedAt, cap + 500, options.acknowledgeSession === true ? ['ack'] : [], options.env);
       child.once('error', () => finish(null));
       child.stdout.on('data', chunk => chunks.push(chunk));
       child.once('close', () => {
@@ -883,122 +868,8 @@ function runInline(payload, receivedAt, options) {
   });
 }
 
-// Admission control: at most LIMITS.maxDetached detached processes at once, and
-// at most LIMITS.maxPerSession for one session, so neither a burst nor one
-// session's backlog can pile up processes or crowd out other sessions. Each
-// process holds one slot file naming a live PID (the hook's own while it
-// spawns, then the child's) and its tag (a session hash, or 'flush'). Slots are
-// claimed and reclaimed only under the 'admit' lock, so two hooks can never
-// reclaim the same dead slot. A slot older than any process can live is stale
-// whatever PID it names, so a reused PID cannot hold it for long. When
-// admission cannot be established (no private state directory, lock busy past
-// its budget), the event is dropped: nothing is ever spawned untracked.
-function privateStateDir(env) {
-  // The same directory createFlow uses (flow.cjs), created private if absent.
-  const dir = env.BRAIN_TRACE_STATE_DIR || path.join(require('node:os').homedir(), '.cache', 'agent-brain', 'tracing-state');
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const stat = fs.lstatSync(dir);
-    const owned = typeof process.getuid !== 'function' || stat.uid === process.getuid();
-    return stat.isDirectory() && !stat.isSymbolicLink() && owned && !(stat.mode & 0o077) ? dir : null;
-  } catch { return null; }
-}
-function liveSlot(file) {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || Date.now() - stat.mtimeMs > LIMITS.lifetimeMs + 5000) return null;
-  const [pidText, tag] = fs.readFileSync(file, 'utf8').split(' ');
-  const pid = Number(pidText);
-  if (!(Number.isSafeInteger(pid) && pid > 0)) return null; // Published whole, under the lock.
-  try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') return null; }
-  return { tag };
-}
-function underAdmitLock(stateDir, fn) {
-  const deadlineAt = Date.now() + 500;
-  let lock;
-  try {
-    lock = require('./locks.cjs').claimLock(stateDir, 'admit', { deadlineAt });
-    while (lock.blocked()) {
-      if (Date.now() >= deadlineAt) return null;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-    }
-    return fn();
-  } catch { return null; } finally { lock?.release(); }
-}
-// Slot contents change only under the lock and by atomic rename, so a reader
-// never sees a half-written slot.
-function publishSlot(file, text) {
-  const temporary = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, text, { flag: 'w', mode: 0o600 });
-  fs.renameSync(temporary, file);
-}
-// tag: a session hash for event work, 'flush' for a delivery-only process,
-// which is pointless while any work process is alive (it delivers on exit).
-function claimSlot(env, tag) {
-  const stateDir = privateStateDir(env);
-  if (!stateDir) return null;
-  const dir = path.join(stateDir, 'hook-slots');
-  return underAdmitLock(stateDir, () => {
-    try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') return null; }
-    const live = [], free = [];
-    for (let i = 0; i < LIMITS.maxDetached; i++) {
-      const file = path.join(dir, `slot-${i}`);
-      let slot = null;
-      try { slot = liveSlot(file); } catch (error) { if (error.code !== 'ENOENT') return null; }
-      if (slot) live.push(slot);
-      else { fs.rmSync(file, { force: true }); free.push(file); }
-    }
-    if (tag === 'flush' && live.length) {
-      // A running work process delivers before it exits; ask it for one more pass.
-      try { fs.writeFileSync(path.join(stateDir, 'claude-flush-request'), String(Date.now()), { mode: 0o600 }); } catch { /* best effort */ }
-      return null;
-    }
-    if (!free.length || live.filter(slot => slot.tag === tag).length >= LIMITS.maxPerSession) return null;
-    publishSlot(free[0], `${process.pid} ${tag}`);
-    return { file: free[0], tag, stateDir };
-  });
-}
-// Hand the slot from this hook to its child, only if the slot is still ours.
-function transferSlot(slot, pid) {
-  return underAdmitLock(slot.stateDir, () => {
-    if (fs.readFileSync(slot.file, 'utf8') !== `${process.pid} ${slot.tag}`) return null;
-    publishSlot(slot.file, `${pid} ${slot.tag}`);
-    return true;
-  }) === true;
-}
-
-function spawnDetached(mode, input, receivedAt, env) {
-  const slot = claimSlot(env, mode === 'flush' ? 'flush' : sessionTag(input.session_id));
-  if (!slot) return Promise.resolve(); // Full, redundant or unavailable: drop.
-  return new Promise(resolve => {
-    let child;
-    // A handoff that does not finish in time is abandoned: destroy the pipe so
-    // it cannot keep the hook alive, and kill the child that is not reading.
-    // Its slot then names a dead PID and is reclaimed under the lock.
-    const timer = setTimeout(() => {
-      try { child?.stdin.destroy(); } catch { /* already closed */ }
-      if (child?.pid) killGroup(child.pid);
-      resolve();
-    }, LIMITS.handoffMs);
-    const done = () => { clearTimeout(timer); resolve(); };
-    try {
-      child = spawnWorkProcess(mode, receivedAt,
-        limit('BRAIN_TRACE_HOOK_LIFETIME_MS', LIMITS.lifetimeMs, 1000, LIMITS.lifetimeMs, env), [], env);
-      // The slot names this live hook until the transfer commits. A transfer
-      // that cannot commit would leave the child uncounted, so kill it.
-      if (!child.pid || !transferSlot(slot, child.pid)) {
-        if (child.pid) killGroup(child.pid);
-        done(); return;
-      }
-      child.once('error', done);
-      child.stdin.once('error', done);
-      child.unref();
-      child.stdin.end(JSON.stringify(input), done);
-    } catch { done(); } // A slot left naming this hook is reclaimed once it exits.
-  });
-}
-
 /** Production entry for a native hook: bounded, fails open, returns actor
- * additionalContext or null. Options: acknowledgeSession, inlineMs (tests). */
+ * additionalContext or null. Options: acknowledgeSession, env, inlineMs (tests). */
 async function runClaudeHook(payload, options = {}) {
   options = { ...options, env: options.env || process.env };
   try {
@@ -1006,18 +877,9 @@ async function runClaudeHook(payload, options = {}) {
       || !identity(payload.session_id)) return null;
     // Older settings register PreToolUse for every tool; never pay for those.
     if (payload.hook_event_name === 'PreToolUse' && !PRE_TOOLS.includes(payload.tool_name)) return null;
-    const receivedAt = Date.now();
     const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
-    if (INLINE_EVENTS.includes(payload.hook_event_name)) {
-      const output = await runInline({ ...payload, cwd }, receivedAt, options);
-      // A turn's end leaves its last transcript rows to read; others only deliver.
-      if (TERMINAL_EVENTS.includes(payload.hook_event_name)) await spawnDetached('reconcile', { ...payload, cwd }, receivedAt, options.env);
-      else await spawnDetached('flush', { cwd }, receivedAt, options.env);
-      return output;
-    }
-    await spawnDetached('event', { ...payload, cwd }, receivedAt, options.env);
-  } catch { /* Observability failures never block a tool or session. */ }
-  return null;
+    return await runEvent({ ...payload, cwd }, Date.now(), options);
+  } catch { return null; } // Observability failures never block a tool or session.
 }
 
 /** Tests inject a flow and run in-process; native callers get the bounded path. */
@@ -1064,51 +926,61 @@ async function underLock(stateDir, kind, waitMs, fn) {
 
 // One deliverer at a time. A process that finds the flusher busy leaves a
 // request timestamp; the flusher repeats while requests arrive after its pass.
+// The short wait covers a peer still choosing its ticket, so two finishing
+// processes cannot both back off.
 async function flushSingleFlight(flow, endAt) {
   const request = path.join(flow.stateDir, 'claude-flush-request');
   const requestedAt = () => { try { return Number(fs.readFileSync(request, 'utf8')) || 0; } catch { return 0; } };
-  try { fs.writeFileSync(request, String(Date.now()), { mode: 0o600 }); } catch { /* best effort */ }
   for (let attempt = 0; attempt < 2; attempt++) {
     let passStart = 0;
-    const result = await underLock(flow.stateDir, 'flusher', 0, async () => {
+    const result = await underLock(flow.stateDir, 'flusher', 250, async () => {
       do {
         passStart = Date.now();
         await flow.flush({ timeoutMs: Math.min(LIMITS.flushPassMs, Math.max(0, endAt - Date.now())) });
       } while (requestedAt() >= passStart && Date.now() < endAt - 1000);
     });
-    // Busy: the holder sees our request. Done: retry once only for a request
+    // Busy: the holder sees the request. Done: retry once only for a request
     // that landed between the last pass and the release.
     if (!result.acquired || requestedAt() < passStart || Date.now() >= endAt - 1000) return;
   }
 }
 
+// After an event: ask for delivery, and start the uploader unless one runs.
+// A rare duplicate uploader finds the lock busy and exits.
+function requestDelivery(flow, cwd, receivedAt) {
+  try { fs.writeFileSync(path.join(flow.stateDir, 'claude-flush-request'), String(Date.now()), { mode: 0o600 }); } catch { return Promise.resolve(); }
+  let running = false;
+  try { running = fs.readdirSync(path.join(flow.stateDir, 'flusher-claims')).some(name => !name.startsWith('.')); } catch { /* none yet */ }
+  if (running) return Promise.resolve();
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, LIMITS.handoffMs);
+    try {
+      const child = spawnWorkProcess('flush', receivedAt, limit('BRAIN_TRACE_HOOK_LIFETIME_MS', LIMITS.lifetimeMs, 1000, LIMITS.lifetimeMs));
+      child.once('error', () => { clearTimeout(timer); resolve(); });
+      child.stdin.once('error', () => {});
+      child.unref();
+      child.stdin.end(JSON.stringify({ cwd }), () => { clearTimeout(timer); resolve(); });
+    } catch { clearTimeout(timer); resolve(); }
+  });
+}
+
 // Runs in a work process's worker thread.
-async function detachedWork(mode, input, receivedAt, endAt, acknowledgeSession) {
+async function work(mode, input, receivedAt, endAt, acknowledgeSession) {
   if (!input || typeof input.cwd !== 'string' || killed(process.env)) return null;
   const env = process.env;
-  if (mode === 'inline') {
-    return processClaudeHook(input, { env, acknowledgeSession, clock: () => receivedAt, reconcile: false, flush: false });
-  }
   const flow = require('./flow.cjs').createFlow({ harness: 'claude', cwd: input.cwd, env });
-  if (mode === 'event' || mode === 'reconcile') {
-    // Ordering is per session: one session's backlog never delays another's.
-    const sessionDir = path.join(flow.stateDir, 'hook-sessions', sessionTag(input.session_id));
-    try { fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 }); } catch { return null; }
-    await underLock(sessionDir, 'hook', LIMITS.queueMs, () => processClaudeHook(input, { flow, env,
-      clock: () => receivedAt, reconcileBudgetMs: LIMITS.reconcileMs, reconcileOnly: mode === 'reconcile', flush: false }));
-    // Best effort: a racing claimant that loses its directory drops one event.
-    for (const dir of [path.join(sessionDir, 'hook-claims'), sessionDir]) try { fs.rmdirSync(dir); } catch { break; }
-  }
-  await flushSingleFlight(flow, endAt);
-  return null;
+  if (mode === 'flush') { await flushSingleFlight(flow, endAt); return null; }
+  const output = await processClaudeHook(input, { flow, env, acknowledgeSession, clock: () => receivedAt,
+    reconcileBudgetMs: LIMITS.reconcileMs, flush: false });
+  await requestDelivery(flow, input.cwd, receivedAt);
+  return output;
 }
 
 // A work process's main thread only supervises: synchronous work in the worker
-// cannot delay the lifetime cap, which kills the whole process group.
-// Every exit path kills the whole group, so a subprocess's background child
-// cannot outlive the deadline by outliving this process.
+// cannot delay the lifetime cap. Every exit path kills the whole group, so a
+// subprocess's background child cannot outlive this process.
 function endGroup() { killGroup(process.pid); process.exit(0); }
-async function detachedMain(mode, receivedAt, lifetimeMs, acknowledgeSession) {
+async function workMain(mode, receivedAt, lifetimeMs, acknowledgeSession) {
   const endAt = Date.now() + lifetimeMs;
   setTimeout(endGroup, lifetimeMs);
   let input;
@@ -1117,7 +989,7 @@ async function detachedMain(mode, receivedAt, lifetimeMs, acknowledgeSession) {
   const worker = new Worker(__filename, { stdout: true, stderr: true,
     workerData: { agentBrainClaudeWork: true, mode, input, receivedAt, endAt, acknowledgeSession } });
   worker.once('message', output => {
-    if (mode === 'inline' && output) process.stdout.write(JSON.stringify(output), endGroup);
+    if (mode === 'event' && output) process.stdout.write(JSON.stringify(output), endGroup);
     else endGroup();
   });
   worker.once('error', endGroup);
@@ -1127,14 +999,14 @@ async function detachedMain(mode, receivedAt, lifetimeMs, acknowledgeSession) {
 const threads = require('node:worker_threads');
 if (!threads.isMainThread && threads.workerData?.agentBrainClaudeWork === true) {
   const { mode, input, receivedAt, endAt, acknowledgeSession } = threads.workerData;
-  detachedWork(mode, input, receivedAt, endAt, acknowledgeSession)
+  work(mode, input, receivedAt, endAt, acknowledgeSession)
     .then(output => threads.parentPort.postMessage(output || null), () => threads.parentPort.postMessage(null));
 } else if (require.main === module && process.argv[2] === DETACHED) {
   const [mode, received, lifetime, ack] = process.argv.slice(3);
   const receivedAt = Number(received), lifetimeMs = Number(lifetime);
-  detachedMain(mode, Number.isFinite(receivedAt) ? receivedAt : Date.now(),
+  workMain(mode, Number.isFinite(receivedAt) ? receivedAt : Date.now(),
     Number.isFinite(lifetimeMs) && lifetimeMs > 0 ? Math.min(lifetimeMs, LIMITS.lifetimeMs) : LIMITS.lifetimeMs,
     ack === 'ack').catch(endGroup);
 }
 
-module.exports = { _admission: { claimSlot, transferSlot }, HOOK_EVENTS, HOOK_MATCHERS, ACTOR_EVENTS, TERMINAL_EVENTS, INLINE_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };
+module.exports = { HOOK_EVENTS, HOOK_MATCHERS, ACTOR_EVENTS, TERMINAL_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };

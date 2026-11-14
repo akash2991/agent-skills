@@ -36,9 +36,13 @@ function ownProcessStart() {
   return ownStart;
 }
 function alive(owner, hashed = false) {
-  try { process.kill(owner.pid, 0); }
-  catch (error) { return error.code !== 'ESRCH'; }
   const cacheKey = `${owner.pid}:${hashed}:${owner.start}`;
+  try { process.kill(owner.pid, 0); }
+  catch (error) {
+    if (error.code !== 'ESRCH') return true;
+    verifiedAlive.delete(cacheKey); // Dead peers never stay cached.
+    return false;
+  }
   if (owner.start && Date.now() - (verifiedAlive.get(cacheKey) ?? -Infinity) < VERIFIED_TTL_MS) return true;
   // Legacy null-birth records are deliberately conservative: an existing PID
   // is insufficient evidence for recovery. An operator must stop that owner
@@ -83,7 +87,7 @@ function remove(file, expected) {
   return true;
 }
 function claimLock(stateDir, kind, { deadlineAt = Date.now() + 5000 } = {}) {
-  if (!['queue', 'flush', 'context', 'hook', 'flusher', 'admit'].includes(kind)) throw new Error('Invalid lock kind');
+  if (!['queue', 'flush', 'context', 'flusher'].includes(kind)) throw new Error('Invalid lock kind');
   const budget = () => { if (Date.now() >= deadlineAt) throw new Error('Lock budget exceeded'); };
   budget();
   const start = ownProcessStart();

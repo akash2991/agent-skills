@@ -22,10 +22,8 @@ function fixture(t) {
     // The Claude hook hands work to detached processes. Let them release the
     // state directory before removing it.
     const state = path.join(root, 'state'), end = Date.now() + 20000;
-    // Each detached process holds a slot naming its PID until it exits.
-    const busy = () => { try { return fs.readdirSync(path.join(state, 'hook-slots')).some(name => {
-      try { process.kill(Number(fs.readFileSync(path.join(state, 'hook-slots', name), 'utf8').split(' ')[0]), 0); return true; }
-      catch { return false; } }); } catch { return false; } };
+    // The background uploader holds a 'flusher' claim while it runs.
+    const busy = () => { try { return fs.readdirSync(path.join(state, 'flusher-claims')).length > 0; } catch { return false; } };
     await new Promise(resolve => setTimeout(resolve, 300));
     while (busy() && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 100));
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
