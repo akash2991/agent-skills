@@ -1,14 +1,24 @@
 # Changelog
 
-One file for the whole project, newest first, by release (semver). Each entry lists its tickets, per surface.
+The project's global changelog, newest first. Each surface (backend, web, mobile) has its own semver and its own section. Every merged change adds its line, with its ticket, under its surface's Unreleased, grouped by Added / Changed / Fixed / Deprecated / Removed / Security; a service that keeps its own `CHANGELOG.md` gets the line there too. Cutting a release renames that surface's Unreleased to the new version and date and tags it `<surface>-vX.Y.Z`.
 
-## Unreleased
+## Backend
 
-### Backend
-- <ticket> — <one line>
+### Unreleased
 
-### Web
-- <ticket> — <one line>
+#### Added
+- <ticket> — <what changed, for whoever uses it>
 
-### Mobile
-- <ticket> — <one line>
+## Web
+
+### Unreleased
+
+#### Fixed
+- <ticket> — <what changed, for whoever uses it>
+
+## Mobile
+
+### Unreleased
+
+#### Changed
+- <ticket> — <what changed, for whoever uses it>

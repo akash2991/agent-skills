@@ -84,7 +84,7 @@ Every rule you will meet is an application of one of these:
 3. **Stable and agreed interfaces, so agents work in parallel**: contracts first, then independent work (`development-setup`).
 4. **Colocation**: feature-first folders, never type-first (Architecture, below).
 5. **Validation happens in the backend**; the frontend does none, and typed clients keep it from calling with an invalid structure (`coding-standards`).
-6. **A changelog and semver for every release** (`continuous-delivery`).
+6. **Semver for every surface, and a changelog line for every change**: backend, web, and mobile app each carry their own version (`continuous-delivery`).
 7. **Deterministic over agentic**: a workflow is code, scripts, and checks; a model decides only the step that cannot be written down (`deterministic-workflows`).
 
 ### Stack

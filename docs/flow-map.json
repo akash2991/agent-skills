@@ -147,7 +147,7 @@
           "P11"
         ],
         [
-          "Write the changelog line",
+          "Write the changelog line under the surface's Unreleased",
           "judgment",
           null,
           "P13"
@@ -240,22 +240,22 @@
       "id": "release",
       "name": "Release a version",
       "area": "Git and delivery",
-      "summary": "L1: semver, a changelog entry listing the tickets, a tag and a GitHub release.",
+      "summary": "L1: one surface (backend, web, mobile) at a time: its semver, its changelog entry listing the tickets, a tag and a GitHub release.",
       "steps": [
         [
-          "Pick the semver bump from the change's consumer impact",
+          "Pick the surface's semver bump from its Unreleased lines' impact",
           "judgment",
           null,
           "L1"
         ],
         [
-          "Write the changelog entry from the merged tickets",
+          "Rename the surface's Unreleased to the new version and date",
           "judgment",
           null,
           "L1"
         ],
         [
-          "Tag vX.Y.Z and publish the release",
+          "Tag <surface>-vX.Y.Z and publish the release",
           "det",
           null,
           "L1"

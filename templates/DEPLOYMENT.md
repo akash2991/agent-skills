@@ -13,7 +13,7 @@ How this project ships.
 
 ## Releases
 
-<how a release is cut and tagged here; where the changelog entry goes>
+<how each surface (backend, web, mobile) is versioned, cut, and tagged here (`<surface>-vX.Y.Z`); where its changelog entry goes; for mobile, where CI takes the store build number from>
 
 ## Feature flags
 
