@@ -115,6 +115,18 @@ Claude Bash input is never rewritten and hooks do not return permission decision
 
 Normal abort/error/shutdown hooks are best effort. SIGKILL, indefinitely lagging transcripts, provider-internal calls and unsupported native schemas cannot be promised complete capture. Unknown model labels are omitted; available usage/cost is not proof of a subscription bill. Other harnesses and application runtimes are not covered.
 
+## Langfuse v4
+
+Langfuse Cloud is v4-only from 2026-11-16. This runtime already sends the v4 shape:
+
+- **Ingestion:** OTLP/HTTP JSON to `/api/public/otel/v1/traces` with `x-langfuse-ingestion-version: 4`. Nothing uses the legacy `/api/public/ingestion`.
+- **SDK:** `@langfuse/otel` 6.x, the major v4 requires, on Node 22+.
+- **Attributes:** v4 queries observations directly, so a value only on the root is invisible on its children. Every span carries `session.id`, `langfuse.trace.tags`, `langfuse.environment`, `langfuse.release` and its JSON-encoded `langfuse.observation.metadata.*`. Filter by session, tag or metadata (persona, harness, project, ticket).
+- **Trace name:** `langfuse.trace.name` is set only on a root AGENT span. A child span read on its own reports its own name as `traceName`. Do not filter children by trace name.
+- **Input/output:** there is no trace-level input/output. Full-content capture puts input/output on each observation, including the root AGENT.
+
+To read data back, use the Observations API v2: `GET /api/public/v2/observations?traceId=<id>&fields=core,basic,metadata,usage`, paginated by `cursor`, grouped by `traceId`. `GET /api/public/traces` and `/api/public/traces/{id}` are removed on Langfuse Cloud from 2026-11-16.
+
 ## Verification
 
 Installer consent and shared content-flow support do not themselves prove that a native adapter supplies all available fields. Integrate the corresponding Pi/Claude adapter revision before claiming full-content capture, then verify it natively. Offline suites exercise projections, protocol races, adapters, outbox retries and local synthetic HTTP. Native wiring tests use temporary configuration/trust stores without model calls. Live acceptance requires fetching actual observations after indexing delay and checking positive coverage, IDs/types/nesting, metadata, unique model/tool counts and outcomes. Metadata-only checks require absent content/canaries. Full-content checks instead require positive actual prompt/response/tool JSON coverage, intentional synthetic PII retention, credential-canary absence, explicit unavailable/unsupported/size statuses and replay behavior. Earlier metadata-only evidence does not prove full-content capture; fresh affected native runs and final-revision reviews remain necessary. Neither a passing test, an empty outbox nor HTTP 200 proves that by itself.
