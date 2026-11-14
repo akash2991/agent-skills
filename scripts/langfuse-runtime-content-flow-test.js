@@ -511,3 +511,16 @@ test('closing a dispatch observation under capacity pressure is durable and does
   assert.equal((result.queued || 0) + (result.pending || 0), 1);
   assert.equal(flow.readObservation(key), null);
 });
+
+test('a source already reclaimed after its durable submission does not fail the close', t => {
+  const f = fixture(t); configurePrivacy({ sensitiveLiterals: [LITERAL] });
+  let source;
+  // The queue accepts the record, and the source disappears inside that same
+  // submission, as when admission reclaims it under pressure.
+  const flow = f.flow({ queueObservation: () => { fs.unlinkSync(source); return { queued: true }; } });
+  const run = f.begin(flow);
+  flow.writeObservation('reclaimed', flow.captureObservation(run, contentRecord(flow, run)));
+  source = flow.stateFile('reclaimed');
+  assert.deepEqual(flow.closeObservation('reclaimed'), { queued: 1, pending: 0 });
+  assert.equal(fs.existsSync(source), false);
+});

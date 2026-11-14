@@ -290,12 +290,13 @@ function createFlow(options = {}) {
   // Opaque native adapter keys cannot be reverse-mapped to a session. Record
   // their owner at the flow boundary, without persisting keys or native paths.
   // Legacy/ownerless checkpoints are reclaimed only when no references survive.
-  // With `quarantine` (capacity pressure only, FAC-7) the same reference
-  // analysis also moves two kinds of stale file that the rules below otherwise
-  // keep forever: pre-ticket deferred batches, which replay never sends, and
-  // ownerless checkpoints that nothing references. Owned, referenced or
-  // in-window files are never moved, and nothing moves when any reference is
-  // unknown. Returns the number of files moved.
+  // With `quarantine` (capacity pressure only, FAC-7) the same pass moves stale
+  // pre-ticket deferred batches, which replay never sends and nothing reads,
+  // into a private quarantine; they then stop pinning their runs for ordinary
+  // reclamation. Nothing else moves. Ownerless checkpoints are never moved or
+  // deleted in this pass, and nothing moves or is deleted in it when any
+  // reference, including an unreadable top-level checkpoint, is unknown.
+  // Returns the number of files moved.
   function collect(deadlineAt = Infinity, { quarantine = false } = {}) {
     let moved = 0;
     if (Date.now() >= deadlineAt) return moved;
@@ -337,7 +338,14 @@ function createFlow(options = {}) {
       }
     }
     let unknownReference = false;
-    const legacyPending = [], orphans = [];
+    const legacyPending = [];
+    // An unreadable top-level checkpoint may hold the only reference to
+    // something: under pressure that is unknown, so the pass fails closed.
+    // Temporary publication slots and the diagnostics are not references.
+    if (quarantine) for (const [file, envelope] of entries) {
+      if (path.dirname(file) === adapterDir && !envelope && !file.endsWith('.tmp')
+        && !diagnosticFiles().includes(file)) { unknownReference = true; break; }
+    }
     for (const [file, batch] of entries) if (path.dirname(file) === pendingDir) {
       if (Date.now() >= deadlineAt) return;
       if (!batch) { unknownReference = true; continue; }
@@ -380,23 +388,20 @@ function createFlow(options = {}) {
         }
         for (const [file, envelope] of entries) {
           if (Date.now() >= deadlineAt) return;
-          if (path.dirname(file) !== adapterDir || !envelope || file === fileFor('health')) continue;
+          if (path.dirname(file) !== adapterDir || !envelope || diagnosticFiles().includes(file)) continue;
           const data = unwrap(envelope), stat = fs.lstatSync(file);
           const updatedAt = [1, 2].includes(envelope.checkpointVersion) ? envelope.updatedAt : stat.mtimeMs;
           if (!Number.isFinite(updatedAt) || clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) continue;
           if (unknownReference || roots.has(data?.run?.rootSpanId) || roots.has(data?.rootSpanId)
             || roots.has(envelope.ownerRoot) || sessions.has(envelope.ownerSession)) continue;
-          if (!envelope.ownerSession && (roots.size || sessions.size)) {
-            // Ownerless legacy state: never deleted here, but movable under
-            // pressure unless any run it names (including parent/caller) is live.
-            if (quarantine && ![data?.parent, data?.caller].some(run => roots.has(run?.rootSpanId))) orphans.push(file);
-            continue;
-          }
+          // Ownerless legacy state is never deleted in the quarantine pass:
+          // dropping the pre-ticket pins must not empty the reference set.
+          if (!envelope.ownerSession && (quarantine || roots.size || sessions.size)) continue;
           fs.unlinkSync(file);
         }
         // Still under queue ownership: no publisher can add a reference to
         // these files between the analysis above and the moves.
-        if (quarantine && !unknownReference) moved = moveToQuarantine([...legacyPending, ...orphans]);
+        if (quarantine && !unknownReference) moved = moveToQuarantine(legacyPending);
       });
     } catch { return moved; } // Unsafe/unknown state remains an explicit exporter refusal.
     return moved;
@@ -458,7 +463,9 @@ function createFlow(options = {}) {
     // Diagnostic writes never quarantine or record health: that would recurse.
     if (diagnosticOnly(writes)) throw new Error('Tracing checkpoint capacity exceeded');
     const moved = collect(Infinity, { quarantine: true }) || 0;
-    if (moved) noteCapacity({ quarantined: (readState('health')?.quarantined || 0) + moved, reason: 'adapter_capacity_quarantined' });
+    // `quarantined` counts the latest move only; other health writers replace
+    // the record. The quarantine folder itself is the complete record.
+    if (moved) noteCapacity({ quarantined: moved, reason: 'adapter_capacity_quarantined' });
     if (!fits()) {
       noteCapacity({ captureFailureObserved: true, reason: 'adapter_capacity' });
       throw new Error('Tracing checkpoint capacity exceeded');

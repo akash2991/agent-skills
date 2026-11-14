@@ -423,10 +423,13 @@ test('checkpoint expiry preserves live sessions, unresolved descendants and outb
 test('quarantine under capacity pressure preserves the same live and replay dependencies', t => dependencyScenario(t, true));
 
 // FAC-7: legacy files that the GC rules keep forever used to fill the cap and
-// refuse every new capture. Only never-sent pre-ticket batches and
-// unreferenced ownerless checkpoints may be quarantined, and only when stale.
+// refuse every new capture. Under pressure only stale pre-ticket batches (never
+// sent, never read) move to quarantine; ownerless checkpoints never move and
+// are never deleted by that pass, and nothing moves when a reference is unknown.
 const adapterFiles = stateDir => fs.readdirSync(path.join(stateDir, 'adapters')).filter(name => name.endsWith('.json')).length
   + fs.readdirSync(path.join(stateDir, 'adapters', 'pending')).length;
+const ownerlessFiles = stateDir => fs.readdirSync(path.join(stateDir, 'adapters')).filter(name => name.endsWith('.json'))
+  .filter(name => { try { return JSON.parse(fs.readFileSync(path.join(stateDir, 'adapters', name), 'utf8')).nonce === 'legacy'; } catch { return false; } }).length;
 function fillAdapters(stateDir, staleAt, { pendingShare = 0.7, total = ADAPTER_LIMITS.files } = {}) {
   const adapters = path.join(stateDir, 'adapters'), pending = path.join(adapters, 'pending');
   const free = total - adapterFiles(stateDir), batches = Math.floor(free * pendingShare);
@@ -438,25 +441,75 @@ function fillAdapters(stateDir, staleAt, { pendingShare = 0.7, total = ADAPTER_L
       : { nonce: 'legacy' }), { mode: 0o600 });
     if (staleAt) fs.utimesSync(file, staleAt / 1000, staleAt / 1000);
   }
+  return { batches, ownerless: free - batches };
 }
 const quarantined = stateDir => {
   const root = path.join(stateDir, 'quarantine'), walkAll = dir => fs.readdirSync(dir, { withFileTypes: true })
     .flatMap(entry => entry.isDirectory() ? walkAll(path.join(dir, entry.name)) : [entry.name]);
   return fs.existsSync(root) ? walkAll(root) : [];
 };
+const STALE = () => Date.now() - ADAPTER_LIMITS.retentionMs - 60000;
 
-test('a cap full of stale legacy files is quarantined, not deleted, and capture continues', t => {
-  const f = diskFixture(t); const flow = f.flow();
+test('stale pre-ticket batches are quarantined, ownerless state and diagnostics stay, capture continues', t => {
+  const f = diskFixture(t); let flow = f.flow();
+  flow.writeState('delivery', { verified: false });
+  f.advance(ADAPTER_LIMITS.retentionMs + 60000); flow = f.flow(); // delivery is now stale
   const live = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
-  const before = adapterFiles(f.stateDir);
-  fillAdapters(f.stateDir, Date.now() - ADAPTER_LIMITS.retentionMs - 60000);
+  const filled = fillAdapters(f.stateDir, STALE());
   flow.writeState('fac7-probe', { probe: 1 });
   assert.deepEqual(flow.readState('fac7-probe'), { probe: 1 });
-  assert.ok(flow.readState(`run:${live.rootSpanId}`), 'the live run is referenced and stays in place');
-  const held = quarantined(f.stateDir);
-  assert.equal(held.length, ADAPTER_LIMITS.files - before, 'every legacy filler moved; none deleted');
-  assert.equal(adapterFiles(f.stateDir), before + 2); // probe + health
-  assert.deepEqual(flow.readState('health'), { quarantined: held.length, reason: 'adapter_capacity_quarantined' });
+  assert.ok(flow.readState(`run:${live.rootSpanId}`), 'the live run stays in place');
+  assert.deepEqual(flow.readState('delivery'), { verified: false }, 'diagnostics are never reclaimed or moved');
+  assert.equal(quarantined(f.stateDir).length, filled.batches, 'exactly the pre-ticket batches moved');
+  assert.equal(ownerlessFiles(f.stateDir), filled.ownerless, 'no ownerless file moved or deleted');
+  assert.deepEqual(flow.readState('health'), { quarantined: filled.batches, reason: 'adapter_capacity_quarantined' });
+});
+
+test('with no live references the quarantine pass still never deletes ownerless state', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  const filled = fillAdapters(f.stateDir, STALE(), { pendingShare: 0.5 });
+  flow.writeState('fac7-probe', { probe: 1 });
+  assert.equal(quarantined(f.stateDir).length, filled.batches);
+  assert.equal(ownerlessFiles(f.stateDir), filled.ownerless);
+});
+
+for (const [label, exhaust] of [
+  ['file', root => { for (let i = 0; i < 16384; i++) fs.writeFileSync(path.join(root, `held-${i}`), ''); }],
+  ['byte', root => { const file = path.join(root, 'held'); fs.writeFileSync(file, ''); fs.truncateSync(file, 256 * 1024 * 1024); }]
+]) {
+  test(`an exhausted quarantine ${label} budget refuses admission without deleting anything`, t => {
+    const f = diskFixture(t); const flow = f.flow();
+    const root = path.join(f.stateDir, 'quarantine', 'adapters-held'); fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(f.stateDir, 'quarantine'), 0o700); exhaust(root);
+    const filled = fillAdapters(f.stateDir, STALE(), { pendingShare: 0.5 });
+    assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
+    assert.equal(fs.readdirSync(path.join(f.stateDir, 'adapters', 'pending')).length, filled.batches);
+    assert.equal(ownerlessFiles(f.stateDir), filled.ownerless);
+    assert.deepEqual(flow.readState('health'), { captureFailureObserved: true, reason: 'adapter_capacity' });
+  });
+}
+
+test('ownerless checkpoints of an older turn of a live session survive pressure', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  const live = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  const olderTurn = { rootSpanId: crypto.randomBytes(8).toString('hex'), nativeSessionId: live.nativeSessionId, harness: live.harness };
+  for (const [key, data] of [['older-run', { run: olderTurn }], ['older-tool', { caller: olderTurn }],
+    ['live-parent', { parent: { rootSpanId: live.rootSpanId } }], ['live-caller', { caller: { rootSpanId: live.rootSpanId } }]]) {
+    fs.writeFileSync(flow.stateFile(key), JSON.stringify(data), { mode: 0o600 });
+    fs.utimesSync(flow.stateFile(key), STALE() / 1000, STALE() / 1000);
+  }
+  fillAdapters(f.stateDir, STALE());
+  flow.writeState('fac7-probe', { probe: 1 });
+  for (const key of ['older-run', 'older-tool', 'live-parent', 'live-caller']) assert.ok(flow.readState(key), key);
+});
+
+test('a cap of stale ownerless state only is refused, with nothing moved or deleted', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  const filled = fillAdapters(f.stateDir, STALE(), { pendingShare: 0 });
+  assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
+  assert.equal(quarantined(f.stateDir).length, 0);
+  assert.equal(ownerlessFiles(f.stateDir), filled.ownerless);
 });
 
 test('a cap full of fresh files is never quarantined and the refusal is recorded', t => {
@@ -479,7 +532,7 @@ test('a top-level directory at the cap keeps diagnostics, transactions and flush
   assert.equal(fs.readdirSync(path.join(f.stateDir, 'adapters')).length, ADAPTER_LIMITS.files + 4);
   f.advance(ADAPTER_LIMITS.retentionMs + 60000); flow = f.flow();
   flow.writeState('admitted', { probe: 2 });
-  assert.deepEqual(flow.readState('admitted'), { probe: 2 }, 'admission recovers once the files are stale');
+  assert.deepEqual(flow.readState('admitted'), { probe: 2 }, 'ordinary reclamation recovers once the files are stale');
 });
 
 test('ordinary state over the cap refuses even diagnostics but stays scannable', t => {
@@ -490,12 +543,17 @@ test('ordinary state over the cap refuses even diagnostics but stays scannable',
   assert.equal(quarantined(f.stateDir).length, 0);
 });
 
-test('unknown references disable quarantine', t => {
-  const f = diskFixture(t); const flow = f.flow();
-  flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
-  fillAdapters(f.stateDir, Date.now() - ADAPTER_LIMITS.retentionMs - 60000, { total: ADAPTER_LIMITS.files - 1 });
-  // An unreadable deferred batch is an unknown reference: nothing may move.
-  fs.writeFileSync(path.join(f.stateDir, 'adapters', 'pending', `${crypto.randomUUID()}.json`), '{"unterminated', { mode: 0o600 });
-  assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
-  assert.equal(quarantined(f.stateDir).length, 0);
-});
+for (const [label, unreadable] of [
+  ['deferred batch', stateDir => path.join(stateDir, 'adapters', 'pending', `${crypto.randomUUID()}.json`)],
+  ['top-level checkpoint', stateDir => path.join(stateDir, 'adapters', `${crypto.randomBytes(32).toString('hex')}.json`)]
+]) {
+  test(`an unreadable ${label} is an unknown reference and disables quarantine`, t => {
+    const f = diskFixture(t); const flow = f.flow();
+    flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+    const filled = fillAdapters(f.stateDir, STALE(), { total: ADAPTER_LIMITS.files - 1 });
+    fs.writeFileSync(unreadable(f.stateDir), '{"unterminated', { mode: 0o600 });
+    assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
+    assert.equal(quarantined(f.stateDir).length, 0);
+    assert.equal(ownerlessFiles(f.stateDir), filled.ownerless);
+  });
+}

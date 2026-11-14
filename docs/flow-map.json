@@ -815,7 +815,7 @@
           ""
         ],
         [
-          "At the cap, quarantine stale pre-ticket batches and unreferenced ownerless checkpoints; never referenced or in-window state, and nothing when a reference is unknown",
+          "At the cap, quarantine stale pre-ticket batches (never sent, never read); nothing else moves, and nothing moves when a reference is unknown",
           "det",
           "runtime/langfuse/flow.cjs",
           ""
