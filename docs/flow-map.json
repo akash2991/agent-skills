@@ -147,7 +147,7 @@
           "P11"
         ],
         [
-          "Write the changelog line under the surface's Unreleased",
+          "Write the changelog line under each affected surface's Unreleased, or Project's",
           "judgment",
           null,
           "P13"

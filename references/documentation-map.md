@@ -9,7 +9,7 @@ Which document holds what, and where it lives.
 | `HLD.md`, `LLD.md` | boundaries, APIs, scale; types, UML, schema, contracts | `docs/` for the project, `<service>/docs/` per service |
 | `DOMAIN.md` | the domain design product, business, and tech refer to | `docs/` |
 | `DEVELOPMENT.md`, `DEPLOYMENT.md` | local stack, commands (local and over SSH), lint, containers, testing, debugging steps, and how to reproduce locally; pipeline and environments | `docs/` |
-| `CHANGELOG.md` | what shipped: a section per surface (backend, web, mobile) plus Project, each versioned on its own (`continuous-delivery` L1) | `docs/`; each backend module keeps its own in `<module>/docs/` |
+| `CHANGELOG.md` | what shipped: a section per surface (backend, web, mobile), each versioned on its own, plus an unversioned Project section (`continuous-delivery` L1) | `docs/`; each backend module keeps its own in `<module>/docs/` |
 | `LEARNINGS.md` | what the user taught the agents | `docs/` |
 | RCA | one file per incident, template to come | `<service>/docs/` |
 | ADR | one decision worth preserving: problem, options, choice, rationale, reversibility (`adrs`) | `docs/decisions/`, or `<service>/docs/decisions/` for a service-local one |
