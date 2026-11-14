@@ -339,6 +339,7 @@ function createFlow(options = {}) {
     }
     let unknownReference = false;
     const legacyPending = [];
+    const pin = batch => { roots.add(batch.runId); for (const record of batch.records || []) addRecord(record); };
     // An unreadable top-level checkpoint may hold the only reference to
     // something: under pressure that is unknown, so the pass fails closed.
     // Temporary publication slots and the diagnostics are not references.
@@ -350,14 +351,14 @@ function createFlow(options = {}) {
       if (Date.now() >= deadlineAt) return;
       if (!batch) { unknownReference = true; continue; }
       // Same pre-ticket test as replay, which preserves such batches forever
-      // and never sends them. Quarantined ones stop pinning their runs.
+      // and never sends them. A candidate stops pinning its run only once it
+      // has actually moved; see the visitor below.
       if (quarantine && Array.isArray(batch.records)
         && (!Array.isArray(batch.revisions) || batch.revisions.length !== batch.records.length)
         && clock() - (Number.isSafeInteger(batch.createdAt) ? batch.createdAt : fs.lstatSync(file).mtimeMs) > ADAPTER_LIMITS.retentionMs) {
-        legacyPending.push(file); continue;
+        legacyPending.push([file, batch]); continue;
       }
-      roots.add(batch.runId);
-      for (const record of batch.records || []) addRecord(record);
+      pin(batch);
     }
     // Recover under queue ownership BEFORE deciding whether references are
     // unknown. The adapter lock is held; the context transaction above has
@@ -368,6 +369,15 @@ function createFlow(options = {}) {
         recoveredPublications += outbox.recovered;
         if (outbox.invalid) unknownReference = true;
         for (const record of outbox.records) addRecord(record);
+        // Move first, under queue ownership and only when every reference is
+        // known; then drop pins for exactly the batches that moved. A batch
+        // that stays (unknown references, full quarantine, failed rename)
+        // keeps pinning its run, so nothing it references is reclaimed below.
+        if (legacyPending.length) {
+          const gone = quarantine && !unknownReference ? moveToQuarantine(legacyPending.map(([file]) => file)) : new Set();
+          moved = gone.size;
+          for (const [file, batch] of legacyPending) if (!gone.has(file)) pin(batch);
+        }
         // Keep queue ownership until deletion is done: a new publisher cannot
         // introduce a reference between this snapshot and checkpoint reclamation.
         // This visitor performs no adapter/context lock acquisition.
@@ -399,9 +409,6 @@ function createFlow(options = {}) {
           if (!envelope.ownerSession && (quarantine || roots.size || sessions.size)) continue;
           fs.unlinkSync(file);
         }
-        // Still under queue ownership: no publisher can add a reference to
-        // these files between the analysis above and the moves.
-        if (quarantine && !unknownReference) moved = moveToQuarantine(legacyPending);
       });
     } catch { return moved; } // Unsafe/unknown state remains an explicit exporter refusal.
     return moved;
@@ -409,8 +416,11 @@ function createFlow(options = {}) {
   // Quarantine (FAC-7): a private folder outside the capped directories.
   // Nothing in it is deleted, replayed or read back. It is bounded by file
   // count and bytes; once full, moves stop and admission fails closed.
+  // Returns the set of files actually moved. A throw moves nothing further and
+  // aborts the caller's pass before any reclamation.
   function moveToQuarantine(files) {
-    if (!files.length) return 0;
+    const moved = new Set();
+    if (!files.length) return moved;
     const root = privateDir(path.join(stateDir, 'quarantine'));
     let heldFiles = 0, heldBytes = 0;
     const tally = dir => {
@@ -421,14 +431,13 @@ function createFlow(options = {}) {
     };
     tally(root);
     const target = path.join(root, `adapters-${new Date(clock()).toISOString().slice(0, 10)}`);
-    let moved = 0;
     for (const file of files) {
       let size;
       try { size = fs.lstatSync(file).size; } catch { continue; }
       if (heldFiles + 1 > QUARANTINE_LIMITS.files || heldBytes + size > QUARANTINE_LIMITS.bytes) break;
       const dir = privateDir(path.dirname(file) === pendingDir ? path.join(privateDir(target), 'pending') : target);
       try { fs.renameSync(file, path.join(dir, path.basename(file))); } catch { continue; }
-      moved++; heldFiles++; heldBytes += size;
+      moved.add(file); heldFiles++; heldBytes += size;
     }
     return moved;
   }
@@ -450,6 +459,7 @@ function createFlow(options = {}) {
       // their directory entries separately.
       if (diagnosticOnly(writes)) {
         return ordinary.length <= ADAPTER_LIMITS.files
+          && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes
           && diagnostics.reduce((sum, file) => sum + (sizes.get(file) || 0), 0) <= DIAGNOSTIC_BYTES;
       }
       return sizes.size + 1 <= ADAPTER_LIMITS.files

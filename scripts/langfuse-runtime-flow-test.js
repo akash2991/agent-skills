@@ -557,3 +557,46 @@ for (const [label, unreadable] of [
     assert.equal(ownerlessFiles(f.stateDir), filled.ownerless);
   });
 }
+
+// A pre-ticket batch stops pinning its run only once it has really moved.
+function pinnedCheckpoint(flow) {
+  const file = flow.stateFile('pinned-by-legacy');
+  fs.writeFileSync(file, JSON.stringify({ checkpointVersion: 1, updatedAt: STALE(), ownerRoot: 'legacy-run',
+    ownerSession: `claude:${crypto.randomBytes(32).toString('hex')}`, state: { marker: 1 } }), { mode: 0o600 });
+  return file;
+}
+for (const [label, room] of [['no', 0], ['partial', 400]]) {
+  test(`with ${label} quarantine room, checkpoints pinned by unmoved batches survive`, t => {
+    const f = diskFixture(t); const flow = f.flow();
+    const root = path.join(f.stateDir, 'quarantine', 'adapters-held'); fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(f.stateDir, 'quarantine'), 0o700);
+    const held = path.join(root, 'held'); fs.writeFileSync(held, ''); fs.truncateSync(held, 256 * 1024 * 1024 - room);
+    const pinned = pinnedCheckpoint(flow);
+    const filled = fillAdapters(f.stateDir, STALE(), { pendingShare: 1 });
+    // No room: refused. Partial room: a few batches move, which may be enough
+    // to admit the write. Either way the batches left behind keep their pin.
+    if (room) { try { flow.writeState('maybe', { probe: 1 }); } catch (error) { assert.match(error.message, /capacity/); } }
+    else assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
+    assert.ok(fs.existsSync(pinned), 'the pinned owned checkpoint is not reclaimed');
+    const remaining = fs.readdirSync(path.join(f.stateDir, 'adapters', 'pending')).length;
+    assert.equal(remaining + quarantined(f.stateDir).length - 1, filled.batches, 'every batch is in place or quarantined');
+    if (room) assert.ok(remaining < filled.batches, 'some batches moved');
+  });
+}
+
+test('when every pinning batch moves, the checkpoint they pinned is reclaimed normally', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  const pinned = pinnedCheckpoint(flow);
+  fillAdapters(f.stateDir, STALE(), { pendingShare: 1 });
+  flow.writeState('admitted', { probe: 1 });
+  assert.equal(fs.existsSync(pinned), false);
+});
+
+test('ordinary state over the byte cap refuses diagnostics too', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  const block = Buffer.alloc(1024 * 1024, 'a');
+  for (let i = 0; i * block.length <= ADAPTER_LIMITS.bytes; i++) {
+    fs.writeFileSync(path.join(f.stateDir, 'adapters', `${crypto.randomBytes(32).toString('hex')}.json`), block, { mode: 0o600 });
+  }
+  assert.throws(() => flow.writeState('health', { captureFailureObserved: true }), /capacity/);
+});
