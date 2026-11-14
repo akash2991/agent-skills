@@ -695,7 +695,7 @@ test('a spaced grade range is refused; a reason that starts with a grade word is
     assert.strictEqual(check.checkBlastRadius(body).length, 1, body);
     assert.match(mergeBlockers(view(body)).blockers.join(), /Blast-radius/, body);
   }
-  assert.strictEqual(check.blastRadius('Blast-radius: medium: high-traffic path, one service'), 'medium');
+  assert.strictEqual(check.blastRadius('Blast-radius: medium: busy path, one service'), 'medium');
   assert.strictEqual(check.blastRadius('Blast-radius: low — highly isolated docs change'), 'low');
 });
 
@@ -706,7 +706,7 @@ test('every hedged way to write a grade range is refused through the checker and
     assert.strictEqual(check.checkBlastRadius(body).length, 1, body);
     assert.match(mergeBlockers(view(body)).blockers.join(), /Blast-radius/, body);
   }
-  for (const [reason, level] of [['high-traffic path', 'medium'], ['high-risk area nearby', 'low'], ['highest-volume table untouched', 'low'], ['n/a docs', 'low']]) {
+  for (const [reason, level] of [['busy path', 'medium'], ['highest-volume table untouched', 'low'], ['highly isolated', 'low'], ['low risk, docs only', 'low'], ['HIGH traffic auth path', 'high'], ['n/a docs', 'low']]) {
     assert.strictEqual(check.blastRadius(`Blast-radius: ${level} — ${reason}`), level, reason);
   }
 });
@@ -718,4 +718,17 @@ test('merge-pr refuses unknown flags so a typo cannot drop a requested review', 
   for (const bad of [['12', '--require-reviews'], ['12', '--requireReview'], ['12', '--require_review'], ['12', '13'], [], ['--repo', 'o/r']]) {
     assert.ok(argvProblem(bad), bad.join(' '));
   }
+});
+
+test('the reason names no grade but the declared one, in any form', () => {
+  const view = body => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }], reviews: [] });
+  for (const value of ['medium — medium-to-high: touches payments', 'low — medium-to-high risk', 'low — (high) auth', 'low — *high* auth', 'low — "high" auth', 'low — `high` auth',
+    'low — high-to-low risk', 'medium — high-to-medium: touches payments', 'low — low-to-high-risk auth', 'low — low risk, maybe HIGH', 'medium: high-traffic path',
+    'low — high-risk area', 'low — could be high', 'medium — not high', 'medium — low/high', 'high — not low']) {
+    const body = `Blast-radius: ${value}`;
+    assert.match(check.checkBlastRadius(body)[0] || '', /names a second grade/, body);
+    assert.match(mergeBlockers(view(body)).blockers.join(), /names a second grade/, body);
+  }
+  assert.strictEqual(check.blastRadius('Blast-radius: high — high traffic checkout path'), 'high', 'the declared grade repeated');
+  assert.match(mergeBlockers(view('Blast-radius: high — high traffic checkout path')).blockers.join(), /review required/, 'still routed to review');
 });

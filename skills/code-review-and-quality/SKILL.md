@@ -14,7 +14,7 @@ Multi-dimensional code review with quality gates. Every reviewer runs the fixed 
 
 ## When to Use
 
-- Before merging any PR or change
+- Before merging a PR that `git-workflow-and-versioning` P17 sends to review; self-checking your own diff before you open the PR (never as its verdict)
 - After completing a feature implementation
 - When another agent or model produced code you need to evaluate
 - When refactoring existing code

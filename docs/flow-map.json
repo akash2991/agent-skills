@@ -129,7 +129,7 @@
           "P17"
         ],
         [
-          "Exactly one Blast-radius line with a reason, in the PR body's opening block",
+          "Exactly one Blast-radius line in the PR body's opening block, its reason naming no other grade",
           "det",
           "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
           "P17"

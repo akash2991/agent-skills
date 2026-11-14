@@ -91,10 +91,10 @@ function headerFields(body) {
 // duplicated, or malformed grade is an error, never a lower grade: "medium-high" is not "medium". A line elsewhere in
 // the body is not a declaration.
 // The separator is a colon, or a dash with whitespace before it: "medium–high" or "medium-high" is a range, refused.
-// A reason that opens with a second grade after any run of whitespace, dashes, or colons ("medium - high — x",
-// "medium -- high", "low — high (auth)", "medium: - high") is a range, refused; a reason that merely starts with a
-// grade word ("high-traffic path", "highly isolated") is fine.
-const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*:|[ \t]+[—–-])(?![\s—–:-]*(?:low|medium|high)(?![A-Za-z]|-[A-Za-z]))[ \t]*(\S.*)$/i;
+const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*:|[ \t]+[—–-])[ \t]*(\S.*)$/i;
+// The reason may not name a grade other than the declared one, anywhere and in any form ("medium-to-high", "(high)",
+// "high-traffic", "could be high"): one grade, no ranges or hedges. Repeating the declared grade is fine.
+const GRADE_WORD = /(?<![A-Za-z])(low|medium|high)(?![A-Za-z])/gi;
 const FORM = '"Blast-radius: <low|medium|high> — <reason>" in the PR body\'s opening block of "Key: value" lines, before its first blank line (P17)';
 
 function parseBlastRadius(body) {
@@ -108,7 +108,10 @@ function parseBlastRadius(body) {
   if (declared.length > 1) return { level: null, error: `PR body declares the blast radius ${declared.length} times; keep exactly one ${FORM}` };
   const m = BLAST_RADIUS.exec(declared[0].value);
   if (!m || /^<.*>$/.test(m[2].trim())) return { level: null, error: `"Blast-radius: ${declared[0].value}" is not ${FORM} with a real reason` };
-  return { level: m[1].toLowerCase(), error: null };
+  const level = m[1].toLowerCase();
+  const other = [...m[2].matchAll(GRADE_WORD)].map(g => g[1].toLowerCase()).find(g => g !== level);
+  if (other) return { level: null, error: `Blast-radius names a second grade (${other}); declare exactly one and describe the change without another grade word (P17)` };
+  return { level, error: null };
 }
 
 function blastRadius(body) {

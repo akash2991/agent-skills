@@ -119,7 +119,7 @@ main ──●──●──●──●──●──●──●──●─
 
 | ID | Rule |
 | --- | --- |
-| P17 | **Every PR grades its blast radius in the opening block of its body (the `Key: value` lines before the first blank line): exactly one `Blast-radius: <low\|medium\|high> — <reason>`.** The grade decides the review and who merges. When two levels fit, take the higher; when unsure, go up one. |
+| P17 | **Every PR grades its blast radius in the opening block of its body (the `Key: value` lines before the first blank line): exactly one `Blast-radius: <low\|medium\|high> — <reason>`.** The grade decides the review and who merges. When two levels fit, take the higher; when unsure, go up one. The reason names no other grade, in any form (`medium-to-high`, `(high)`, `high-traffic`, `could be high`): write `busy path`, not `high-traffic path`; the script refuses it. |
 
 | Level | The change | Review | Who merges |
 | --- | --- | --- | --- |
