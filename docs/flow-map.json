@@ -889,11 +889,11 @@
         [
           "Hook receives the event and returns within its cap (inline events) or after a pipe handoff (all others)",
           "det",
-          "runtime/langfuse/claude-hook.cjs",
+          "runtime/langfuse/bootstrap-claude.cjs",
           null
         ],
         [
-          "Inline work: actor context, prompt, model and PreToolUse events, killed with its process group past the cap",
+          "Inline work: actor, prompt, model, PreToolUse and turn-ending events, killed with its process group past the cap",
           "det",
           "runtime/langfuse/claude.cjs",
           null

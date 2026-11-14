@@ -17,7 +17,7 @@ Object.assign(process.env, { BRAIN_TRACE_STATE_DIR: path.join(root, 'state'),
   LANGFUSE_PUBLIC_KEY: 'pk-lf-synthetic', LANGFUSE_SECRET_KEY: 'sk-lf-synthetic', LANGFUSE_BASE_URL: 'http://127.0.0.1:9' });
 delete process.env.BRAIN_TRACING_ENABLED;
 delete process.env.LANGFUSE_TRACING_ENABLED;
-const { processClaudeHook, runClaudeHook, INLINE_EVENTS } = require('../runtime/langfuse/claude.cjs');
+const { processClaudeHook, runClaudeHook, INLINE_EVENTS, TERMINAL_EVENTS, _admission } = require('../runtime/langfuse/claude.cjs');
 const { createFlow } = require('../runtime/langfuse/flow.cjs');
 const hookCli = path.join(__dirname, '../runtime/langfuse/claude-hook.cjs');
 
@@ -331,4 +331,62 @@ test('one session cannot hold more than three detached processes', async () => {
   await until(() => git.live().length === 0 && slotsIdle(git.stateDir), 30000);
   clearInterval(sampler);
   assert.ok(peak >= 1 && peak <= 3, `peak ${peak} detached processes for one session`);
+});
+
+test('turn-ending events are processed before their hook returns', async () => {
+  for (const event of TERMINAL_EVENTS) assert.ok(INLINE_EVENTS.includes(event), event);
+  const sessionId = crypto.randomUUID();
+  await runClaudeHook({ hook_event_name: 'UserPromptSubmit', session_id: sessionId, cwd: root, prompt: 'synthetic' }, { inlineMs: 5000 });
+  await runClaudeHook({ hook_event_name: 'Stop', session_id: sessionId, cwd: root }, { inlineMs: 5000 });
+  const flow = createFlow({ harness: 'claude', cwd: root, env: process.env });
+  const run = flow.session(sessionId);
+  assert.ok(run);
+  const terminal = flow.readState(`claude:terminal:${flow.id(JSON.stringify([sessionId]))}`);
+  assert.equal(terminal?.outcome, 'completed', 'the Stop was applied inline');
+});
+
+test('a slot is handed to the child only while it still names this hook', () => {
+  const slot = _admission.claimSlot(process.env, 'transfer-test');
+  assert.ok(slot, 'claimed');
+  assert.equal(fs.readFileSync(slot.file, 'utf8'), `${process.pid} transfer-test`);
+  assert.equal(_admission.transferSlot(slot, 424242), true);
+  assert.equal(fs.readFileSync(slot.file, 'utf8'), '424242 transfer-test');
+  // Reclaimed and taken by someone else meanwhile: the transfer must refuse.
+  fs.writeFileSync(slot.file, `${process.pid} transfer-test`);
+  fs.writeFileSync(slot.file, '1 other');
+  assert.equal(_admission.transferSlot(slot, 434343), false);
+  assert.equal(fs.readFileSync(slot.file, 'utf8'), '1 other');
+  fs.rmSync(slot.file, { force: true });
+});
+
+test('a dispatch through the production split binds the child and writes no payload bytes', async () => {
+  const sessionId = crypto.randomUUID(), childId = 'agentchild1';
+  const secrets = ['SECRET_DISPATCH_PROMPT_BYTES', 'SECRET_CHILD_RESULT_BYTES'];
+  const base = { session_id: sessionId, cwd: root };
+  const opts = { inlineMs: 5000 };
+  await runClaudeHook({ ...base, hook_event_name: 'UserPromptSubmit', prompt: 'synthetic' }, opts);
+  await runClaudeHook({ ...base, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_dispatch',
+    tool_input: { prompt: secrets[0], description: 'synthetic' } }, opts);
+  await runClaudeHook({ ...base, hook_event_name: 'SubagentStart', agent_id: childId, agent_type: 'general-purpose' }, opts);
+  await runClaudeHook({ ...base, hook_event_name: 'SubagentStop', agent_id: childId }, opts);
+  await runClaudeHook({ ...base, hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_dispatch',
+    tool_input: { prompt: secrets[0] }, tool_response: { agentId: childId, content: secrets[1] }, duration_ms: 5 }, opts);
+  const flow = createFlow({ harness: 'claude', cwd: root, env: process.env });
+  const hex = crypto.createHash('sha256').update(`claude:${sessionId}:${childId}`).digest('hex');
+  const childNative = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  const parent = flow.session(sessionId);
+  assert.ok(parent, 'parent run exists');
+  const bound = () => { const child = flow.session(childNative); const resolved = child && flow.resolve(child);
+    return resolved?.parentSpanId === parent.rootSpanId && resolved.traceId === parent.traceId; };
+  assert.ok(await until(bound, 20000), 'child bound to its exact caller');
+  await until(() => slotsIdle(process.env.BRAIN_TRACE_STATE_DIR), 20000);
+  // Metadata-only (no marker): no prompt or tool bytes anywhere in private state.
+  const files = [];
+  const walk = dir => { for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full); else if (entry.isFile()) files.push(full); } };
+  walk(process.env.BRAIN_TRACE_STATE_DIR);
+  for (const file of files) for (const secret of secrets) {
+    assert.ok(!fs.readFileSync(file).includes(secret), `${secret} found in ${path.relative(root, file)}`);
+  }
 });

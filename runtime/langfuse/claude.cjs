@@ -104,7 +104,7 @@ function agentRecord(run, now, terminal, actualModel) {
 // the deadline (so every call makes progress) and returns that row boundary as
 // the cursor, letting the next hook resume instead of restarting.
 function scanTranscript(file, cursor, visit, diagnostic = () => {}, deadlineAt = Infinity) {
-  let fd;
+  let fd, progress = null; // The last row boundary committed by this call.
   try {
     // Native transcripts need not use the private state-file modes or size
     // limit: scanning is incremental and bounded below. They must be regular
@@ -139,7 +139,8 @@ function scanTranscript(file, cursor, visit, diagnostic = () => {}, deadlineAt =
         line = Buffer.alloc(0);
         oversized = false;
         start = i + 1;
-        if (Date.now() >= deadlineAt) return { offset: committed, inode: stat.ino };
+        progress = { offset: committed, inode: stat.ino };
+        if (Date.now() >= deadlineAt) return progress;
       }
       if (line.length + n - start > MAX_LINE_BYTES) oversized = true;
       if (!oversized) line = Buffer.concat([line, buffer.subarray(start, n)]);
@@ -153,7 +154,9 @@ function scanTranscript(file, cursor, visit, diagnostic = () => {}, deadlineAt =
     // A publication/storage failure MUST propagate: advancing the content
     // cursor after a failed visit would permanently lose a native row.
     if (error?.claudePublicationFailure) throw error;
-    diagnostic('transcript_unavailable'); return cursor;
+    // Keep rows already committed (e.g. a busy lock on a later row): the
+    // failed row is not committed and is visited again by the next hook.
+    diagnostic('transcript_unavailable'); return progress || cursor;
   } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
@@ -505,7 +508,8 @@ function reconcileTranscript(flow, run, file, childId, deadlineAt = Infinity) {
     if (row.type !== 'assistant' || !identity(row.message?.id)) return;
     if (!hasRuntimeModel(row.message.model)) return;
     const actualModel = model(row.message.model);
-    run = flow.update(run, { observedModel: actualModel || null });
+    // Each update is a context transaction; skip the ones that change nothing.
+    if (run.observedModel !== (actualModel || null)) run = flow.update(run, { observedModel: actualModel || null });
     const id = flow.id(`claude:generation:${run.nativeSessionId}:${row.message.id}`);
     const stateKey = key(flow, 'generation', run.nativeSessionId, id);
     const previous = flow.readState(stateKey);
@@ -597,6 +601,14 @@ async function processClaudeHook(payload, options = {}) {
   contentEpoch(flow, run, transcript, now);
   const effort = EFFORTS.has(payload.effort?.level) ? payload.effort.level : undefined;
   if (effort) run = flow.update(run, { requestedEffort: effort });
+  if (options.reconcileOnly === true) {
+    // Follow-up of an inline terminal event: read the turn's last transcript
+    // rows without touching prompt, activity or terminal state.
+    reconcileTranscript(flow, run, transcript, childId, reconcileDeadline ?? Infinity);
+    reconcileContent(flow, run, transcript, childId, now, reconcileDeadline ?? Infinity);
+    if (options.flush !== false) await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
+    return null;
+  }
 
   if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
     const promptId = identity(payload.prompt_id);
@@ -764,7 +776,7 @@ async function processClaudeHook(payload, options = {}) {
   // A terminal event received before the current turn began, or before the
   // last recorded terminal, belongs to an older turn (detached events can be
   // processed late). Drop it rather than attach its outcome or answer here.
-  const terminalEvent = ['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd'].includes(event);
+  const terminalEvent = TERMINAL_EVENTS.includes(event);
   if (terminalEvent && ((activity && activity.startedAt > now) || (terminal && terminal.endTime > now))) {
     if (options.flush !== false) await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
     return output;
@@ -819,9 +831,13 @@ const ACTOR_EVENTS = Object.freeze(['SessionStart', 'UserPromptSubmit', 'Subagen
 // runs (and before its PostToolUse); it is registered only for these tools.
 const PRE_TOOLS = Object.freeze(['Agent', 'Task', 'Skill']);
 const HOOK_MATCHERS = Object.freeze({ PreToolUse: PRE_TOOLS.join('|') });
-const INLINE_EVENTS = Object.freeze([...ACTOR_EVENTS, 'UserPromptExpansion', 'PostModelSwitch', 'PreToolUse']);
+// Turn-ending events are inline too: every prompt, activity and terminal
+// mutation then happens in hooks Claude runs one after another, so no detached
+// event can interleave with them. Detached work never touches turn state.
+const TERMINAL_EVENTS = Object.freeze(['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd']);
+const INLINE_EVENTS = Object.freeze([...ACTOR_EVENTS, 'UserPromptExpansion', 'PostModelSwitch', 'PreToolUse', ...TERMINAL_EVENTS]);
 const LIMITS = Object.freeze({ inlineMs: 1500, inlineMaxMs: 5000, handoffMs: 1000, queueMs: 10000,
-  reconcileMs: 3000, flushPassMs: 10000, lifetimeMs: 60000, maxDetached: 8, maxPerSession: 3 });
+  reconcileMs: 3000, flushPassMs: 2000, lifetimeMs: 60000, maxDetached: 8, maxPerSession: 3 });
 const DETACHED = '--agent-brain-detached';
 // Overrides for slow machines and tests, clamped so the hook still fits under
 // Claude's 8-second native timeout and detached work stays short-lived.
@@ -892,16 +908,11 @@ function liveSlot(file) {
   if (!stat.isFile() || Date.now() - stat.mtimeMs > LIMITS.lifetimeMs + 5000) return null;
   const [pidText, tag] = fs.readFileSync(file, 'utf8').split(' ');
   const pid = Number(pidText);
-  if (!(Number.isSafeInteger(pid) && pid > 0)) return null; // Always written under the lock.
+  if (!(Number.isSafeInteger(pid) && pid > 0)) return null; // Published whole, under the lock.
   try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') return null; }
   return { tag };
 }
-// tag: a session hash for event work, 'flush' for a delivery-only process,
-// which is pointless while any work process is alive (it delivers on exit).
-function claimSlot(env, tag) {
-  const stateDir = privateStateDir(env);
-  if (!stateDir) return null;
-  const dir = path.join(stateDir, 'hook-slots');
+function underAdmitLock(stateDir, fn) {
   const deadlineAt = Date.now() + 500;
   let lock;
   try {
@@ -910,6 +921,23 @@ function claimSlot(env, tag) {
       if (Date.now() >= deadlineAt) return null;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
+    return fn();
+  } catch { return null; } finally { lock?.release(); }
+}
+// Slot contents change only under the lock and by atomic rename, so a reader
+// never sees a half-written slot.
+function publishSlot(file, text) {
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, text, { flag: 'w', mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
+// tag: a session hash for event work, 'flush' for a delivery-only process,
+// which is pointless while any work process is alive (it delivers on exit).
+function claimSlot(env, tag) {
+  const stateDir = privateStateDir(env);
+  if (!stateDir) return null;
+  const dir = path.join(stateDir, 'hook-slots');
+  return underAdmitLock(stateDir, () => {
     try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') return null; }
     const live = [], free = [];
     for (let i = 0; i < LIMITS.maxDetached; i++) {
@@ -919,11 +947,23 @@ function claimSlot(env, tag) {
       if (slot) live.push(slot);
       else { fs.rmSync(file, { force: true }); free.push(file); }
     }
-    if (!free.length || (tag === 'flush' && live.length)
-      || live.filter(slot => slot.tag === tag).length >= LIMITS.maxPerSession) return null;
-    fs.writeFileSync(free[0], `${process.pid} ${tag}`, { flag: 'wx', mode: 0o600 });
-    return { file: free[0], tag };
-  } catch { return null; } finally { lock?.release(); }
+    if (tag === 'flush' && live.length) {
+      // A running work process delivers before it exits; ask it for one more pass.
+      try { fs.writeFileSync(path.join(stateDir, 'claude-flush-request'), String(Date.now()), { mode: 0o600 }); } catch { /* best effort */ }
+      return null;
+    }
+    if (!free.length || live.filter(slot => slot.tag === tag).length >= LIMITS.maxPerSession) return null;
+    publishSlot(free[0], `${process.pid} ${tag}`);
+    return { file: free[0], tag, stateDir };
+  });
+}
+// Hand the slot from this hook to its child, only if the slot is still ours.
+function transferSlot(slot, pid) {
+  return underAdmitLock(slot.stateDir, () => {
+    if (fs.readFileSync(slot.file, 'utf8') !== `${process.pid} ${slot.tag}`) return null;
+    publishSlot(slot.file, `${pid} ${slot.tag}`);
+    return true;
+  }) === true;
 }
 
 function spawnDetached(mode, input, receivedAt, env) {
@@ -943,9 +983,12 @@ function spawnDetached(mode, input, receivedAt, env) {
     try {
       child = spawnWorkProcess(mode, receivedAt,
         limit('BRAIN_TRACE_HOOK_LIFETIME_MS', LIMITS.lifetimeMs, 1000, LIMITS.lifetimeMs, env), [], env);
-      // The slot still names this live hook, so nobody else can reclaim it.
-      if (child.pid) fs.writeFileSync(slot.file, `${child.pid} ${slot.tag}`);
-      else fs.unlinkSync(slot.file);
+      // The slot names this live hook until the transfer commits. A transfer
+      // that cannot commit would leave the child uncounted, so kill it.
+      if (!child.pid || !transferSlot(slot, child.pid)) {
+        if (child.pid) killGroup(child.pid);
+        done(); return;
+      }
       child.once('error', done);
       child.stdin.once('error', done);
       child.unref();
@@ -967,7 +1010,9 @@ async function runClaudeHook(payload, options = {}) {
     const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
     if (INLINE_EVENTS.includes(payload.hook_event_name)) {
       const output = await runInline({ ...payload, cwd }, receivedAt, options);
-      await spawnDetached('flush', { cwd }, receivedAt, options.env);
+      // A turn's end leaves its last transcript rows to read; others only deliver.
+      if (TERMINAL_EVENTS.includes(payload.hook_event_name)) await spawnDetached('reconcile', { ...payload, cwd }, receivedAt, options.env);
+      else await spawnDetached('flush', { cwd }, receivedAt, options.env);
       return output;
     }
     await spawnDetached('event', { ...payload, cwd }, receivedAt, options.env);
@@ -1045,12 +1090,12 @@ async function detachedWork(mode, input, receivedAt, endAt, acknowledgeSession) 
     return processClaudeHook(input, { env, acknowledgeSession, clock: () => receivedAt, reconcile: false, flush: false });
   }
   const flow = require('./flow.cjs').createFlow({ harness: 'claude', cwd: input.cwd, env });
-  if (mode === 'event') {
+  if (mode === 'event' || mode === 'reconcile') {
     // Ordering is per session: one session's backlog never delays another's.
     const sessionDir = path.join(flow.stateDir, 'hook-sessions', sessionTag(input.session_id));
     try { fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 }); } catch { return null; }
     await underLock(sessionDir, 'hook', LIMITS.queueMs, () => processClaudeHook(input, { flow, env,
-      clock: () => receivedAt, reconcileBudgetMs: LIMITS.reconcileMs, flush: false }));
+      clock: () => receivedAt, reconcileBudgetMs: LIMITS.reconcileMs, reconcileOnly: mode === 'reconcile', flush: false }));
     // Best effort: a racing claimant that loses its directory drops one event.
     for (const dir of [path.join(sessionDir, 'hook-claims'), sessionDir]) try { fs.rmdirSync(dir); } catch { break; }
   }
@@ -1092,4 +1137,4 @@ if (!threads.isMainThread && threads.workerData?.agentBrainClaudeWork === true) 
     ack === 'ack').catch(endGroup);
 }
 
-module.exports = { HOOK_EVENTS, HOOK_MATCHERS, ACTOR_EVENTS, INLINE_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };
+module.exports = { _admission: { claimSlot, transferSlot }, HOOK_EVENTS, HOOK_MATCHERS, ACTOR_EVENTS, TERMINAL_EVENTS, INLINE_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };
