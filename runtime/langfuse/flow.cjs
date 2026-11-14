@@ -15,6 +15,9 @@ const { claimLock } = require('./locks.cjs');
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 const id = seed => seed === undefined ? crypto.randomBytes(8).toString('hex') : hash(seed).slice(0, 16);
 const MAX_STATE = 1024 * 1024;
+// FAC-7: quarantine bounds, and the combined budget of the two diagnostic files.
+const QUARANTINE_LIMITS = Object.freeze({ files: 16384, bytes: 256 * 1024 * 1024 });
+const DIAGNOSTIC_BYTES = 16 * 1024;
 const ADAPTER_LIMITS = Object.freeze({ files: 2048, bytes: 32 * 1024 * 1024, retentionMs: 7 * 24 * 3600 * 1000 });
 const ACCOUNTING_KEYS = new Set(['input', 'output', 'total', 'input_tokens', 'output_tokens',
   'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_reasoning_tokens']);
@@ -223,7 +226,10 @@ function createFlow(options = {}) {
         for (let count = 0; ; count++) {
           if (Date.now() >= deadlineAt) throw new Error('Tracing checkpoint recovery pending');
           const entry = handle.readSync(); if (!entry) break;
-          if (count >= ADAPTER_LIMITS.files + 2) throw new Error('Tracing checkpoint recovery pending');
+          // Bounded scan. Legitimate entries: ordinary files up to the cap, the
+          // pending/ and context-claims/ directories, the two diagnostic files
+          // (admitted outside the ordinary cap) and one publication slot.
+          if (count >= ADAPTER_LIMITS.files + 5) throw new Error('Tracing checkpoint recovery pending');
           const file = path.join(dir, entry.name);
           if (file === checkpointSlot || (dir === adapterDir ? legacyAdapterTemp : legacyPendingTemp).test(entry.name)) {
             discardTemporary(file, inspectTemporary(file));
@@ -284,8 +290,16 @@ function createFlow(options = {}) {
   // Opaque native adapter keys cannot be reverse-mapped to a session. Record
   // their owner at the flow boundary, without persisting keys or native paths.
   // Legacy/ownerless checkpoints are reclaimed only when no references survive.
-  function collect(deadlineAt = Infinity) {
-    if (Date.now() >= deadlineAt) return;
+  // With `quarantine` (capacity pressure only, FAC-7) the same pass moves stale
+  // pre-ticket deferred batches, which replay never sends and nothing reads,
+  // into a private quarantine; they then stop pinning their runs for ordinary
+  // reclamation. Nothing else moves. Ownerless checkpoints are never moved or
+  // deleted in this pass, and nothing moves or is deleted in it when any
+  // reference, including an unreadable top-level checkpoint, is unknown.
+  // Returns the number of files moved.
+  function collect(deadlineAt = Infinity, { quarantine = false } = {}) {
+    let moved = 0;
+    if (Date.now() >= deadlineAt) return moved;
     const files = checkpointFiles(), entries = new Map();
     for (const file of files) {
       if (Date.now() >= deadlineAt) return;
@@ -324,11 +338,27 @@ function createFlow(options = {}) {
       }
     }
     let unknownReference = false;
+    const legacyPending = [];
+    const pin = batch => { roots.add(batch.runId); for (const record of batch.records || []) addRecord(record); };
+    // An unreadable top-level checkpoint may hold the only reference to
+    // something: under pressure that is unknown, so the pass fails closed.
+    // Temporary publication slots and the diagnostics are not references.
+    if (quarantine) for (const [file, envelope] of entries) {
+      if (path.dirname(file) === adapterDir && !envelope && !file.endsWith('.tmp')
+        && !diagnosticFiles().includes(file)) { unknownReference = true; break; }
+    }
     for (const [file, batch] of entries) if (path.dirname(file) === pendingDir) {
       if (Date.now() >= deadlineAt) return;
       if (!batch) { unknownReference = true; continue; }
-      roots.add(batch.runId);
-      for (const record of batch.records || []) addRecord(record);
+      // Same pre-ticket test as replay, which preserves such batches forever
+      // and never sends them. A candidate stops pinning its run only once it
+      // has actually moved; see the visitor below.
+      if (quarantine && Array.isArray(batch.records)
+        && (!Array.isArray(batch.revisions) || batch.revisions.length !== batch.records.length)
+        && clock() - (Number.isSafeInteger(batch.createdAt) ? batch.createdAt : fs.lstatSync(file).mtimeMs) > ADAPTER_LIMITS.retentionMs) {
+        legacyPending.push([file, batch]); continue;
+      }
+      pin(batch);
     }
     // Recover under queue ownership BEFORE deciding whether references are
     // unknown. The adapter lock is held; the context transaction above has
@@ -339,6 +369,15 @@ function createFlow(options = {}) {
         recoveredPublications += outbox.recovered;
         if (outbox.invalid) unknownReference = true;
         for (const record of outbox.records) addRecord(record);
+        // Move first, under queue ownership and only when every reference is
+        // known; then drop pins for exactly the batches that moved. A batch
+        // that stays (unknown references, full quarantine, failed rename)
+        // keeps pinning its run, so nothing it references is reclaimed below.
+        if (legacyPending.length) {
+          const gone = quarantine && !unknownReference ? moveToQuarantine(legacyPending.map(([file]) => file)) : new Set();
+          moved = gone.size;
+          for (const [file, batch] of legacyPending) if (!gone.has(file)) pin(batch);
+        }
         // Keep queue ownership until deletion is done: a new publisher cannot
         // introduce a reference between this snapshot and checkpoint reclamation.
         // This visitor performs no adapter/context lock acquisition.
@@ -359,32 +398,88 @@ function createFlow(options = {}) {
         }
         for (const [file, envelope] of entries) {
           if (Date.now() >= deadlineAt) return;
-          if (path.dirname(file) !== adapterDir || !envelope || file === fileFor('health')) continue;
+          if (path.dirname(file) !== adapterDir || !envelope || diagnosticFiles().includes(file)) continue;
           const data = unwrap(envelope), stat = fs.lstatSync(file);
           const updatedAt = [1, 2].includes(envelope.checkpointVersion) ? envelope.updatedAt : stat.mtimeMs;
           if (!Number.isFinite(updatedAt) || clock() - updatedAt <= ADAPTER_LIMITS.retentionMs) continue;
           if (unknownReference || roots.has(data?.run?.rootSpanId) || roots.has(data?.rootSpanId)
             || roots.has(envelope.ownerRoot) || sessions.has(envelope.ownerSession)) continue;
-          if (!envelope.ownerSession && (roots.size || sessions.size)) continue;
+          // Ownerless legacy state is never deleted in the quarantine pass:
+          // dropping the pre-ticket pins must not empty the reference set.
+          if (!envelope.ownerSession && (quarantine || roots.size || sessions.size)) continue;
           fs.unlinkSync(file);
         }
       });
-    } catch { return; } // Unsafe/unknown state remains an explicit exporter refusal.
+    } catch { return moved; } // Unsafe/unknown state remains an explicit exporter refusal.
+    return moved;
+  }
+  // Quarantine (FAC-7): a private folder outside the capped directories.
+  // Nothing in it is deleted, replayed or read back. It is bounded by file
+  // count and bytes; once full, moves stop and admission fails closed.
+  // Returns the set of files actually moved. A throw moves nothing further and
+  // aborts the caller's pass before any reclamation.
+  function moveToQuarantine(files) {
+    const moved = new Set();
+    if (!files.length) return moved;
+    const root = privateDir(path.join(stateDir, 'quarantine'));
+    let heldFiles = 0, heldBytes = 0;
+    const tally = dir => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) tally(path.join(dir, entry.name));
+        else { heldFiles++; heldBytes += fs.lstatSync(path.join(dir, entry.name)).size; }
+      }
+    };
+    tally(root);
+    const target = path.join(root, `adapters-${new Date(clock()).toISOString().slice(0, 10)}`);
+    for (const file of files) {
+      let size;
+      try { size = fs.lstatSync(file).size; } catch { continue; }
+      if (heldFiles + 1 > QUARANTINE_LIMITS.files || heldBytes + size > QUARANTINE_LIMITS.bytes) break;
+      const dir = privateDir(path.dirname(file) === pendingDir ? path.join(privateDir(target), 'pending') : target);
+      try { fs.renameSync(file, path.join(dir, path.basename(file))); } catch { continue; }
+      moved.add(file); heldFiles++; heldBytes += size;
+    }
+    return moved;
+  }
+  const diagnosticFiles = () => [fileFor('health'), fileFor('delivery')];
+  const diagnosticOnly = writes => writes.every(([file]) => diagnosticFiles().includes(file));
+  function noteCapacity(update) {
+    try { writeState('health', { ...(readState('health') || {}), ...update }); } catch {}
   }
   function reserve(writes) {
     const fits = () => {
       const sizes = new Map(checkpointFiles().map(file => [file, fs.lstatSync(file).size]));
       for (const [file, data] of writes) sizes.set(file, Buffer.byteLength(serialize(data)));
       // Leave room for persistent health/delivery diagnostics even at refusal.
-      const diagnosticFiles = [fileFor('health'), fileFor('delivery')];
-      const diagnostics = writes.every(([file]) => diagnosticFiles.includes(file));
-      const ordinary = [...sizes].filter(([file]) => !diagnosticFiles.includes(file));
+      const diagnostics = diagnosticFiles();
+      const ordinary = [...sizes].filter(([file]) => !diagnostics.includes(file));
+      // Older runtimes could fill every ordinary slot, leaving no room even for
+      // the reason (FAC-7). The two diagnostic files have their own byte budget
+      // and need only ordinary state within the cap; recoverCheckpoints budgets
+      // their directory entries separately.
+      if (diagnosticOnly(writes)) {
+        return ordinary.length <= ADAPTER_LIMITS.files
+          && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes
+          && diagnostics.reduce((sum, file) => sum + (sizes.get(file) || 0), 0) <= DIAGNOSTIC_BYTES;
+      }
       return sizes.size + 1 <= ADAPTER_LIMITS.files
         && [...sizes.values()].reduce((sum, size) => sum + size, 0) + MAX_STATE <= ADAPTER_LIMITS.bytes
-        && (diagnostics || (ordinary.length <= ADAPTER_LIMITS.files - 3
-          && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes - MAX_STATE - 8192));
+        && ordinary.length <= ADAPTER_LIMITS.files - 3
+        && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes - MAX_STATE - 8192;
     };
-    if (!fits()) { collect(); if (!fits()) throw new Error('Tracing checkpoint capacity exceeded'); }
+    if (fits()) return;
+    collect();
+    if (fits()) return;
+    // Diagnostic writes never quarantine or record health: that would recurse.
+    if (diagnosticOnly(writes)) throw new Error('Tracing checkpoint capacity exceeded');
+    const moved = collect(Infinity, { quarantine: true }) || 0;
+    // `quarantined` counts the latest move only; other health writers replace
+    // the record. The quarantine folder itself is the complete record.
+    if (moved) noteCapacity({ quarantined: moved, reason: 'adapter_capacity_quarantined' });
+    if (!fits()) {
+      noteCapacity({ captureFailureObserved: true, reason: 'adapter_capacity' });
+      throw new Error('Tracing checkpoint capacity exceeded');
+    }
   }
   const writeState = (key, data) => transaction(() => {
     data = safeState(data); // Never accept a typed-content bypass via the generic API.
@@ -763,12 +858,18 @@ function createFlow(options = {}) {
     if (!run || run.runId !== owner.runId || run.nativeSessionId !== owner.nativeSessionId || run.harness !== owner.harness) throw new Error('Unknown observation owner');
     return publish(run, checked.map(item => item.record), checked.map(item => item.revision), checked.map(item => item.captureGrant));
   }
+  // The submission is already durable (queued or deferred) when this runs.
+  // Admission inside that submission may have reclaimed a stale source under
+  // capacity pressure (FAC-7), so "already gone" is not a failure.
+  function discardClosed(key) {
+    try { fs.unlinkSync(fileFor(key)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
   function closeObservation(key) {
     return transaction(() => {
       const capture = readObservation(key);
       if (!capture) return { queued: 0, pending: 0 };
       const result = submitCaptured([capture]);
-      if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) fs.unlinkSync(fileFor(key));
+      if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) discardClosed(key);
       return result; // Disabled/refused/unfinished captures remain durable.
     });
   }
@@ -808,7 +909,7 @@ function createFlow(options = {}) {
       const capture = issue({ observationVersion: 1, captureGrant: source.captureGrant,
         owner: ownerFor(child), record, revision: allocate([record])[0] });
       const result = submitCaptured([capture]);
-      if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) fs.unlinkSync(fileFor(key));
+      if ((result.queued || 0) + (result.pending || 0) + (result.superseded || 0) === 1) discardClosed(key);
       return result;
     });
   }

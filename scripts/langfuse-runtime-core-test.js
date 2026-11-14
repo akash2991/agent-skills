@@ -315,6 +315,32 @@ test('queue capacity, bounded flushes, tampered records and unsafe state paths f
   fs.chmodSync(target, 0o755); assert.equal(queueObservation(base(), { stateDir: target }).queued, false);
 });
 
+test('a full batch waits for a slow transport response before shutdown', async t => {
+  // FAC-7: at exactly flushAt spans the batch processor starts the export on
+  // its own, so forceFlush finds an empty buffer and resolves before the
+  // response; shutdown then destroyed the in-flight request (ECONNRESET).
+  const stateDir = sandbox(t);
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    req.resume(); req.on('end', () => {
+      requests++;
+      setTimeout(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); }, 150);
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const credentials = { publicKey: 'pk-lf-SYNTHETIC_ONLY', secretKey: 'sk-lf-SYNTHETIC_ONLY', baseUrl: `http://127.0.0.1:${server.address().port}`, syntheticLoopback: true };
+  for (let i = 0; i < OUTBOX_LIMITS.flush + 1; i++) {
+    assert.equal(queueObservation(base({ id: (i + 1).toString(16).padStart(16, '0') }), { stateDir }).queued, true);
+  }
+  const result = await flushOutbox({ stateDir, dependencyRoot, credentials, timeoutMs: 5000 });
+  assert.equal(result.attempted, OUTBOX_LIMITS.flush);
+  assert.equal(result.accepted, OUTBOX_LIMITS.flush);
+  assert.equal(result.status, 'transport_accepted');
+  assert.equal(result.queued, 1);
+  assert.ok(requests >= 1);
+});
+
 test('local synthetic HTTP transport uses safe OTLP and requires real callback success, not queueing', async t => {
   const stateDir = sandbox(t);
   let responseBody = '{}', status = 200;
