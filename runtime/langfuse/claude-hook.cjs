@@ -39,16 +39,18 @@ function readPayload(input = process.stdin, timeoutMs = 750) {
 async function main() {
   try {
     const output = await handleClaudeHook(await readPayload());
-    if (output) process.stdout.write(JSON.stringify(output));
+    if (output) await new Promise(resolve => process.stdout.write(JSON.stringify(output), resolve));
   } catch {
     // Exit zero: observability failures must never block a tool or session.
-    process.stderr.write('Claude metadata hook unavailable.\n');
+    await new Promise(resolve => process.stderr.write('Claude metadata hook unavailable.\n', resolve));
   }
 }
 
 if (require.main === module) {
   // Delivery runs in a detached process; exit as soon as the bounded hook
   // returns. This is best effort, not a SIGKILL guarantee.
+  // Backstop under Claude's 8-second native timeout.
+  setTimeout(() => process.exit(0), 7500).unref();
   main().then(() => process.exit(0), () => process.exit(0));
 }
 module.exports = { MAX_INPUT_BYTES, readPayload, main };

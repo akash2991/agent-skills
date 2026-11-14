@@ -23,11 +23,13 @@ function processStart(pid) {
     return /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) +(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} +\d{2}:\d{2}:\d{2} +\d{4}$/.test(start) ? start : null;
   } catch { return null; }
 }
-// A birth lookup spawns /bin/ps. Waiters poll every 10 ms, so look up each
-// live peer once per process: afterwards only an ESRCH probe runs. Caching can
-// only keep a peer "alive" longer (a later PID reuse waits out the budget); it
-// never admits a second owner, so mutual exclusion is unchanged.
-const verifiedAlive = new Set();
+// A birth lookup spawns /bin/ps. Waiters poll often, so a live peer's birth is
+// looked up at most every 2 seconds per process; in between only an ESRCH
+// probe runs. Caching can only keep a peer "alive" longer (a later PID reuse
+// waits out the budget); it never admits a second owner, so mutual exclusion
+// is unchanged.
+const verifiedAlive = new Map(); // key -> verifiedAt
+const VERIFIED_TTL_MS = 2000; // Bounds a stall on a reused PID to about one budget.
 let ownStart;
 function ownProcessStart() {
   if (!ownStart) ownStart = processStart(process.pid);
@@ -37,13 +39,14 @@ function alive(owner, hashed = false) {
   try { process.kill(owner.pid, 0); }
   catch (error) { return error.code !== 'ESRCH'; }
   const cacheKey = `${owner.pid}:${hashed}:${owner.start}`;
-  if (owner.start && verifiedAlive.has(cacheKey)) return true;
+  if (owner.start && Date.now() - (verifiedAlive.get(cacheKey) ?? -Infinity) < VERIFIED_TTL_MS) return true;
   // Legacy null-birth records are deliberately conservative: an existing PID
   // is insufficient evidence for recovery. An operator must stop that owner
   // (or clean the private state offline); neither age nor a new lookup helps.
   const current = owner.start ? processStart(owner.pid) : null;
   const live = !current || (hashed ? birthHash(current) : current) === owner.start;
-  if (live && current) verifiedAlive.add(cacheKey);
+  if (live && current) verifiedAlive.set(cacheKey, Date.now());
+  else verifiedAlive.delete(cacheKey);
   return live;
 }
 function safeFile(stat) {

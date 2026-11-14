@@ -13,9 +13,8 @@ const LEGACY_CLAUDE_PLUGIN = 'langfuse-observability@langfuse-observability';
 const CLAUDE_HOOK_COMMAND = 'node "$HOME/.cache/agent-brain/bootstrap/bootstrap-claude.cjs"';
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop', 'Stop', 'StopFailure', 'SessionEnd', 'PostModelSwitch'];
 // PreToolUse binds a subagent dispatch to its caller and records a skill
-// invocation. For other tools PostToolUse (duration_ms) and the transcript
-// carry timing and outcome, so the extra hook per call is not worth its cost.
-const HOOK_MATCHERS = { PreToolUse: 'Agent|Task|Skill' };
+// invocation; other tools are timed by PostToolUse and the transcript.
+const { HOOK_MATCHERS } = require('../../runtime/langfuse/claude.cjs');
 const OLD_PI = /^npm:@langfuse\/pi-observability-plugin(?:@|$)/;
 const OLD_CLAUDE = /^langfuse-observability@/;
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');

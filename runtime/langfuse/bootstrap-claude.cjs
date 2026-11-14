@@ -18,13 +18,11 @@ async function main(input, options = {}) {
   if (!entry) return null;
   const runtimeDir = path.dirname(entry);
   const adapter = options.adapter || require(path.join(runtimeDir, 'claude.cjs'));
-  // Current adapters bound the hook and acknowledge inside that bound.
-  if (typeof adapter.runClaudeHook === 'function') return adapter.runClaudeHook(payload, { acknowledgeSession: true });
-  if (payload.hook_event_name === 'SessionStart' && !options.adapter) {
-    const flow = require(path.join(runtimeDir, 'flow.cjs')).createFlow({ harness: 'claude', cwd: payload.cwd, env });
-    flow.acknowledgeSession(payload.session_id);
-  }
-  return adapter.handleClaudeHook(payload);
+  // Current adapters bound the hook and acknowledge inside that bound. An
+  // older project runtime has no bound and can block a session for minutes,
+  // so its Claude tracing is dropped until the project updates its runtime.
+  if (typeof adapter.runClaudeHook !== 'function') return null;
+  return adapter.runClaudeHook(payload, { acknowledgeSession: true });
 }
 
 function readInput(input = process.stdin, timeoutMs = 750) {
@@ -50,8 +48,11 @@ function readInput(input = process.stdin, timeoutMs = 750) {
   });
 }
 if (require.main === module) {
+  // Exit explicitly once the answer is flushed: nothing may keep the hook alive.
+  const exit = () => process.exit(0);
+  setTimeout(exit, 7500).unref(); // Backstop under Claude's 8-second native timeout.
   readInput().then(input => input === null ? null : main(input))
-    .then(result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result)); })
-    .catch(() => { /* Telemetry failure is nonblocking; never echo payloads/errors. */ });
+    .then(result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result), exit); else exit(); })
+    .catch(exit); // Telemetry failure is nonblocking; never echo payloads/errors.
 }
 module.exports = { main, readInput };

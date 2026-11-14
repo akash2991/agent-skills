@@ -452,6 +452,20 @@ function reconcileToolMetadata(flow, run, row, time) {
         id: flow.id(`claude:tool:${run.nativeSessionId}:${block.id}`),
         toolName: toolName(block.name), startTime: time
       });
+      else if (previous.startUnknown && time <= previous.startTime) {
+        // A completed tool recorded with a placeholder start: correct it and
+        // publish a new revision of the same observation.
+        const { startUnknown, ...known } = previous;
+        const state = { ...known, startTime: time };
+        flow.writeState(stateKey, state);
+        if (state.outcome && !(['Agent', 'Task'].includes(state.toolName) && state.outcome === 'completed')) {
+          const caller = state.caller ? flow.resolve(state.caller) || state.caller : run;
+          submitRecords(flow, caller, [record(caller, { id: state.id,
+            type: fullContent(flow) && ['Agent', 'Task'].includes(state.toolName) ? 'SPAN' : 'TOOL',
+            name: state.toolName, toolName: state.toolName, startTime: state.startTime,
+            endTime: state.endTime, outcome: state.outcome })]);
+        }
+      }
     }
     if (block.type !== 'tool_result' || !identity(block.tool_use_id)) continue;
     const stateKey = key(flow, 'tool', run.nativeSessionId, block.tool_use_id);
@@ -655,9 +669,12 @@ async function processClaudeHook(payload, options = {}) {
       const duration = Number.isFinite(payload.duration_ms) && payload.duration_ms >= 0
         ? Math.min(payload.duration_ms, now) : 0;
       const startTime = prior?.startTime || now - duration;
+      // Without PreToolUse or duration_ms the start is a placeholder; the
+      // transcript's tool_use row backfills it (reconcileToolMetadata).
+      const startUnknown = !prior?.startTime && !(duration > 0);
       const caller = prior?.caller ? flow.resolve(prior.caller) || prior.caller : run;
       flow.writeState(stateKey, { ...prior, id, toolName: name, startTime, endTime, outcome,
-        ...(prior?.caller ? { caller: prior.caller } : {}) });
+        ...(prior?.caller ? { caller: prior.caller } : {}), ...(startUnknown ? { startUnknown: true } : {}) });
       const responseChild = dispatch && event === 'PostToolUse' ? identity(payload.tool_response?.agentId) : null;
       const bindingConflict = responseChild && prior?.childNativeSessionId &&
         childSession(flow, sessionId, responseChild) !== prior.childNativeSessionId;
@@ -773,56 +790,129 @@ async function processClaudeHook(payload, options = {}) {
 
 // Observability must never slow the session down; dropping data is acceptable.
 // A native hook therefore returns within a hard cap and moves all other work to
-// a detached process:
-// - Actor events need additionalContext now. They run in a worker thread that
-//   is terminated at the cap (sync lock waits cannot be preempted otherwise),
-//   without transcript reconciliation or delivery.
-// - Every other event is piped (never written to disk) to a detached process.
-//   Detached processes take the 'hook' lock in ticket order, reconcile within a
-//   budget, then one of them delivers ('flusher' lock); the rest leave a request.
+// separate processes. Each runs in its own process group with a supervising
+// main thread and the work in a worker thread, so a synchronous native call
+// (lock wait, fsync, git) cannot delay the deadline: at the deadline the whole
+// group, subprocesses included, is killed. A thread alone is not enough:
+// process exit waits for a worker blocked in a native call.
+// - Inline events: the hook waits for an 'inline' process up to the cap and
+//   kills it past the cap. They are the actor events, which return
+//   additionalContext, and the rare order-sensitive prompt and model events,
+//   which must apply to the turn they belong to. No reconciliation or delivery.
+// - Every other event is piped (never written to disk) to an 'event' process
+//   and the hook exits. Event processes take the 'hook' lock in ticket order,
+//   reconcile within a budget, then one of them delivers ('flusher' lock); the
+//   rest leave a request.
 const ACTOR_EVENTS = Object.freeze(['SessionStart', 'UserPromptSubmit', 'SubagentStart']);
-const LIMITS = Object.freeze({ inlineMs: 1500, handoffMs: 1000, queueMs: 30000,
-  reconcileMs: 10000, flushPassMs: 10000, lifetimeMs: 60000 });
+// PreToolUse is inline so a dispatch is bound to its caller before the tool
+// runs (and before its PostToolUse); it is registered only for these tools.
+const PRE_TOOLS = Object.freeze(['Agent', 'Task', 'Skill']);
+const HOOK_MATCHERS = Object.freeze({ PreToolUse: PRE_TOOLS.join('|') });
+const INLINE_EVENTS = Object.freeze([...ACTOR_EVENTS, 'UserPromptExpansion', 'PostModelSwitch', 'PreToolUse']);
+const LIMITS = Object.freeze({ inlineMs: 1500, inlineMaxMs: 5000, handoffMs: 1000, queueMs: 10000,
+  reconcileMs: 10000, flushPassMs: 10000, lifetimeMs: 60000, maxDetached: 8 });
 const DETACHED = '--agent-brain-detached';
+// Overrides for slow machines and tests, clamped so the hook still fits under
+// Claude's 8-second native timeout and detached work stays short-lived.
+function limit(name, fallback, min, max) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.min(max, Math.max(min, value)) : fallback;
+}
+const killGroup = pid => { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } };
 
-function runInline(payload, options) {
-  const { Worker } = require('node:worker_threads');
+function spawnWorkProcess(mode, receivedAt, lifetimeMs, extra = []) {
+  return require('node:child_process').spawn(process.execPath,
+    [__filename, DETACHED, mode, String(receivedAt), String(lifetimeMs), ...extra],
+    { detached: true, stdio: ['pipe', mode === 'inline' ? 'pipe' : 'ignore', 'ignore'] });
+}
+
+function runInline(payload, receivedAt, options) {
   return new Promise(resolve => {
-    let worker, done = false;
+    let child, done = false;
+    const chunks = [];
     const finish = value => {
       if (done) return;
       done = true; clearTimeout(timer);
-      if (worker) worker.terminate().catch(() => {});
+      if (child && child.exitCode === null && child.signalCode === null) killGroup(child.pid);
       resolve(value || null);
     };
-    // BRAIN_TRACE_HOOK_INLINE_MS lets a slow machine (or a loaded test run)
-    // raise the cap, never past what fits under the 8-second native timeout.
-    const configured = Number(process.env.BRAIN_TRACE_HOOK_INLINE_MS);
-    const cap = options.inlineMs ?? (Number.isFinite(configured) && configured > 0
-      ? Math.min(7000, Math.max(100, configured)) : LIMITS.inlineMs);
+    const cap = options.inlineMs ?? limit('BRAIN_TRACE_HOOK_INLINE_MS', LIMITS.inlineMs, 100, LIMITS.inlineMaxMs);
     const timer = setTimeout(() => finish(null), cap);
     try {
-      worker = new Worker(__filename, { stdout: true, stderr: true, workerData: {
-        agentBrainClaudeHook: true, payload, acknowledgeSession: options.acknowledgeSession === true } });
-      worker.once('message', finish);
-      worker.once('error', () => finish(null));
-      worker.once('exit', () => finish(null));
+      // The child's own lifetime is a backstop if this hook process is killed.
+      child = spawnWorkProcess('inline', receivedAt, cap + 500, options.acknowledgeSession === true ? ['ack'] : []);
+      child.once('error', () => finish(null));
+      child.stdout.on('data', chunk => chunks.push(chunk));
+      child.once('close', () => {
+        let value = null;
+        try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* no output */ }
+        finish(value);
+      });
+      child.stdin.once('error', () => {});
+      child.stdin.end(JSON.stringify(payload));
     } catch { finish(null); }
   });
 }
 
+// Admission control: at most LIMITS.maxDetached detached processes at once, so
+// a burst of hooks cannot pile up processes and load the machine. Each process
+// holds one slot file, created exclusively and then filled with its PID. A slot
+// whose PID is dead (or that stayed empty past a claim's few milliseconds) is
+// reclaimed. A reused PID only keeps a slot busy, which drops events, never
+// adds load. The directory is createFlow's default state directory (flow.cjs).
+function slotDir() {
+  const stateDir = process.env.BRAIN_TRACE_STATE_DIR || path.join(require('node:os').homedir(), '.cache', 'agent-brain', 'tracing-state');
+  return path.join(stateDir, 'hook-slots');
+}
+function stale(file) {
+  try {
+    const pid = Number(fs.readFileSync(file, 'utf8'));
+    if (!(Number.isSafeInteger(pid) && pid > 0)) return Date.now() - fs.statSync(file).mtimeMs > 5000;
+    try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }
+  } catch { return false; }
+}
+function claimSlot() {
+  const dir = slotDir();
+  try {
+    const parent = fs.lstatSync(path.dirname(dir));
+    if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077)) return null;
+    try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') return null; }
+  } catch { return null; } // No private state yet: admit; createFlow will set it up.
+  const create = file => { try { fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 }); return true; } catch { return false; } };
+  for (let i = 0; i < LIMITS.maxDetached; i++) {
+    const file = path.join(dir, `slot-${i}`);
+    if (create(file)) return file;
+    if (stale(file)) { try { fs.unlinkSync(file); } catch { /* raced */ } if (create(file)) return file; }
+  }
+  return false;
+}
+
 function spawnDetached(mode, input, receivedAt) {
+  const slot = claimSlot();
+  if (slot === false) return Promise.resolve(); // Full: drop under load.
   return new Promise(resolve => {
-    const timer = setTimeout(resolve, LIMITS.handoffMs);
+    let child;
+    // A handoff that does not finish in time is abandoned: destroy the pipe so
+    // it cannot keep the hook alive, and kill the child that is not reading.
+    const timer = setTimeout(() => {
+      try { child?.stdin.destroy(); } catch { /* already closed */ }
+      if (child?.pid) killGroup(child.pid);
+      if (slot) try { fs.unlinkSync(slot); } catch { /* best effort */ }
+      resolve();
+    }, LIMITS.handoffMs);
     const done = () => { clearTimeout(timer); resolve(); };
     try {
-      const child = require('node:child_process').spawn(process.execPath, [__filename, DETACHED, mode, String(receivedAt)],
-        { detached: true, stdio: ['pipe', 'ignore', 'ignore'] });
+      child = spawnWorkProcess(mode, receivedAt,
+        limit('BRAIN_TRACE_HOOK_LIFETIME_MS', LIMITS.lifetimeMs, 1000, LIMITS.lifetimeMs));
+      if (slot) {
+        if (child.pid) try { fs.writeFileSync(slot, String(child.pid)); } catch { /* reclaimed as stale */ }
+        else try { fs.unlinkSync(slot); } catch { /* best effort */ }
+      }
       child.once('error', done);
       child.stdin.once('error', done);
       child.unref();
       child.stdin.end(JSON.stringify(input), done);
-    } catch { done(); }
+    } catch { if (slot) try { fs.unlinkSync(slot); } catch { /* best effort */ } done(); }
   });
 }
 
@@ -832,10 +922,12 @@ async function runClaudeHook(payload, options = {}) {
   try {
     if (killed(process.env) || !payload || !HOOK_EVENTS.includes(payload.hook_event_name)
       || !identity(payload.session_id)) return null;
+    // Older settings register PreToolUse for every tool; never pay for those.
+    if (payload.hook_event_name === 'PreToolUse' && !PRE_TOOLS.includes(payload.tool_name)) return null;
     const receivedAt = Date.now();
     const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
-    if (ACTOR_EVENTS.includes(payload.hook_event_name)) {
-      const output = await runInline(payload, options);
+    if (INLINE_EVENTS.includes(payload.hook_event_name)) {
+      const output = await runInline({ ...payload, cwd }, receivedAt, options);
       await spawnDetached('flush', { cwd }, receivedAt);
       return output;
     }
@@ -872,13 +964,15 @@ async function underLock(stateDir, kind, waitMs, fn) {
   let lock;
   try { lock = claimLock(stateDir, kind, { deadlineAt: Math.max(deadlineAt, Date.now() + 1000) }); }
   catch { return { acquired: false }; }
+  let polls = 0;
   try {
     for (;;) {
       let blocked;
       try { blocked = lock.blocked(); } catch { return { acquired: false }; }
       if (!blocked) break;
       if (Date.now() >= deadlineAt) return { acquired: false };
-      await sleep(10);
+      // Back off with jitter: each poll rereads every claim.
+      await sleep(Math.min(200, 10 * 2 ** Math.min(polls++, 4)) * (0.5 + Math.random()));
     }
     return { acquired: true, value: await fn() };
   } finally { lock.release(); }
@@ -904,31 +998,51 @@ async function flushSingleFlight(flow, endAt) {
   }
 }
 
-async function detachedMain(mode, receivedAt) {
-  const endAt = Date.now() + LIMITS.lifetimeMs;
-  setTimeout(() => process.exit(0), LIMITS.lifetimeMs).unref();
-  const text = await readStdin(5000);
-  let input;
-  try { input = JSON.parse(text); } catch { return; }
-  if (!input || typeof input.cwd !== 'string' || killed(process.env)) return;
+// Runs in a work process's worker thread.
+async function detachedWork(mode, input, receivedAt, endAt, acknowledgeSession) {
+  if (!input || typeof input.cwd !== 'string' || killed(process.env)) return null;
   const env = process.env;
+  if (mode === 'inline') {
+    return processClaudeHook(input, { env, acknowledgeSession, clock: () => receivedAt, reconcile: false, flush: false });
+  }
   const flow = require('./flow.cjs').createFlow({ harness: 'claude', cwd: input.cwd, env });
   if (mode === 'event') {
     await underLock(flow.stateDir, 'hook', LIMITS.queueMs, () => processClaudeHook(input, { flow, env,
       clock: () => receivedAt, reconcileBudgetMs: LIMITS.reconcileMs, flush: false }));
   }
   await flushSingleFlight(flow, endAt);
+  return null;
+}
+
+// A work process's main thread only supervises: synchronous work in the worker
+// cannot delay the lifetime cap, which kills the whole process group.
+async function detachedMain(mode, receivedAt, lifetimeMs, acknowledgeSession) {
+  const endAt = Date.now() + lifetimeMs;
+  setTimeout(() => { killGroup(process.pid); process.exit(0); }, lifetimeMs);
+  let input;
+  try { input = JSON.parse(await readStdin(Math.min(5000, lifetimeMs))); } catch { process.exit(0); }
+  const { Worker } = require('node:worker_threads');
+  const worker = new Worker(__filename, { stdout: true, stderr: true,
+    workerData: { agentBrainClaudeWork: true, mode, input, receivedAt, endAt, acknowledgeSession } });
+  worker.once('message', output => {
+    if (mode === 'inline' && output) process.stdout.write(JSON.stringify(output), () => process.exit(0));
+    else process.exit(0);
+  });
+  worker.once('error', () => process.exit(0));
+  worker.once('exit', () => process.exit(0));
 }
 
 const threads = require('node:worker_threads');
-if (!threads.isMainThread && threads.workerData?.agentBrainClaudeHook === true) {
-  const { payload, acknowledgeSession } = threads.workerData;
-  processClaudeHook(payload, { env: process.env, acknowledgeSession, reconcile: false, flush: false })
+if (!threads.isMainThread && threads.workerData?.agentBrainClaudeWork === true) {
+  const { mode, input, receivedAt, endAt, acknowledgeSession } = threads.workerData;
+  detachedWork(mode, input, receivedAt, endAt, acknowledgeSession)
     .then(output => threads.parentPort.postMessage(output || null), () => threads.parentPort.postMessage(null));
 } else if (require.main === module && process.argv[2] === DETACHED) {
-  const receivedAt = Number(process.argv[4]);
-  detachedMain(process.argv[3], Number.isFinite(receivedAt) ? receivedAt : Date.now())
-    .catch(() => {}).finally(() => process.exit(0));
+  const [mode, received, lifetime, ack] = process.argv.slice(3);
+  const receivedAt = Number(received), lifetimeMs = Number(lifetime);
+  detachedMain(mode, Number.isFinite(receivedAt) ? receivedAt : Date.now(),
+    Number.isFinite(lifetimeMs) && lifetimeMs > 0 ? Math.min(lifetimeMs, LIMITS.lifetimeMs) : LIMITS.lifetimeMs,
+    ack === 'ack').catch(() => process.exit(0));
 }
 
-module.exports = { HOOK_EVENTS, ACTOR_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };
+module.exports = { HOOK_EVENTS, HOOK_MATCHERS, ACTOR_EVENTS, INLINE_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };

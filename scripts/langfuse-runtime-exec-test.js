@@ -38,7 +38,7 @@ function fixture(t) {
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
   const stateDir = path.join(root, 'state');
   const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: root, BRAIN_TRACE_STATE_DIR: stateDir,
-    LANGFUSE_PUBLIC_KEY: '', TEST_RUNTIME: runtime, BRAIN_TRACE_HOOK_INLINE_MS: '7000' };
+    LANGFUSE_PUBLIC_KEY: '', TEST_RUNTIME: runtime, BRAIN_TRACE_HOOK_INLINE_MS: '5000' };
   const flow = createFlow({ cwd, stateDir, env, flushOutbox: async () => ({ accepted: 0, verified: false }) });
   const parent = flow.begin({ cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
   const actor = flow.createToolLaunch(parent).nonce;

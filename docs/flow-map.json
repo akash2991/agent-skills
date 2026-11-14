@@ -879,6 +879,44 @@
           "O6 O7"
         ]
       ]
+    },
+    {
+      "id": "claude-tracing",
+      "name": "Trace a Claude Code session",
+      "area": "Infrastructure",
+      "summary": "Native hooks hand each event to bounded processes; tracing may drop data but never slows or blocks the session.",
+      "steps": [
+        [
+          "Hook receives the event and returns within its cap (inline events) or after a pipe handoff (all others)",
+          "det",
+          "runtime/langfuse/claude-hook.cjs",
+          null
+        ],
+        [
+          "Inline work: actor context, prompt, model and PreToolUse events, killed with its process group past the cap",
+          "det",
+          "runtime/langfuse/claude.cjs",
+          null
+        ],
+        [
+          "Admit at most 8 detached processes; drop the event when full",
+          "det",
+          "runtime/langfuse/claude.cjs",
+          null
+        ],
+        [
+          "Detached work: ticket-ordered hook lock, budgeted transcript reconciliation that saves its cursor",
+          "det",
+          "runtime/langfuse/claude.cjs",
+          null
+        ],
+        [
+          "One flusher delivers the outbox to Langfuse; the lifetime cap kills the process group",
+          "det",
+          "runtime/langfuse/export.cjs",
+          null
+        ]
+      ]
     }
   ]
 }

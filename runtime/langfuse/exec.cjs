@@ -100,8 +100,10 @@ function claudeSettings(sessionId, cwd) {
   // command string. Native user arguments never pass through a shell.
   const command = [process.execPath, __filename, '--claude-hook', sessionId, cwd].map(quote).join(' ');
   const hooks = {};
-  for (const event of require('./claude.cjs').HOOK_EVENTS) {
-    hooks[event] = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
+  const { HOOK_EVENTS, HOOK_MATCHERS } = require('./claude.cjs');
+  for (const event of HOOK_EVENTS) {
+    hooks[event] = [{ ...(HOOK_MATCHERS[event] ? { matcher: HOOK_MATCHERS[event] } : {}),
+      hooks: [{ type: 'command', command, timeout: 10 }] }];
   }
   return { hooks, enabledPlugins: { 'langfuse-observability@langfuse-observability': false } };
 }
@@ -156,10 +158,10 @@ function exitWithResult(result) {
 }
 if (require.main === module) {
   if (process.argv[2] === '--claude-hook') {
+    const exit = () => process.exit(0);
     claudeHook(process.argv[3], process.argv[4]).then(output => {
-      if (output) process.stdout.write(JSON.stringify(output));
-      process.exit(0);
-    }, () => process.exit(0));
+      if (output) process.stdout.write(JSON.stringify(output), exit); else exit();
+    }, exit);
   } else {
     exec(process.argv.slice(2)).then(exitWithResult).catch(() => { console.error('Traced exec refused or unavailable; no context was guessed.'); process.exitCode = 1; });
   }
