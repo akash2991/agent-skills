@@ -243,14 +243,14 @@ git log --grep="validation" --oneline
 
 ## Release & Versioning
 
-Releases follow semver and add an entry to the project changelog, `docs/CHANGELOG.md` (the brain's documentation map), listing the tickets. Commits are how *you* track change; a **version** is how your *consumers* track it. The moment anything else depends on your code — another team, a published package, a deployed client — "latest on main" stops being a sufficient answer to "what am I running, and is it safe to upgrade?" A version number and a changelog are the contract that answers it.
+Releases follow semver and add an entry to the project changelog, `docs/CHANGELOG.md` (the brain's documentation map), listing the tickets. Commits are how *you* track change; a **version** is how your *consumers* track it: users on an installed app, clients of an API, people on a web deploy. "Latest on main" is never a sufficient answer to "what am I running, and is it safe to upgrade?" A version number and a changelog are the contract that answers it.
 
 ### Semantic Versioning
 
-For anything with consumers, version `MAJOR.MINOR.PATCH` and let the number carry meaning:
+Which surfaces carry a version is `continuous-delivery` L1. Let each number carry meaning against what that surface promises: an API's contract to its clients, an app's capabilities to its users.
 
 ```
-  MAJOR  breaking change — consumers must change their code to upgrade
+  MAJOR  breaking change — clients must change their code, or users lose a capability they relied on
   MINOR  new functionality, backward-compatible — safe to upgrade
   PATCH  bug fix, backward-compatible — safe to upgrade
 ```
@@ -259,27 +259,30 @@ The number is a promise, so make the code match it. A "patch" that changes behav
 
 ### Tag the release, and let the tag be the source of truth
 
-A release is an immutable point in history, not a moving branch. Tag it so it can always be reproduced:
+A release is an immutable point in history, not a moving branch. Tag it `<surface>-vX.Y.Z` (`continuous-delivery` L1) so it can always be reproduced:
 
 ```bash
-git tag -a v1.4.0 -m "Release 1.4.0"
-git push origin v1.4.0
+git tag -a web-v1.4.0 -m "Web 1.4.0"
+git push origin web-v1.4.0
 ```
 
 Derive the version from the tag rather than hand-editing it in scattered files, so the artifact, the tag, and the changelog can never disagree.
+
+A mobile app carries two numbers. The semver is the store version (`expo.version`; `versionName` on Android, `CFBundleShortVersionString` on iOS), taken from the `mobile-v` tag. Set the next version before its first candidate build is uploaded: App Store Connect refuses new builds under a version already approved. The build number (`versionCode`, `CFBundleVersion`) is an integer that increases on every build uploaded to a store or test track, including rebuilds of the same version. Whatever path builds the app (`development-setup` DS16, or CI) allocates it automatically, for example EAS's remote version source with `autoIncrement`; it is never edited by hand.
 
 ### Keep a changelog written for humans (P13)
 
 A changelog is not `git log`. It's the curated, consumer-facing answer to "what changed and do I care?" — grouped by `Added / Changed / Fixed / Deprecated / Removed / Security`, newest on top, every entry phrased around user impact, not internal mechanics.
 
 ```markdown
-## [1.4.0] - 2025-06-12
-### Added
-- Bulk task import via CSV
-### Fixed
-- Timezone drift in recurring task due dates
-### Deprecated
-- `GET /v1/tasks/all` — use the paginated `GET /v1/tasks` (removal in 2.0)
+## Backend
+### 1.4.0 - 2025-06-12
+#### Added
+- FAC-41 — Bulk task import via CSV
+#### Fixed
+- FAC-44 — Timezone drift in recurring task due dates
+#### Deprecated
+- FAC-45 — `GET /v1/tasks/all`: use the paginated `GET /v1/tasks` (removal in 2.0)
 ```
 
 Write the entry in the same change that makes the change, while the impact is fresh — not reconstructed from commit archaeology at release time. Breaking changes get a migration note and a deprecation window; this section is the versioning contract that shipping consumes.
@@ -332,6 +335,8 @@ Write the entry in the same change that makes the change, while the impact is fr
 - Force-pushing to shared branches
 - A breaking change shipped under a minor or patch version bump
 - A release with no tag, or a version number hand-edited out of sync with the tag
+- A surface with no version, or one version shared across backend, web, and mobile (`continuous-delivery` L1)
+- A mobile build uploaded with a build number that is not higher than the last one
 - A user-facing release with no changelog entry, or a changelog that's just dumped commit messages
 
 ## Verification
@@ -354,8 +359,9 @@ For every commit, also:
 - [ ] No formatting-only changes mixed with behavior changes
 - [ ] `.gitignore` covers standard exclusions
 
-For every release (anything with consumers):
+For every release of a surface:
 
 - [ ] The version bump matches the change: breaking → major, additive → minor, fix → patch
-- [ ] The release is tagged, and the version is derived from the tag, not hand-edited out of sync
+- [ ] The release is tagged `<surface>-vX.Y.Z`, and the version is derived from the tag, not hand-edited out of sync
+- [ ] For mobile, the build number is higher than every build already uploaded
 - [ ] The changelog has a curated, human-readable entry grouped by impact for this version
