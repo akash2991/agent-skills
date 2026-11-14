@@ -419,6 +419,20 @@ test('a supervisor ended by SIGTERM takes its child down with it', async () => {
   assert.ok(await until(() => !alive(child), 2000), 'child outlived its supervisor');
 });
 
+test('event work dies with a hook process that is killed before it can clean up', async () => {
+  // A supervisor's signal or cap SIGKILLs the hook process, so its own cap
+  // timer never fires. The event's work (here, a stalled git) must end too.
+  const git = fakeGit(pids => `echo $$ > "${pids}/$$"\nsleep 30`);
+  const script = `require(${JSON.stringify(path.join(__dirname, '../runtime/langfuse/claude.cjs'))}).runClaudeHook(
+    ${JSON.stringify({ hook_event_name: 'PostToolUse', session_id: crypto.randomUUID(), cwd: git.project,
+      tool_use_id: 'toolu_orphan', tool_name: 'Bash', duration_ms: 1 })}, { inlineMs: 5000 })`;
+  const hookProcess = spawn(process.execPath, ['-e', script], { env: git.env, stdio: 'ignore' });
+  assert.ok(await until(() => git.live().length > 0, 10000), 'event work reached git');
+  hookProcess.kill('SIGKILL');
+  // The event's own lifetime would keep it until the 5 s cap; it must end now.
+  assert.ok(await until(() => git.live().length === 0, 1500), `event work outlived its hook: ${git.live()}`);
+});
+
 test('entrypoints skip PreToolUse for ordinary tools before spawning anything', () => {
   const { ignorable } = require('../runtime/langfuse/bootstrap-claude.cjs');
   assert.equal(ignorable(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' })), true);

@@ -282,3 +282,16 @@ test('a turn and a shutdown deliver even when capture is refused at capacity', a
   await h.emit('session_shutdown');
   assert.equal(h.flushes, 2, 'session_shutdown delivers after a refused capture');
 });
+
+test('a turn delivers even when capture is refused before its root exists', async () => {
+  const h = harness();
+  // The adapter cap refuses the first root: no run state exists for the turn.
+  h.flow.begin = () => { throw new Error('Tracing checkpoint capacity exceeded'); };
+  await h.emit('session_start');
+  await h.emit('input', { text: 'synthetic' });
+  await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
+  await h.emit('agent_before_settle', { outcome: 'completed' });
+  await h.emit('agent_settled', { aborted: false });
+  assert.equal(h.runs, 0, 'no root was created');
+  assert.equal(h.flushes, 1, 'agent_settled still delivers what is queued');
+});

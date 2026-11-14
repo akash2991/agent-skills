@@ -517,7 +517,10 @@ function createController(pi, options = {}) {
   observe('thinking_level_select', (event, ctx) => { const state = current(); if (state) state.run = flow.update(state.run, { requestedEffort: event.level || event.thinkingLevel || effort(ctx) }); });
   observe('agent_before_settle', event => { const state = current(); if (state && ['completed', 'aborted', 'error'].includes(event.outcome)) state.outcome = event.outcome; });
   observe('agent_settled', async event => {
-    const state = current(); if (!state) return;
+    const state = current();
+    // No root: capture was refused before one existed (for example at the
+    // adapter cap). Still deliver what is queued, so the state can drain.
+    if (!state) { if (flow) await flow.flush({ timeoutMs: 2500 }); return; }
     if (event.aborted) state.outcome = 'aborted';
     // Deliver even when capture fails: a full outbox or adapter cap refuses
     // new records, and only delivery frees that space.

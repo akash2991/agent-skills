@@ -1009,6 +1009,13 @@ function endGroup() { killGroup(process.pid); process.exit(0); }
 async function workMain(mode, receivedAt, endAt, acknowledgeSession) {
   const lifetimeMs = Math.max(0, endAt - Date.now());
   setTimeout(endGroup, lifetimeMs);
+  // Event work belongs to the hook that spawned it. If that hook is killed
+  // (a supervisor's signal or cap), its cleanup never runs: end with it. The
+  // uploader is meant to outlive its parent, so only event work watches.
+  if (mode === 'event') {
+    const parent = process.ppid;
+    setInterval(() => { if (process.ppid !== parent) endGroup(); }, 50).unref();
+  }
   let input;
   try { input = JSON.parse(await readStdin(Math.min(5000, lifetimeMs))); } catch { endGroup(); }
   const { Worker } = require('node:worker_threads');
