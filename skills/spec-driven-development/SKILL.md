@@ -110,7 +110,8 @@ Don't silently fill in ambiguous requirements. The spec's entire purpose is to s
 
 6. **Boundaries** — Three-tier system:
    - **Always do:** Run tests before commits, follow naming conventions, validate inputs
-   - **Ask first:** Database schema changes, adding dependencies, changing CI config
+   - **Grade and route (`git-workflow-and-versioning` P17):** database schema changes, adding dependencies, changing CI config — in scope, these ship through the PR's blast radius, not a request for permission
+   - **Ask first:** only what the user or the ticket asked to approve, a decision that is the user's to make, or work outside the authorized scope
    - **Never do:** Commit secrets, edit vendor directories, remove failing tests without approval
 
 **Spec template:**

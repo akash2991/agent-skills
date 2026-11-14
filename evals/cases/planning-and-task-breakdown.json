@@ -35,12 +35,12 @@
       "id": 2,
       "kind": "dialogue",
       "prompt": "Revamp the entire web UI: navigation, account screens, and checkout. There is no current HLD or LLD. Make all implementation tickets now, estimate them, and fill the next three sprints. We probably need some database and API work, but the endpoints are not decided.",
-      "expected_output": "Scopes the full request as large and assigns the web engineer the web plan, coordinating backend ownership for server work. Creates the design documentation work first. Keeps early API/schema placeholders provisional and unestimated, obtains review of required HLD/LLD, and only then derives precise issues and commits them to usable Linear cycles.",
+      "expected_output": "Scopes the full request as large and assigns the web engineer the web plan, coordinating backend ownership for server work. Creates the design documentation work first. Keeps early API/schema placeholders provisional and unestimated, settles the required HLD/LLD (merged, no open question; user review only if asked), and only then derives precise issues and commits them to usable Linear cycles.",
       "expectations": [
         "Records full scope, boundaries and unknowns, classifies it large, and names the appropriate engineering owners",
-        "The first actionable technical ticket produces missing design docs with user review as acceptance criteria",
+        "The first actionable technical ticket produces missing design docs, settled per documentation W3, as acceptance criteria",
         "Uses HLD for components and communication, and LLD for exact API contracts and schema",
-        "Does not invent endpoint lists/counts, implementation estimates, or committed cycle assignments before design review",
+        "Does not invent endpoint lists/counts, implementation estimates, or committed cycle assignments before the design is settled",
         "Any early API/schema placeholders remain explicitly provisional, blocked and unestimated",
         "Retains later requested scope after the MVP and does not treat a documentation-only cycle as a usable product increment"
       ]
@@ -77,11 +77,11 @@
       "id": 5,
       "kind": "dialogue",
       "prompt": "The full plan and HLD/LLD were approved before implementation. We have now completed milestone 1 and its tests, build, and core flow pass. Can we skip the phase-end user review because design review already happened?",
-      "expected_output": "Preserves both gates: prior design and plan approval do not replace user review of the completed phase before starting the next phase.",
+      "expected_output": "Records the verified milestone checkpoint on the ticket and continues to the next phase; waits for user review only if the user or the ticket asked for it.",
       "expectations": [
         "Checks tests, build, and the core flow at the milestone checkpoint",
-        "Obtains user review before the next phase despite prior design and plan approval",
-        "Does not treat complementary review gates as substitutes"
+        "Records the checkpoint on the ticket and continues without waiting on the user",
+        "Would wait for user review only if the user or the ticket had asked for it"
       ]
     }
   ]

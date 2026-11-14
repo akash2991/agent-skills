@@ -123,12 +123,12 @@ main ──●──●──●──●──●──●──●──●─
 
 | Level | The change | Review | Who merges |
 | --- | --- | --- | --- |
-| **high** | touches auth, payments, personal data, or permissions; a migration that drops, rewrites, or backfills data; a breaking change to a published contract (API, event, schema); CI/CD, deploy, infrastructure, or secrets; a shared kernel or more than one service; anything one revert does not undo | `code-reviewer` | the reviewer, on its approval of the head and green CI |
+| **high** | touches auth, payments, personal data, or permissions; a migration that drops, rewrites, or backfills data; a breaking change to a published contract (API, event, schema); CI/CD, deploy, infrastructure, or secrets; a shared kernel or more than one service; anything one revert does not undo; a security boundary in `security-and-hardening` § High Blast Radius | `code-reviewer` | the reviewer, on its approval of the head and green CI |
 | **medium** | behavior a user or another service can reach, inside one service, undone by one revert; an additive contract or migration | none unless the ticket asks | the author, on green CI |
 | **low** | nothing reachable changes: docs, tests, a refactor under passing tests, code behind a flag that is off or with no entry point | none unless the ticket asks | the author, on green CI |
 
 - **The authoring agent never reviews its own PR**: it posts no verdict on it and never switches persona to approve it. A separate `code-reviewer` agent reviews and merges.
-- **A shared GitHub account:** GitHub refuses an approval from the PR's own account, so the reviewer posts its verdict as a comment review carrying `Reviewer: <its assignment name>` and the filled-in `**Verdict:**` line (`github`). A replacement reviewer takes over by using the same name. `merge-pr.js` prints which review passed the gate and warns that a shared account cannot prove the reviewer's independence.
+- **A shared GitHub account:** GitHub refuses an approval from the PR's own account, so the reviewer posts its verdict as a comment review carrying `Reviewer: <its assignment name>` and the filled-in `**Verdict:**` line (`github`). A replacement reviewer takes over by using the same name. A change request posted without the reviewer line blocks until its body is edited to add one (`github`). `merge-pr.js` prints which review passed the gate and warns that a shared account cannot prove the reviewer's independence.
 - **An outstanding change request blocks a merge at every level** until the same reviewer approves the head.
 - **A ticket that asks for review** on a low or medium PR: the `code-reviewer` reviews it and merges with `merge-pr.js --require-review`.
 - **A ticket that asks for human approval or testing:** record the human's go-ahead on the ticket before anyone merges; no agent verdict stands in for it. Otherwise no human approves at any level.

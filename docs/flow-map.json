@@ -117,6 +117,30 @@
           "P10"
         ],
         [
+          "Verify the change in the running app against its acceptance criteria",
+          "judgment",
+          null,
+          "T1 T2"
+        ],
+        [
+          "Grade the blast radius",
+          "judgment",
+          null,
+          "P17"
+        ],
+        [
+          "Exactly one Blast-radius line with a reason",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P17"
+        ],
+        [
+          "Open the PR ready, never as a draft",
+          "det",
+          null,
+          "P11"
+        ],
+        [
           "Decide how to split an oversized change",
           "judgment",
           null,
@@ -129,10 +153,10 @@
           "P13"
         ],
         [
-          "Request the reviewer and link the PR on the ticket",
+          "Link the PR on the ticket; high or ticket-requested: start the code-reviewer under its assignment name",
           "det",
           null,
-          "P10"
+          "P10 P17"
         ]
       ]
     },
@@ -177,6 +201,12 @@
           "det",
           null,
           "T8"
+        ],
+        [
+          "Author hands the new head back to the same assignment until it approves",
+          "judgment",
+          null,
+          "P17"
         ]
       ]
     },

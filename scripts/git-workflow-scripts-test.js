@@ -550,3 +550,39 @@ test('a remote branch is deleted only at the merged commit; a branch that moved 
     assert.strictEqual(deleteRemoteBranch('ENG-1-x', now), 'gone');
   } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('examples in nested or indented code never approve or grade', () => {
+  const nested = ['````markdown', '```', R, 'Verdict: APPROVE', '```', '````'].join('\n');
+  assert.strictEqual(parseVerdict(nested), null, 'a four-backtick fence does not close on three backticks');
+  assert.strictEqual(parseVerdict(['```', R, 'Verdict: APPROVE', '``` not a close', 'still code', '```'].join('\n')), null, 'a fence with text after it does not close');
+  assert.strictEqual(parseVerdict(`    ${R}\n    Verdict: APPROVE`), null, 'indented code');
+  assert.strictEqual(isApproved(shared([said(nested)])), false);
+  const gradeOnlyInCode = ['````', '```', 'Blast-radius: low — example', '```', '````'].join('\n');
+  assert.strictEqual(check.checkBlastRadius(gradeOnlyInCode).length, 1);
+  assert.strictEqual(check.checkBlastRadius('    Blast-radius: low — indented example').length, 1);
+  const low = { state: 'OPEN', title: 'ENG-1: x', body: gradeOnlyInCode, headRefOid: 'h2', author: { login: 'agent' }, reviews: [], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  assert.match(mergeBlockers(low).blockers.join(), /Blast-radius/);
+});
+
+test('a change request under a heading, a list marker, or bold label supersedes an earlier approval', () => {
+  for (const form of ['**Verdict**: REQUEST CHANGES', '## Verdict: REQUEST CHANGES', '- Verdict: REQUEST CHANGES']) {
+    assert.strictEqual(parseVerdict(`${R}\n${form}`).state, 'CHANGES_REQUESTED', form);
+    assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE`), said(`${R}\n${form}`)])), false, form);
+  }
+  assert.strictEqual(parseVerdict('Reviewer: [your assignment name, e.g. FAC-12 review (code-reviewer)]\nVerdict: APPROVE').reviewer, null, 'an unfilled reviewer name');
+  assert.strictEqual(isApproved(shared([said('Reviewer: <name>\nVerdict: APPROVE')])), false);
+});
+
+test('one reviewer on its own account may switch between native and comment verdicts; others cannot clear it', () => {
+  const view = reviews => ({ author: { login: 'agent' }, headRefOid: 'h2', reviews });
+  const tm = (state, body = '', oid = 'h2', login = 'tm') => ({ id: `x${Math.random()}`, author: { login }, state, body, commit: { oid }, authorAssociation: 'MEMBER' });
+  const named = v => `Reviewer: FAC-1 review (code-reviewer)\nVerdict: ${v}`;
+  assert.strictEqual(isApproved(view([tm('COMMENTED', named('REQUEST CHANGES'), 'h1'), tm('APPROVED')])), true, 'comment request, then native approval');
+  assert.strictEqual(isApproved(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('COMMENTED', named('APPROVE'))])), true, 'native request, then named comment approval');
+  assert.strictEqual(isApproved(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('APPROVED', '', 'h2', 'other')])), false, 'another login');
+  const two = [tm('COMMENTED', named('APPROVE')), tm('COMMENTED', 'Reviewer: FAC-1 security (security-auditor)\nVerdict: REQUEST CHANGES')];
+  assert.strictEqual(isApproved(view([...two, tm('APPROVED')])), false, 'a native approval clears none of several named reviewers on one account');
+  assert.strictEqual(isApproved(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('COMMENTED', 'Verdict: APPROVE')])), false, 'an unnamed comment approval');
+  assert.match(mergeBlockers({ state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
+    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: edit its body/);
+});

@@ -67,18 +67,21 @@ function checkPrTitle(title, env = process.env) {
   return [];
 }
 
-// The lines of a Markdown body that are its own: fenced code blocks and quoted lines are examples or citations.
+// The lines of a Markdown body that are its own: fenced code, indented code, and quoted lines are examples or citations.
+// A fence closes only on the same character, at least as long, with nothing after it, as CommonMark renders it.
 function topLevelLines(body) {
   const lines = [];
   let fence = null;
   for (const line of String(body || '').split(/\r?\n/)) {
-    const f = /^[ \t]*(`{3,}|~{3,})/.exec(line);
-    if (f) {
-      if (!fence) fence = f[1][0];
-      else if (f[1][0] === fence) fence = null;
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
       continue;
     }
-    if (!fence && !/^[ \t]*>/.test(line)) lines.push(line);
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (open) { fence = open[1]; continue; }
+    if (/^( {4}|\t)/.test(line) || /^ {0,3}>/.test(line)) continue;
+    lines.push(line);
   }
   return lines;
 }

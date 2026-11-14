@@ -23,7 +23,7 @@ Multi-dimensional code review with quality gates. Every reviewer runs the fixed 
 
 ## Reviewer roles
 
-- The existing agent takes the role of a reviewer **by importing the relevant skill** (this one plus the discipline skill, e.g. `observability-and-instrumentation`, `test-driven-development`, `coding-standards`). Roles: **code reviewer, QA reviewer, perf reviewer, security reviewer**, etc. Which PRs get a reviewer, who merges, and the shared-account verdict format are `git-workflow-and-versioning` P8, P10, and P17.
+- An agent other than the PR's author takes the role of a reviewer **by importing the relevant skill** (this one plus the discipline skill, e.g. `observability-and-instrumentation`, `test-driven-development`, `coding-standards`). Roles: **code reviewer, QA reviewer, perf reviewer, security reviewer**, etc. Which PRs get a reviewer, who merges, and the shared-account verdict format are `git-workflow-and-versioning` P8, P10, and P17.
 - A reviewed PR merges only on its reviewer's approval of the head; every review comment is resolved by a commit or an explained reply.
 - Detail lives in `../../references/merge-and-review.md`.
 

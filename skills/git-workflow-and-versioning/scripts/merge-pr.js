@@ -35,8 +35,11 @@ function isPending(c) {
 }
 
 const ROLES = ['OWNER', 'MEMBER', 'COLLABORATOR'];
-const VERDICT_LINE = /^[ \t]*(?:\*\*)?Verdict:(?:\*\*)?[ \t]*(.*)$/i;
-const REVIEWER_LINE = /^[ \t]*(?:\*\*)?Reviewer:(?:\*\*)?[ \t]*(.*?)[ \t]*$/i;
+// A label line may sit under a heading or list marker, bold or not: "## Verdict: X", "- Verdict: X", "**Verdict**: X".
+const label = name => new RegExp(`^ {0,3}(?:#{1,6}[ \\t]+|[-*+][ \\t]+)?(?:\\*\\*)?${name}(?:\\*\\*)?[ \\t]*:(?:\\*\\*)?[ \\t]*(.*?)[ \\t]*$`, 'i');
+const VERDICT_LINE = label('Verdict');
+const REVIEWER_LINE = label('Reviewer');
+const NATIVE = Symbol('native review');
 const APPROVE = /^approved?(?:[.!]|[ \t]*(?:[—–:]|-[ \t])[^|]*)?$/i;
 
 // A comment review's verdict, read from the body's own lines (not quotes or code examples). No verdict line: a reply.
@@ -48,7 +51,9 @@ function parseVerdict(body) {
   const verdicts = lines.map(l => VERDICT_LINE.exec(l)).filter(Boolean);
   if (!verdicts.length) return null;
   const reviewers = lines.map(l => REVIEWER_LINE.exec(l)).filter(m => m && m[1]);
-  const reviewer = reviewers.length === 1 ? reviewers[0][1].replace(/[`*]/g, '').trim() || null : null;
+  // An unfilled template name ("[your assignment name …]" or "<…>") is no name.
+  const name = reviewers.length === 1 ? reviewers[0][1].replace(/[`*]/g, '').trim() : '';
+  const reviewer = name && !/^[[<].*[\]>]$/.test(name) ? name : null;
   const value = verdicts[0][1].replace(/\*/g, '').trim();
   if (verdicts.length === 1 && /^comment( only)?[.!]?$/i.test(value)) return null;
   const approves = verdicts.length === 1 && APPROVE.test(value);
@@ -59,11 +64,14 @@ function parseVerdict(body) {
 // but the author. GitHub refuses an approval from the PR's own account, so agents that share it post their verdict as a
 // comment review with the verdict and reviewer lines; each named reviewer is tracked on its own, and a replacement
 // reviewer takes over an assignment by using the same name. A comment approval without a reviewer name never counts; a
-// comment change request without one stays in force until its body names the reviewer. The script cannot tell a reviewer
-// agent from the authoring agent on a shared account: P17 forbids the author's verdict, and main() reports which review
-// passed the gate. A change request stays in force after a new push until the same reviewer approves.
+// comment change request without one stays in force until its body is edited to name the reviewer. On an account that is
+// not the author's, one reviewer may switch between a native review and a named comment verdict: when that account has
+// exactly one reviewer on record and one side is native, the new verdict replaces it; with several named reviewers on
+// the account a native review clears none of them. The script cannot tell a reviewer agent from the authoring agent on a
+// shared account: P17 forbids the author's verdict, and main() reports which review passed the gate. A change request
+// stays in force after a new push until the same reviewer approves.
 function reviewState(view) {
-  const newest = new Map();
+  const byLogin = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
     if (!login || !ROLES.includes(r.authorAssociation)) continue;
@@ -74,16 +82,21 @@ function reviewState(view) {
     if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED') {
       if (own) continue;
       state = r.state;
-      key = login;
+      key = NATIVE;
     } else if (r.state === 'COMMENTED') {
       const verdict = parseVerdict(r.body);
       if (!verdict || (!verdict.reviewer && verdict.state === 'APPROVED')) continue;
       ({ state, reviewer } = verdict);
-      key = `${login}#${reviewer || `unnamed:${r.id || newest.size}`}`;
+      key = reviewer || `unnamed:${r.id || byLogin.size}`;
     } else continue;
-    newest.set(key, { state, login, reviewer, own, id: r.id, oid: r.commit && r.commit.oid });
+    const entries = byLogin.get(login) || new Map();
+    byLogin.set(login, entries);
+    const [only] = entries.size === 1 ? [...entries.keys()] : [];
+    const named = k => typeof k === 'string' && !k.startsWith('unnamed:');
+    if (!own && only !== undefined && only !== key && (only === NATIVE ? named(key) : key === NATIVE && named(only))) entries.delete(only);
+    entries.set(key, { state, login, reviewer, own, id: r.id, oid: r.commit && r.commit.oid });
   }
-  const verdicts = [...newest.values()];
+  const verdicts = [...byLogin.values()].flatMap(e => [...e.values()]);
   return {
     blocking: verdicts.filter(v => v.state === 'CHANGES_REQUESTED'),
     approvals: verdicts.filter(v => v.state === 'APPROVED' && v.oid === view.headRefOid),
@@ -96,7 +109,8 @@ function isApproved(view) {
 }
 
 function describe(v) {
-  return v.reviewer ? `${v.reviewer} (${v.login})` : v.login;
+  if (v.reviewer) return `${v.reviewer} (${v.login})`;
+  return v.id ? `${v.login} in unnamed review ${v.id}: edit its body to add the Reviewer: line (github)` : v.login;
 }
 
 // view is the parsed `gh pr view --json title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state` output.
