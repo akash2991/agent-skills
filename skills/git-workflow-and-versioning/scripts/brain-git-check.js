@@ -90,14 +90,18 @@ function headerFields(body) {
 // P17: the PR body's opening block holds exactly one "Blast-radius: <low|medium|high> — <reason>". A missing,
 // duplicated, or malformed grade is an error, never a lower grade: "medium-high" is not "medium". A line elsewhere in
 // the body is not a declaration.
-const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*[—–:]|[ \t]+-)[ \t]*(\S.*)$/i;
+// The separator is a colon, or a dash with whitespace before it: "medium–high" or "medium-high" is a range, refused.
+const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*:|[ \t]+[—–-])[ \t]*(\S.*)$/i;
 const FORM = '"Blast-radius: <low|medium|high> — <reason>" in the PR body\'s opening block of "Key: value" lines, before its first blank line (P17)';
 
 function parseBlastRadius(body) {
   const fields = headerFields(body);
   if (!fields) return { level: null, error: `PR body must open with a block of "Key: value" lines holding ${FORM}` };
   const declared = fields.filter(f => f.key === 'blast-radius');
-  if (!declared.length) return { level: null, error: `PR body needs ${FORM}` };
+  if (!declared.length) {
+    const near = fields.find(f => /^blast[ _]?radius$/.test(f.key));
+    return { level: null, error: near ? `found "${near.key}:"; the key is "Blast-radius:": ${FORM}` : `PR body needs ${FORM}` };
+  }
   if (declared.length > 1) return { level: null, error: `PR body declares the blast radius ${declared.length} times; keep exactly one ${FORM}` };
   const m = BLAST_RADIUS.exec(declared[0].value);
   if (!m || /^<.*>$/.test(m[2].trim())) return { level: null, error: `"Blast-radius: ${declared[0].value}" is not ${FORM} with a real reason` };

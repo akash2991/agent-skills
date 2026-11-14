@@ -37,7 +37,8 @@ function isPending(c) {
 const ROLES = ['OWNER', 'MEMBER', 'COLLABORATOR'];
 const NATIVE = Symbol('native review');
 // Without a header verdict, any of these anywhere in the body is read as a change request: it can block, never approve.
-const VERDICT_LIKE = /verdict\W*:|request(?:ed)?[ \t_-]*changes|changes[ \t_-]*requested/i;
+// "Verdict" as a word (a heading needs no colon), and requested changes even across Markdown emphasis.
+const VERDICT_LIKE = /\bverdict\b|request(?:ed)?\W*changes|changes\W*requested/i;
 
 // A comment review's verdict lives in its opening block of "Key: value" lines (headerFields): one "Reviewer:" naming the
 // review assignment, e.g. "FAC-12 review (code-reviewer)", and one "Verdict:". Prose follows after a blank line and is

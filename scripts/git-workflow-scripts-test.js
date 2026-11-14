@@ -651,3 +651,27 @@ test('a malformed review is repaired only by the agent that posted it', () => {
   const text = mergeBlockers(view).blockers.join();
   assert.match(text, /only the agent that posted it repairs its opening Reviewer: and Verdict: lines, keeping its verdict; the author never edits another agent's review/);
 });
+
+test('a combined grade with a Unicode dash is refused, not read as the lower level', () => {
+  const low = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }], reviews: [] };
+  for (const body of ['Blast-radius: medium–high — auth changes', 'Blast-radius: medium—high — auth changes', 'Blast-radius: low–medium: x']) {
+    assert.strictEqual(check.checkBlastRadius(body).length, 1, body);
+    assert.match(mergeBlockers({ ...low, body }).blockers.join(), /Blast-radius/, body);
+  }
+  for (const body of ['Blast-radius: high — auth', 'Blast-radius: high – auth', 'Blast-radius: high - auth', 'Blast-radius: high: auth']) {
+    assert.strictEqual(check.blastRadius(body), 'high', body);
+  }
+  assert.match(check.checkBlastRadius('Blast radius: low — x')[0], /found "blast radius:"; the key is "Blast-radius:"/);
+});
+
+test('a verdict heading without a colon, or an emphasized change request, blocks after an approval', () => {
+  const view = body => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] });
+  const late = said(`${R}\n\n## Verdict\n\nREQUEST **CHANGES**`);
+  for (const grade of ['low', 'medium', 'high']) {
+    const v = { ...view(`Blast-radius: ${grade} — x`), reviews: [said(`${R}\nVerdict: APPROVE`), late] };
+    assert.match(mergeBlockers(v).blockers.join(), /changes requested by FAC-1 review/, grade);
+    // The same assignment resolves it by approving the head again.
+    assert.deepStrictEqual(mergeBlockers({ ...v, reviews: [...v.reviews, said(`${R}\nVerdict: APPROVE`)] }).blockers, [], grade);
+  }
+  assert.strictEqual(parseVerdict(`${R}\nVerdict: APPROVE\n\n## Verdict\nREQUEST **CHANGES** in an example`).state, 'APPROVED', 'prose after a valid header is commentary');
+});
