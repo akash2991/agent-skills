@@ -27,4 +27,5 @@ The project's global changelog. Each surface has its own version and its own `Un
 
 ### Unreleased
 
+#### Changed
 - <ticket> — <CI, infra, tooling, or docs change>

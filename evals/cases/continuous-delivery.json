@@ -46,7 +46,7 @@
         "An MVP is cut first and the remaining scope stays on the ticket",
         "Each slice leaves the app working; unfinished paths are behind a flag defaulting off or have no entry point",
         "Each API is implemented, tested, committed and PR'd on its own",
-        "Each PR adds a changelog line under its surface's Unreleased; the version is bumped when the surface's release is cut",
+        "Each PR adds a changelog line under each affected surface's Unreleased, or Project's; a surface's version is bumped when its release is cut",
         "Any slice that cannot keep the app working is stated on the ticket, and one-shot development happens only on a recorded user instruction"
       ]
     }

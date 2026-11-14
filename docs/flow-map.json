@@ -243,6 +243,12 @@
       "summary": "L1: one surface (backend, web, mobile) at a time: its semver, its changelog entry listing the tickets, a tag and a GitHub release.",
       "steps": [
         [
+          "Decide that the release should go out",
+          "human",
+          null,
+          "L2"
+        ],
+        [
           "Pick the surface's semver bump from its Unreleased lines' impact",
           "judgment",
           null,
@@ -259,12 +265,6 @@
           "det",
           null,
           "L1"
-        ],
-        [
-          "Decide that the release should go out",
-          "human",
-          null,
-          "L2"
         ]
       ]
     },
