@@ -129,7 +129,7 @@
           "P17"
         ],
         [
-          "Exactly one Blast-radius line with a reason",
+          "Exactly one Blast-radius line with a reason, in the PR body's opening block",
           "det",
           "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
           "P17"
@@ -179,7 +179,7 @@
           "P10"
         ],
         [
-          "Post inline comments and a submitted verdict with the reviewer name",
+          "Post inline comments and a verdict opening with the Reviewer and Verdict lines",
           "det",
           null,
           "P10 P17"

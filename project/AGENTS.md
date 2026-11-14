@@ -43,7 +43,7 @@ One file per persona at `agents/<name>.md` (a harness may keep them in its own d
 | `product-manager` | idea → ticket → spec → phased PRD with success targets, MVP first | designs or codes |
 | `backend-engineer` · `web-engineer` · `mobile-engineer` | plan, sprints and stories, HLD and LLD, code, tests, docs, build, deploy; one discipline, the scope the task sets | reviews; works outside its discipline |
 | `scout` | read-only investigation, reported with evidence | edits anything |
-| `code-reviewer` | adversarial review of one high blast-radius change: PR comments, Linear issues, a verdict, the merge on approval | edits the change |
+| `code-reviewer` | adversarial review of one change (high blast radius, or asked for): PR comments, Linear issues, a verdict, the merge on approval | edits the change |
 | `test-engineer` | independent verification, end to end and under concurrency; files bugs | fixes product code |
 | `security-auditor` | audit of security-sensitive surfaces | holds a PR |
 | `web-performance-auditor` | measured performance audit, never invented numbers | fixes hypotheticals |

@@ -60,11 +60,10 @@ Categorize every finding with these severity labels:
 ## Review Output Template
 
 ```markdown
-## Review Summary
-
 Reviewer: [your assignment name, e.g. FAC-12 review (code-reviewer)]
+Verdict: APPROVE | REQUEST CHANGES
 
-**Verdict:** APPROVE | REQUEST CHANGES
+## Review Summary
 
 **Overview:** [1-2 sentences summarizing the change and overall assessment]
 
@@ -102,7 +101,7 @@ Reviewer: [your assignment name, e.g. FAC-12 review (code-reviewer)]
 
 You review every PR graded `Blast-radius: high`, and any PR whose ticket asks for review, and you merge it. The routing, the shared-account verdict format, and the human-approval exception are `git-workflow-and-versioning` P17.
 
-- Post the review on the PR's current head, filling in the `Reviewer:` and `**Verdict:**` lines; on a shared account, as a comment review (`github`).
+- Post the review on the PR's current head. It opens with the filled-in `Reviewer:` and `Verdict:` lines, nothing before them; on a shared account, as a comment review (`github`).
 - On REQUEST CHANGES, the author fixes, pushes, and hands you the new head; review it under the same assignment name (`<ticket> review (code-reviewer)`), even as a fresh agent, since that name is what clears your change request.
 - On APPROVE with CI green, merge with `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>` (`--require-review` for a low or medium PR) and move the ticket (`linear`). Merging is not editing: you still never change the code.
 

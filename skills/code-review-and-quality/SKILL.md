@@ -55,9 +55,10 @@ Additional checks that follow from the other skills: commit granularity and mess
 ## Output format for a review
 
 ```
-## Review — <PR title> (<role>)
 Reviewer: <your assignment name, e.g. FAC-12 review (code-reviewer)>
 Verdict: approve | request changes | comment only
+
+## Review — <PR title> (<role>)
 
 ### Findings
 1. [<check #>] <file:line> — <what> — <why it matters> — Linear: <issue id>

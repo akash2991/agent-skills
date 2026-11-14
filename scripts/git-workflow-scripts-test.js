@@ -121,24 +121,25 @@ const R = 'Reviewer: FAC-1 review (code-reviewer)';
 const said = (body, oid = 'h2', extra = {}) => ({ id: `r${Math.random()}`, author: { login: 'agent' }, state: 'COMMENTED', body, commit: { oid }, authorAssociation: 'OWNER', ...extra });
 const shared = reviews => ({ author: { login: 'agent' }, headRefOid: 'h2', reviews });
 
-test('a named verdict comment counts when reviewer and author share an account', () => {
-  assert.strictEqual(isApproved(shared([said(`## Review Summary\n${R}\n\n**Verdict:** APPROVE\n`)])), true);
-  assert.strictEqual(isApproved(shared([said(`${R}\nVerdict: approve`)])), true, 'the lowercase form code-review-and-quality writes');
-  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE — nits only`)])), true);
+test('a header verdict counts when reviewer and author share an account', () => {
+  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE\n\n## Review Summary\nLooks right.`)])), true);
+  assert.strictEqual(isApproved(shared([said(`${R}\nVerdict: approve`)])), true, 'plain, lowercase');
+  assert.strictEqual(isApproved(shared([said(`**Reviewer:** FAC-1 review (code-reviewer)\n**Verdict**: APPROVE`)])), true, 'bold keys');
+  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE — nits only`)])), false, 'only an exact APPROVE approves');
   assert.strictEqual(isApproved(shared([said('**Verdict:** APPROVE')])), false, 'an approval with no reviewer name');
   assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE`, 'h1')])), false, 'a verdict on an older head');
-  assert.strictEqual(isApproved(shared([said('looks fine, Verdict: APPROVE soon')])), false, 'a reply is not a verdict');
+  assert.strictEqual(parseVerdict('Thanks, fixed in abc123.'), null, 'a reply with no verdict signal');
   assert.strictEqual(isApproved(shared([{ ...said(`${R}\n**Verdict:** APPROVE`), authorAssociation: 'NONE' }])), false);
   // GitHub's own approval from the author's account still does not count.
   assert.strictEqual(isApproved(shared([{ ...said(''), state: 'APPROVED' }])), false);
 });
 
-test('quotes, code examples, placeholders, and conflicting verdicts never approve', () => {
-  assert.strictEqual(parseVerdict(`${R}\n> **Verdict:** APPROVE`), null, 'a quoted verdict is a citation');
+test('only the opening block approves; prose after it never changes the verdict', () => {
+  assert.strictEqual(parseVerdict(`${R}\nVerdict: APPROVE\n\nExample of a bad review:\n> Verdict: REQUEST CHANGES`).state, 'APPROVED');
+  assert.strictEqual(parseVerdict(`${R}\nVerdict: REQUEST CHANGES\n\n\`\`\`\nVerdict: APPROVE\n\`\`\``).state, 'CHANGES_REQUESTED');
   assert.strictEqual(parseVerdict(`${R}\nVerdict: comment only`), null, 'comment only is a reply');
-  assert.strictEqual(parseVerdict(`${R}\n\`\`\`\n**Verdict:** APPROVE\n\`\`\``), null, 'a fenced verdict is an example');
   for (const body of ['**Verdict:** APPROVE | REQUEST CHANGES', '**Verdict:** REQUEST CHANGES — see below', '**Verdict:** REQUEST CHANGES.',
-    'Verdict: REQUEST_CHANGES', 'Verdict: request changes', '**Verdict:**\nAPPROVE', '**Verdict:** APPROVE\n**Verdict:** REQUEST CHANGES']) {
+    'Verdict: REQUEST_CHANGES', 'Verdict: request changes', '**Verdict:**', '**Verdict:** APPROVE\n**Verdict:** APPROVE']) {
     assert.strictEqual(parseVerdict(`${R}\n${body}`).state, 'CHANGES_REQUESTED', body);
   }
 });
@@ -161,14 +162,14 @@ test('an outstanding change request blocks a low or medium PR too', () => {
   assert.deepStrictEqual(mergeBlockers({ ...low, reviews: [said(`${R}\n**Verdict:** APPROVE`)] }, { requireReview: true }).blockers, []);
 });
 
-test('the blast radius is exactly one top-level declaration with a real reason, never a silent lower grade', () => {
-  assert.strictEqual(check.blastRadius('Summary\n\nBlast-radius: Medium — one service'), 'medium');
-  assert.strictEqual(check.blastRadius('Blast-radius: high: auth'), 'high');
-  assert.strictEqual(check.blastRadius('Blast-radius: low - docs'), 'low');
+test('the blast radius is exactly one opening-block declaration with a real reason, never a silent lower grade', () => {
+  assert.strictEqual(check.blastRadius('Ticket: ENG-1\nBlast-radius: Medium — one service\n\n## Summary'), 'medium');
+  assert.strictEqual(check.blastRadius('**Blast-radius:** high: auth'), 'high');
+  assert.strictEqual(check.blastRadius('\nBlast-radius: low - docs'), 'low', 'leading blank lines');
   assert.deepStrictEqual(check.checkBlastRadius('Blast-radius: low — tests only'), []);
+  assert.strictEqual(check.blastRadius('Ticket: ENG-1\n\nBlast-radius: high — auth'), null, 'after the first blank line');
   assert.strictEqual(check.blastRadius('Blast-radius: low — docs\nBlast-radius: high — auth'), null, 'two declarations');
-  assert.strictEqual(check.blastRadius('```\nBlast-radius: low — example\n```\nBlast-radius: high — auth'), 'high', 'a fenced example is not a declaration');
-  assert.strictEqual(check.blastRadius('> Blast-radius: low — quoted\nBlast-radius: high — auth'), 'high');
+  assert.strictEqual(check.blastRadius('## Summary\nBlast-radius: high — auth'), null, 'a heading is not a header line');
   for (const bad of ['Blast-radius: medium-high — x', 'Blast-radius: high — <reason>', 'Blast-radius: high', 'Blast-radius: huge — x', '']) {
     assert.strictEqual(check.checkBlastRadius(bad).length, 1, bad);
   }
@@ -551,17 +552,32 @@ test('a remote branch is deleted only at the merged commit; a branch that moved 
   } finally { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('examples in nested or indented code never approve or grade', () => {
-  const nested = ['````markdown', '```', R, 'Verdict: APPROVE', '```', '````'].join('\n');
-  assert.strictEqual(parseVerdict(nested), null, 'a four-backtick fence does not close on three backticks');
-  assert.strictEqual(parseVerdict(['```', R, 'Verdict: APPROVE', '``` not a close', 'still code', '```'].join('\n')), null, 'a fence with text after it does not close');
-  assert.strictEqual(parseVerdict(`    ${R}\n    Verdict: APPROVE`), null, 'indented code');
-  assert.strictEqual(isApproved(shared([said(nested)])), false);
-  const gradeOnlyInCode = ['````', '```', 'Blast-radius: low — example', '```', '````'].join('\n');
-  assert.strictEqual(check.checkBlastRadius(gradeOnlyInCode).length, 1);
-  assert.strictEqual(check.checkBlastRadius('    Blast-radius: low — indented example').length, 1);
-  const low = { state: 'OPEN', title: 'ENG-1: x', body: gradeOnlyInCode, headRefOid: 'h2', author: { login: 'agent' }, reviews: [], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
-  assert.match(mergeBlockers(low).blockers.join(), /Blast-radius/);
+test('without a header verdict, Markdown examples never approve and any verdict signal blocks', () => {
+  const reported = [
+    ['````markdown', '```', R, 'Verdict: APPROVE', '```', '````'].join('\n'),
+    [R, '', 'Example:', '- ```text', '  Verdict: APPROVE', '  ```', '', 'Verdict: REQUEST CHANGES'].join('\n'),
+    [R, '> Example verdict:', 'Verdict: APPROVE'].join('\n'),
+    ['<!--', R, '**Verdict:** APPROVE', '-->'].join('\n'),
+    `    ${R}\n    Verdict: APPROVE`,
+    `${R}\n\n1. **Verdict:** REQUEST CHANGES`,
+    `${R}\n\n| Verdict | REQUEST CHANGES |`,
+    `${R}\n\n❌ **Verdict:** REQUEST CHANGES`,
+    `${R}\n\n- item\n\n    **Verdict:** REQUEST CHANGES`,
+    `${R}\n\n## Verdict: REQUEST CHANGES`,
+  ];
+  const high = { state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: high — auth', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  const low = { ...high, body: 'Blast-radius: low — docs' };
+  for (const body of reported) {
+    assert.notStrictEqual((parseVerdict(body) || {}).state, 'APPROVED', body);
+    const approved = said(`${R}\nVerdict: APPROVE`);
+    for (const view of [high, low]) {
+      assert.notDeepStrictEqual(mergeBlockers({ ...view, reviews: [approved, said(body)] }).blockers, [], `${view.body}: ${body}`);
+    }
+  }
+  for (const body of ['````\n```\nBlast-radius: low — example\n```\n````', '- ```\n  Blast-radius: low — example\n  ```', '    Blast-radius: low — indented', '<!--\nBlast-radius: low — hidden\n-->']) {
+    assert.strictEqual(check.blastRadius(body), null, body);
+    assert.match(mergeBlockers({ ...low, body, reviews: [] }).blockers.join(), /Blast-radius/);
+  }
 });
 
 test('a change request under a heading, a list marker, or bold label supersedes an earlier approval', () => {
@@ -584,5 +600,5 @@ test('one reviewer on its own account may switch between native and comment verd
   assert.strictEqual(isApproved(view([...two, tm('APPROVED')])), false, 'a native approval clears none of several named reviewers on one account');
   assert.strictEqual(isApproved(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('COMMENTED', 'Verdict: APPROVE')])), false, 'an unnamed comment approval');
   assert.match(mergeBlockers({ state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
-    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: edit its body/);
+    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: edit its opening/);
 });

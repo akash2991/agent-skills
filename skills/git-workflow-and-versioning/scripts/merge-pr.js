@@ -10,7 +10,7 @@
 // A human approval the ticket asks for is not checked here: it is recorded on the ticket before anyone runs this.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, parseBlastRadius, topLevelLines } = require('./brain-git-check');
+const { ticketSource, parseBlastRadius, headerFields } = require('./brain-git-check');
 
 function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -35,29 +35,29 @@ function isPending(c) {
 }
 
 const ROLES = ['OWNER', 'MEMBER', 'COLLABORATOR'];
-// A label line may sit under a heading or list marker, bold or not: "## Verdict: X", "- Verdict: X", "**Verdict**: X".
-const label = name => new RegExp(`^ {0,3}(?:#{1,6}[ \\t]+|[-*+][ \\t]+)?(?:\\*\\*)?${name}(?:\\*\\*)?[ \\t]*:(?:\\*\\*)?[ \\t]*(.*?)[ \\t]*$`, 'i');
-const VERDICT_LINE = label('Verdict');
-const REVIEWER_LINE = label('Reviewer');
 const NATIVE = Symbol('native review');
-const APPROVE = /^approved?(?:[.!]|[ \t]*(?:[—–:]|-[ \t])[^|]*)?$/i;
+// Without a header verdict, any of these anywhere in the body is read as a change request: it can block, never approve.
+const VERDICT_LIKE = /verdict\W*:|request(?:ed)?[ \t_-]*changes|changes[ \t_-]*requested/i;
 
-// A comment review's verdict, read from the body's own lines (not quotes or code examples). No verdict line: a reply.
-// One verdict line: APPROVE (any case, optionally followed by a dash and a note) approves; "comment only" is a reply;
-// anything else, the unfilled template "APPROVE | REQUEST CHANGES" included, requests changes. Two or more verdict lines conflict and request changes.
-// The reviewer is the body's one "Reviewer:" line: the review assignment's name, e.g. "FAC-12 review (code-reviewer)".
+// A comment review's verdict lives in its opening block of "Key: value" lines (headerFields): one "Reviewer:" naming the
+// review assignment, e.g. "FAC-12 review (code-reviewer)", and one "Verdict:". Prose follows after a blank line and is
+// commentary only. A header "Verdict: APPROVE" (any case) approves; "comment only" is a reply; any other value, two
+// verdicts, or the unfilled template requests changes. With no header verdict, a body that mentions a verdict or
+// requested changes anywhere requests changes (fixed by editing the review's opening lines); anything else is a reply.
 function parseVerdict(body) {
-  const lines = topLevelLines(body);
-  const verdicts = lines.map(l => VERDICT_LINE.exec(l)).filter(Boolean);
-  if (!verdicts.length) return null;
-  const reviewers = lines.map(l => REVIEWER_LINE.exec(l)).filter(m => m && m[1]);
+  const fields = headerFields(body) || [];
+  const verdicts = fields.filter(f => f.key === 'verdict');
+  const reviewers = fields.filter(f => f.key === 'reviewer');
   // An unfilled template name ("[your assignment name …]" or "<…>") is no name.
-  const name = reviewers.length === 1 ? reviewers[0][1].replace(/[`*]/g, '').trim() : '';
+  const name = reviewers.length === 1 ? reviewers[0].value.replace(/[`*]/g, '').trim() : '';
   const reviewer = name && !/^[[<].*[\]>]$/.test(name) ? name : null;
-  const value = verdicts[0][1].replace(/\*/g, '').trim();
-  if (verdicts.length === 1 && /^comment( only)?[.!]?$/i.test(value)) return null;
-  const approves = verdicts.length === 1 && APPROVE.test(value);
-  return { state: approves ? 'APPROVED' : 'CHANGES_REQUESTED', reviewer };
+  if (verdicts.length === 1) {
+    const value = verdicts[0].value.replace(/[`*]/g, '').trim();
+    if (/^comment( only)?$/i.test(value)) return null;
+    return { state: /^approve$/i.test(value) ? 'APPROVED' : 'CHANGES_REQUESTED', reviewer };
+  }
+  if (verdicts.length > 1 || VERDICT_LIKE.test(body || '')) return { state: 'CHANGES_REQUESTED', reviewer };
+  return null;
 }
 
 // Every reviewer's newest verdict. A GitHub APPROVED or CHANGES_REQUESTED counts from anyone with a role in the repository
@@ -110,7 +110,7 @@ function isApproved(view) {
 
 function describe(v) {
   if (v.reviewer) return `${v.reviewer} (${v.login})`;
-  return v.id ? `${v.login} in unnamed review ${v.id}: edit its body to add the Reviewer: line (github)` : v.login;
+  return v.id ? `${v.login} in unnamed review ${v.id}: edit its opening Reviewer: and Verdict: lines (github)` : v.login;
 }
 
 // view is the parsed `gh pr view --json title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state` output.

@@ -67,38 +67,39 @@ function checkPrTitle(title, env = process.env) {
   return [];
 }
 
-// The lines of a Markdown body that are its own: fenced code, indented code, and quoted lines are examples or citations.
-// A fence closes only on the same character, at least as long, with nothing after it, as CommonMark renders it.
-function topLevelLines(body) {
-  const lines = [];
-  let fence = null;
-  for (const line of String(body || '').split(/\r?\n/)) {
-    if (fence) {
-      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
-      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
-      continue;
-    }
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (open) { fence = open[1]; continue; }
-    if (/^( {4}|\t)/.test(line) || /^ {0,3}>/.test(line)) continue;
-    lines.push(line);
+// The body's opening block: its lines from the first non-blank line to the next blank line, each an unindented
+// "Key: value" (the key may be bold: "**Key:**" or "**Key**:"). Machine-read fields live only here, so nothing in the
+// Markdown that follows (code, quotes, lists, tables, HTML) can supply or hide one. A block with any other line is no
+// header at all: null.
+const HEADER_LINE = /^(?:\*\*)?([A-Za-z][A-Za-z -]*?)(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*(.*?)[ \t]*$/;
+
+function headerFields(body) {
+  const lines = String(body || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  const fields = [];
+  for (; i < lines.length && lines[i].trim(); i++) {
+    const m = HEADER_LINE.exec(lines[i]);
+    if (!m) return null;
+    fields.push({ key: m[1].trim().toLowerCase(), value: m[2] });
   }
-  return lines;
+  return fields;
 }
 
-// P17: the PR body grades its blast radius on exactly one line of its own, "Blast-radius: <low|medium|high> — <reason>".
-// A missing, duplicated, or malformed declaration is an error, never a lower grade: "medium-high" is not "medium".
-const BLAST_RADIUS_LINE = /^[ \t]*Blast-radius\b/i;
-const BLAST_RADIUS = /^[ \t]*Blast-radius:[ \t]*(low|medium|high)(?:[ \t]*[—–:]|[ \t]+-)[ \t]*(\S.*)$/i;
+// P17: the PR body's opening block holds exactly one "Blast-radius: <low|medium|high> — <reason>". A missing,
+// duplicated, or malformed grade is an error, never a lower grade: "medium-high" is not "medium". A line elsewhere in
+// the body is not a declaration.
+const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*[—–:]|[ \t]+-)[ \t]*(\S.*)$/i;
+const FORM = '"Blast-radius: <low|medium|high> — <reason>" in the PR body\'s opening block of "Key: value" lines, before its first blank line (P17)';
 
 function parseBlastRadius(body) {
-  const declared = topLevelLines(body).filter(l => BLAST_RADIUS_LINE.test(l));
-  if (!declared.length) return { level: null, error: 'PR body needs one line "Blast-radius: <low|medium|high> — <reason>" (P17)' };
-  if (declared.length > 1) return { level: null, error: `PR body declares the blast radius ${declared.length} times; keep exactly one "Blast-radius:" line (P17)` };
-  const m = BLAST_RADIUS.exec(declared[0]);
-  if (!m || /^<.*>$/.test(m[2].trim())) {
-    return { level: null, error: `"${declared[0].trim()}" is not "Blast-radius: <low|medium|high> — <reason>" with a real reason (P17)` };
-  }
+  const fields = headerFields(body);
+  if (!fields) return { level: null, error: `PR body must open with a block of "Key: value" lines holding ${FORM}` };
+  const declared = fields.filter(f => f.key === 'blast-radius');
+  if (!declared.length) return { level: null, error: `PR body needs ${FORM}` };
+  if (declared.length > 1) return { level: null, error: `PR body declares the blast radius ${declared.length} times; keep exactly one ${FORM}` };
+  const m = BLAST_RADIUS.exec(declared[0].value);
+  if (!m || /^<.*>$/.test(m[2].trim())) return { level: null, error: `"Blast-radius: ${declared[0].value}" is not ${FORM} with a real reason` };
   return { level: m[1].toLowerCase(), error: null };
 }
 
@@ -302,4 +303,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, topLevelLines, parseBlastRadius, blastRadius, checkBlastRadius, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, headerFields, parseBlastRadius, blastRadius, checkBlastRadius, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };
