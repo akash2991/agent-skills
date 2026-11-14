@@ -468,3 +468,46 @@ test('failed suffix retention is explicit, keeps the open checkpoint, and reserv
   assert.ok(walk(adapterDir).length + 1 <= ADAPTER_LIMITS.files, 'fixed temporary slot remains reserved');
   checkDisk(f);
 });
+
+// FAC-7: admission under capacity pressure runs inside the submission that a
+// close performs. Both close APIs must return a durable result and must not
+// throw because cleanup already reclaimed the source being closed.
+function fillStaleCap(stateDir, staleAt) {
+  const adapters = path.join(stateDir, 'adapters'), pendingDir = path.join(adapters, 'pending');
+  const used = fs.readdirSync(adapters).filter(name => name.endsWith('.json')).length + fs.readdirSync(pendingDir).length;
+  for (let i = 0; i < ADAPTER_LIMITS.files - used; i++) {
+    const batch = i % 2 === 0;
+    const file = batch ? path.join(pendingDir, `${crypto.randomUUID()}.json`) : path.join(adapters, `${crypto.randomBytes(32).toString('hex')}.json`);
+    fs.writeFileSync(file, JSON.stringify(batch ? { runId: 'legacy-run', createdAt: staleAt, records: [{ nativeSessionId: 'legacy' }] } : { nonce: 'legacy' }), { mode: 0o600 });
+    fs.utimesSync(file, staleAt / 1000, staleAt / 1000);
+  }
+}
+
+test('closing an old observation under capacity pressure is durable and does not throw', t => {
+  const f = fixture(t); configurePrivacy({ sensitiveLiterals: [LITERAL] });
+  let now = Date.now(); const at = () => f.flow({ clock: () => now });
+  // An unresolved child cannot queue directly, so closing must defer through
+  // admission, which runs the capacity-pressure path inside the submission.
+  let flow = at(); const run = f.begin(flow, { pendingIdentity: 'exact-unresolved-pressure' });
+  const capture = flow.captureObservation(run, contentRecord(flow, run)); flow.writeObservation('old-open', capture);
+  now += ADAPTER_LIMITS.retentionMs + 60000; flow = at();
+  fillStaleCap(f.stateDir, Date.now());
+  const result = flow.closeObservation('old-open');
+  assert.equal(result.pending, 1);
+  assert.equal(flow.readObservation('old-open'), null);
+  assert.ok(flow.readState('health').quarantined > 0);
+});
+
+test('closing a dispatch observation under capacity pressure is durable and does not throw', t => {
+  const f = fixture(t), flow = f.flow(), parent = f.begin(flow), key = 'pressure-dispatch';
+  configurePrivacy({ sensitiveLiterals: [LITERAL] });
+  flow.writeObservation(key, flow.captureObservation(parent, observation(flow, parent, { type: 'TOOL', toolName: 'subagent',
+    content: flow.createContent({ input: payload(), output: { actualResult: PII } }) })));
+  const identity = { launchId: 'pressure-child' };
+  flow.store.createLaunch(parent, identity);
+  const childFlow = f.flow({ env: { PI_SUBAGENT_ID: identity.launchId } }); f.begin(childFlow);
+  fillStaleCap(f.stateDir, Date.now() - ADAPTER_LIMITS.retentionMs - 60000);
+  const result = childFlow.closeDispatchObservation(key, identity);
+  assert.equal((result.queued || 0) + (result.pending || 0), 1);
+  assert.equal(flow.readObservation(key), null);
+});

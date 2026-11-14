@@ -98,7 +98,7 @@ function diskFixture(t) {
     flushOutbox: async () => ({ accepted: 0, queued: 0, verified: false }), ...extra });
   const outbox = () => fs.readdirSync(path.join(stateDir, 'outbox')).map(name =>
     JSON.parse(fs.readFileSync(path.join(stateDir, 'outbox', name), 'utf8')).record);
-  return { cwd, stateDir, flow, outbox, advance: ms => { now += ms; } };
+  return { cwd, stateDir, flow, outbox, advance: ms => { now += ms; }, time: () => now };
 }
 
 test('late binding persists one valid ticket/provenance pair for finished and continuing children', async t => {
@@ -367,8 +367,8 @@ test('aggregate checkpoint file and byte limits refuse safely, then reclaim expi
   assert.ok(usage().bytes < 1024 * 1024, 'only the new admitted block and diagnostics remain');
 });
 
-test('checkpoint expiry preserves live sessions, unresolved descendants and outbox replay dependencies', async t => {
-  const f = diskFixture(t); let flow = f.flow();
+async function dependencyScenario(t, pressure) {
+  const f = diskFixture(t); let flow = f.flow(); const start = f.time();
   const expired = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
   flow.writeState('expired-generation', { id: flow.id(), usage: { input: 1 } });
   const live = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
@@ -390,7 +390,17 @@ test('checkpoint expiry preserves live sessions, unresolved descendants and outb
   flow.submit(unresolved, [observation(flow, unresolved)]); // New deferred dependency on an older run.
   flow.remember(deferredDescendant, { pendingIdentity: 'exact-new-pause' });
   flow.submit(deferredDescendant, [observation(flow, deferredDescendant)]);
-  f.advance(2000); flow = f.flow(); await flow.flush();
+  f.advance(2000); flow = f.flow();
+  if (pressure) {
+    // FAC-7: fill the cap with stale legacy files so admission must quarantine.
+    // They are stale yet newer than the protected checkpoints written at
+    // `start`, so any age-only choice would move the dependencies first.
+    // Every protected dependency below must survive exactly as without pressure.
+    fillAdapters(f.stateDir, start + 500);
+    flow.writeState('pressure-write', { probe: 1 });
+    assert.ok(flow.readState('health').quarantined > 0);
+  }
+  await flow.flush();
   assert.equal(flow.store.getRun(expired.runId), null);
   assert.equal(flow.readState(`run:${expired.rootSpanId}`), null);
   assert.equal(flow.readState('expired-generation'), null);
@@ -407,45 +417,85 @@ test('checkpoint expiry preserves live sessions, unresolved descendants and outb
   assert.equal(flow.actorForTool(capability.nonce), null);
   assert.equal(flow.resolve(unresolved), null);
   assert.equal(f.outbox().length, 1);
-});
+}
+
+test('checkpoint expiry preserves live sessions, unresolved descendants and outbox replay dependencies', t => dependencyScenario(t, false));
+test('quarantine under capacity pressure preserves the same live and replay dependencies', t => dependencyScenario(t, true));
 
 // FAC-7: legacy files that the GC rules keep forever used to fill the cap and
-// refuse every new capture. Stale ones are quarantined; fresh ones are not.
-function fillAdapters(stateDir) {
-  const adapters = path.join(stateDir, 'adapters'), pending = path.join(adapters, 'pending');
-  let written = 0;
-  for (; written < 1500; written++) {
-    fs.writeFileSync(path.join(pending, `${crypto.randomUUID()}.json`), JSON.stringify({ runId: 'legacy-run', records: [{ nativeSessionId: 'legacy' }] }), { mode: 0o600 });
-  }
-  for (; written < ADAPTER_LIMITS.files; written++) {
-    fs.writeFileSync(path.join(adapters, `${crypto.randomBytes(32).toString('hex')}.json`), JSON.stringify({ nonce: 'legacy' }), { mode: 0o600 });
-  }
-}
+// refuse every new capture. Only never-sent pre-ticket batches and
+// unreferenced ownerless checkpoints may be quarantined, and only when stale.
 const adapterFiles = stateDir => fs.readdirSync(path.join(stateDir, 'adapters')).filter(name => name.endsWith('.json')).length
   + fs.readdirSync(path.join(stateDir, 'adapters', 'pending')).length;
+function fillAdapters(stateDir, staleAt, { pendingShare = 0.7, total = ADAPTER_LIMITS.files } = {}) {
+  const adapters = path.join(stateDir, 'adapters'), pending = path.join(adapters, 'pending');
+  const free = total - adapterFiles(stateDir), batches = Math.floor(free * pendingShare);
+  for (let i = 0; i < free; i++) {
+    const file = i < batches ? path.join(pending, `${crypto.randomUUID()}.json`)
+      : path.join(adapters, `${crypto.randomBytes(32).toString('hex')}.json`);
+    fs.writeFileSync(file, JSON.stringify(i < batches
+      ? { runId: 'legacy-run', createdAt: Math.floor(staleAt || Date.now()), records: [{ nativeSessionId: 'legacy' }] }
+      : { nonce: 'legacy' }), { mode: 0o600 });
+    if (staleAt) fs.utimesSync(file, staleAt / 1000, staleAt / 1000);
+  }
+}
+const quarantined = stateDir => {
+  const root = path.join(stateDir, 'quarantine'), walkAll = dir => fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap(entry => entry.isDirectory() ? walkAll(path.join(dir, entry.name)) : [entry.name]);
+  return fs.existsSync(root) ? walkAll(root) : [];
+};
 
 test('a cap full of stale legacy files is quarantined, not deleted, and capture continues', t => {
-  const f = fixture(t);
-  const later = Date.now() + ADAPTER_LIMITS.retentionMs + 60000;
-  const flow = createFlow({ harness: 'claude', cwd: f.cwd, stateDir: f.stateDir, env: {}, clock: () => later });
-  fillAdapters(f.stateDir);
+  const f = diskFixture(t); const flow = f.flow();
+  const live = flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  const before = adapterFiles(f.stateDir);
+  fillAdapters(f.stateDir, Date.now() - ADAPTER_LIMITS.retentionMs - 60000);
   flow.writeState('fac7-probe', { probe: 1 });
   assert.deepEqual(flow.readState('fac7-probe'), { probe: 1 });
-  const quarantine = path.join(f.stateDir, 'quarantine');
-  const held = fs.readdirSync(quarantine).flatMap(dir => fs.readdirSync(path.join(quarantine, dir))
-    .flatMap(name => name === 'pending' ? fs.readdirSync(path.join(quarantine, dir, name)) : [name]));
-  assert.ok(held.length > 0);
-  assert.equal(adapterFiles(f.stateDir) + held.length, ADAPTER_LIMITS.files + 2); // probe + health, nothing lost
-  const health = flow.readState('health');
-  assert.equal(health.reason, 'adapter_capacity_quarantined'); assert.equal(health.quarantined, held.length);
+  assert.ok(flow.readState(`run:${live.rootSpanId}`), 'the live run is referenced and stays in place');
+  const held = quarantined(f.stateDir);
+  assert.equal(held.length, ADAPTER_LIMITS.files - before, 'every legacy filler moved; none deleted');
+  assert.equal(adapterFiles(f.stateDir), before + 2); // probe + health
+  assert.deepEqual(flow.readState('health'), { quarantined: held.length, reason: 'adapter_capacity_quarantined' });
 });
 
 test('a cap full of fresh files is never quarantined and the refusal is recorded', t => {
-  const f = fixture(t);
-  const flow = createFlow({ harness: 'claude', cwd: f.cwd, stateDir: f.stateDir, env: {} });
-  fillAdapters(f.stateDir);
+  const f = diskFixture(t); const flow = f.flow();
+  fillAdapters(f.stateDir, 0);
   assert.throws(() => flow.writeState('fac7-probe', { probe: 1 }), /capacity/);
-  assert.equal(fs.existsSync(path.join(f.stateDir, 'quarantine')), false);
-  assert.equal(adapterFiles(f.stateDir), ADAPTER_LIMITS.files + 1); // health only
+  assert.equal(quarantined(f.stateDir).length, 0);
   assert.deepEqual(flow.readState('health'), { captureFailureObserved: true, reason: 'adapter_capacity' });
+});
+
+test('a top-level directory at the cap keeps diagnostics, transactions and flush reachable', async t => {
+  const f = diskFixture(t); let flow = f.flow();
+  fillAdapters(f.stateDir, 0, { pendingShare: 0 });
+  assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
+  flow.writeState('delivery', { verified: false });
+  assert.throws(() => flow.writeState('refused-again', { probe: 1 }), /capacity/, 'not "recovery pending"');
+  await flow.flush();
+  assert.deepEqual(flow.readState('health'), { captureFailureObserved: true, reason: 'adapter_capacity' });
+  // ordinary cap + pending/ + context-claims/ + two diagnostics stays scannable
+  assert.equal(fs.readdirSync(path.join(f.stateDir, 'adapters')).length, ADAPTER_LIMITS.files + 4);
+  f.advance(ADAPTER_LIMITS.retentionMs + 60000); flow = f.flow();
+  flow.writeState('admitted', { probe: 2 });
+  assert.deepEqual(flow.readState('admitted'), { probe: 2 }, 'admission recovers once the files are stale');
+});
+
+test('ordinary state over the cap refuses even diagnostics but stays scannable', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  fillAdapters(f.stateDir, 0, { pendingShare: 0, total: ADAPTER_LIMITS.files + 1 });
+  assert.throws(() => flow.writeState('health', { captureFailureObserved: true }), /capacity/);
+  assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/, 'not "recovery pending"');
+  assert.equal(quarantined(f.stateDir).length, 0);
+});
+
+test('unknown references disable quarantine', t => {
+  const f = diskFixture(t); const flow = f.flow();
+  flow.begin({ cwd: f.cwd, nativeSessionId: crypto.randomUUID() });
+  fillAdapters(f.stateDir, Date.now() - ADAPTER_LIMITS.retentionMs - 60000, { total: ADAPTER_LIMITS.files - 1 });
+  // An unreadable deferred batch is an unknown reference: nothing may move.
+  fs.writeFileSync(path.join(f.stateDir, 'adapters', 'pending', `${crypto.randomUUID()}.json`), '{"unterminated', { mode: 0o600 });
+  assert.throws(() => flow.writeState('refused', { probe: 1 }), /capacity/);
+  assert.equal(quarantined(f.stateDir).length, 0);
 });

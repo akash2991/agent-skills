@@ -803,6 +803,44 @@
       ]
     },
     {
+      "id": "dev-tracing",
+      "name": "Development-session tracing",
+      "area": "Brain upkeep",
+      "summary": "Pi and Claude sessions in an opted-in project become Langfuse observations: bounded local state, then a flushed outbox.",
+      "steps": [
+        [
+          "Admit a checkpoint within the 2,048-file / 32 MiB adapter cap, reclaiming expired unreferenced state first",
+          "det",
+          "runtime/langfuse/flow.cjs",
+          ""
+        ],
+        [
+          "At the cap, quarantine stale pre-ticket batches and unreferenced ownerless checkpoints; never referenced or in-window state, and nothing when a reference is unknown",
+          "det",
+          "runtime/langfuse/flow.cjs",
+          ""
+        ],
+        [
+          "Record the quarantine or the refusal in health, outside the ordinary cap",
+          "det",
+          "runtime/langfuse/flow.cjs",
+          ""
+        ],
+        [
+          "Flush up to 32 queued records and wait for every batch reply before shutting the exporter down",
+          "det",
+          "runtime/langfuse/export.cjs",
+          ""
+        ],
+        [
+          "Read health and delivery with context status",
+          "det",
+          "runtime/langfuse/brain-trace.cjs",
+          ""
+        ]
+      ]
+    },
+    {
       "id": "dev-machine",
       "name": "Run a dev machine",
       "area": "Infrastructure",
