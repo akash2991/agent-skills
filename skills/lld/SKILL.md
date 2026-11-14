@@ -33,7 +33,7 @@ Each step is a section of `templates/LLD.md`; a section is omitted only when its
 7. **State machines** (any entity with a lifecycle): states as a sum type, transitions, guards, side effects.
 8. **Error handling** (always): the typed errors per module and, per error, whether the caller retries, corrects, or escalates; timeouts and idempotency keys only where an external flow needs them.
 9. **Testing strategy** (always): what is unit, contract, integration, end to end; which fakes are injected.
-10. **Write** the sections into the service `docs/LLD.md` (Document mechanics below) on the design ticket; it counts as settled per (`documentation` W3). Only then hand off to `planning-and-task-breakdown` to derive precise implementation issues linked to these sections. Resolve open questions on the design ticket; implementation placeholders stay provisional until their design is settled.
+10. **Write** the sections into the service `docs/LLD.md` (Document mechanics below) on the design ticket; it counts as settled per `documentation` W3. Only then hand off to `planning-and-task-breakdown` to derive precise implementation issues linked to these sections. Resolve open questions on the design ticket; implementation placeholders stay provisional until their design is settled.
 
 A design decides once, for the whole module, what a line of code cannot: which states are impossible, where validation sits, how the models are layered, what the error model is, what is injected. Where the design cannot satisfy a coding, domain, or data rule, it is rewritten before implementation, not worked around in code.
 
@@ -76,4 +76,4 @@ A design decides once, for the whole module, what a line of code cannot: which s
 - [ ] Every task implementing this module links to its LLD section.
 - [ ] Contracts match the HLD's named APIs and the domain glossary.
 - [ ] Both renderings are produced and committed where Document mechanics says, the HTML beside the Markdown.
-- [ ] The user has reviewed the LLD.
+- [ ] The LLD is settled (`documentation` W3): merged, linked on its ticket, no open question; reviewed by the user when they asked.

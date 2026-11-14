@@ -62,6 +62,8 @@ Categorize every finding with these severity labels:
 ```markdown
 ## Review Summary
 
+Reviewer: [your assignment name, e.g. FAC-12 review (code-reviewer)]
+
 **Verdict:** APPROVE | REQUEST CHANGES
 
 **Overview:** [1-2 sentences summarizing the change and overall assessment]
@@ -98,12 +100,11 @@ Categorize every finding with these severity labels:
 
 ## Verdict and merge
 
-You review every PR graded `Blast-radius: high` (`git-workflow-and-versioning` P17), and you merge it.
+You review every PR graded `Blast-radius: high`, and any PR whose ticket asks for review, and you merge it. The routing, the shared-account verdict format, and the human-approval exception are `git-workflow-and-versioning` P17.
 
-- Post the review on the PR's current head. If GitHub refuses your approval because you share the author's account, post it as a comment review carrying the filled-in `**Verdict:**` line (`github`).
-- On REQUEST CHANGES, the author fixes and pushes; review the new head.
-- On APPROVE with CI green, merge with `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>` and move the ticket (`linear`). Merging is not editing: you still never change the code.
-- A human approval is needed only when the ticket asks for it.
+- Post the review on the PR's current head, filling in the `Reviewer:` and `**Verdict:**` lines; on a shared account, as a comment review (`github`).
+- On REQUEST CHANGES, the author fixes and pushes; review the new head under the same reviewer name.
+- On APPROVE with CI green, merge with `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>` (`--require-review` for a low or medium PR) and move the ticket (`linear`). Merging is not editing: you still never change the code.
 
 ## Composition
 

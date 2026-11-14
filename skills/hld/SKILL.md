@@ -36,7 +36,7 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 10. **SLOs** for the critical paths at the level the PRD justifies; **observability** at high level: metrics and log points (`../../references/metrics-and-logging.md`). Detail belongs in code.
 11. **Sketches for the LLD** only where parallel work needs them before the LLD exists; **left to the LLD** says what this document does not decide.
 12. **Diagrams as code**: `hld.drawio` next to the file, Mermaid inline.
-13. **Hand off**: write it where `../../references/documentation-map.md` says; it counts as settled per (`documentation` W3). Resolve the contracts and internals left open through `lld` before `planning-and-task-breakdown` derives dependent implementation tickets. Earlier high-level placeholders are provisional, not executable scope.
+13. **Hand off**: write it where `../../references/documentation-map.md` says; it counts as settled per `documentation` W3. Resolve the contracts and internals left open through `lld` before `planning-and-task-breakdown` derives dependent implementation tickets. Earlier high-level placeholders are provisional, not executable scope.
 
 ## Interaction with other skills
 
@@ -75,4 +75,4 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 - [ ] The domain model is in `docs/DOMAIN.md` and consistent across services.
 - [ ] Diagrams are committed as code next to the HLD.
 - [ ] What is left to the LLD is called out.
-- [ ] The user has reviewed the HLD.
+- [ ] The HLD is settled (`documentation` W3): merged, linked on its ticket, no open question; reviewed by the user when they asked.

@@ -155,10 +155,10 @@
           "P10"
         ],
         [
-          "Post inline comments and a submitted verdict",
+          "Post inline comments and a submitted verdict with the reviewer name",
           "det",
           null,
-          "P10"
+          "P10 P17"
         ],
         [
           "File a review issue in Linear per finding",
@@ -187,7 +187,7 @@
       "summary": "P12, P15, P17: a merge commit with the ticket id, when green and, for a high blast radius, approved; the author or the reviewer merges.",
       "steps": [
         [
-          "Ready (not a draft), blast radius graded, CI green, and approved when high or the ticket asks",
+          "Ready (not a draft), one graded blast radius, CI green, no outstanding change request, and approved when high or the ticket asks",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
           "P8 P10 P12 P17"
@@ -427,6 +427,12 @@
           "judgment",
           null,
           "W3"
+        ],
+        [
+          "User reviews an ADR for a one-way-door decision",
+          "human",
+          null,
+          ""
         ]
       ]
     },

@@ -25,7 +25,7 @@ Ship with confidence. The goal is not just to deploy — it's to deploy safely, 
 - [ ] All tests pass (unit, integration, e2e)
 - [ ] Build succeeds with no warnings
 - [ ] Lint and type checking pass
-- [ ] Code reviewed and approved
+- [ ] Code reviewed and approved where its blast radius or ticket requires it (`git-workflow-and-versioning` P17)
 - [ ] No TODO comments that should be resolved before launch
 - [ ] No `console.log` debugging statements in production code
 - [ ] Error handling covers expected failure modes

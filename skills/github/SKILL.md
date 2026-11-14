@@ -32,10 +32,10 @@ The server entry is in this skill's `mcp.json`; copy it into your tool's MCP con
 | Request a reviewer | `request_reviewers` | `gh pr edit --add-reviewer <login>` |
 | Inline comment at a line (`linear`) | `create_pending_pull_request_review` + `add_comment_to_pending_review` | `gh api repos/{owner}/{repo}/pulls/{n}/comments` |
 | Verdict | `submit_pending_pull_request_review` with `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` | `gh pr review --approve` / `--request-changes` / `--comment` |
-| Verdict when the reviewer shares the author's GitHub account (GitHub refuses the approval) | `submit_pending_pull_request_review` with `COMMENT`, the body carrying `**Verdict:** APPROVE` or `**Verdict:** REQUEST CHANGES` | `gh pr review --comment --body-file <review>` with the same line |
+| Verdict when the reviewer shares the author's GitHub account (GitHub refuses the approval; `git-workflow-and-versioning` P17) | `submit_pending_pull_request_review` with `COMMENT`, the body carrying one `Reviewer: <assignment name>` line and one `**Verdict:** APPROVE` or `**Verdict:** REQUEST CHANGES` line, outside quotes and code blocks | `gh pr review --comment --body-file <review>` with the same lines |
 | Reply to and resolve a thread | reply comment, then resolve the thread | `gh api graphql` `resolveReviewThread` after the reply |
 | CI status | `get_pull_request_status` | `gh pr checks` |
-| Merge: merge commit with the ticket id, delete the branch | Do not call `merge_pull_request` directly: it skips the gate | `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>`, which refuses a draft, checks the blast radius, CI, and (for a high PR) the approval on the inspected head, merges with a merge commit, and removes the branch |
+| Merge: merge commit with the ticket id, delete the branch | Do not call `merge_pull_request` directly: it skips the gate | `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>`, which refuses a draft, checks the blast radius, CI, outstanding change requests, and (for a high PR, or with `--require-review`) the approval on the inspected head, prints the review that passed the gate, merges with a merge commit, and removes the branch |
 | Tag and release `vX.Y.Z` | `create_release` | `git tag -a vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --notes-file <changelog entry>` |
 
 ## Interaction with other skills

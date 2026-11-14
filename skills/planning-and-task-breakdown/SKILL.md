@@ -35,7 +35,7 @@ Do not implement during scoping. Preserve the full requested scope, including la
 
 ### 2. Resolve the design before detailed technical tickets
 
-For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", settled per (`documentation` W3) as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
+For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", settled per `documentation` W3 as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
 
 Use `hld` for component boundaries and communication; `lld` for exact contracts, schema, and internals. Those skills own document content and review.
 

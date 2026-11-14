@@ -30,9 +30,9 @@ The engineer takes its own change to merge; the user is not a step unless the ti
 
 1. **Verify it yourself.** Run the tests and the running app in your own environment, and exercise every acceptance criterion through the entry point a user uses (`test-driven-development` T1, T2). Never leave testing to the user, the reviewer, or QA.
 2. **Grade the blast radius** and open the PR ready for review, never as a draft, with the verification in its body (`git-workflow-and-versioning` P11, P17).
-3. **Low or medium:** when CI is green, merge it yourself with `merge-pr.js` (`github`) and move the ticket.
-4. **High:** start a `code-reviewer` subagent on the PR (`project/AGENTS.md` names its default model, harness, and effort). Resolve every finding with a commit or a reply; the reviewer approves the head and merges when CI is green.
-5. **Wait on the user only when the ticket asks** for their review, approval, or testing; record that on the ticket and say so in the PR.
+3. **Route it by `git-workflow-and-versioning` P17.** Low or medium, and the ticket asks for no review: merge it yourself with `merge-pr.js` (`github`) when CI is green, and move the ticket. High, or the ticket asks for review: start a `code-reviewer` subagent on the PR (`project/AGENTS.md` names its default model, harness, and effort); resolve every finding with a commit or a reply; the reviewer merges.
+4. **Wait on the user only when the ticket asks** for their review, approval, or testing; their go-ahead is recorded on the ticket before anyone merges (P17).
+5. **A refused merge says why.** A missing or malformed `Blast-radius:` line fails `pr-rules`; after fixing the body, push a new commit, since a failed run on a head keeps blocking it.
 
 ## Large-scale deprecation or migration
 

@@ -302,10 +302,10 @@ Designate someone responsible for keeping CI green. When the build breaks, the B
 
 ### PR Checks
 
-- **Required reviews:** At least 1 approval before merge
 - **Required status checks:** CI must pass before merge
 - **Branch protection:** No force-pushes to main
-- **Auto-merge:** If all checks pass and approved, merge automatically
+- **Reviews follow the blast radius** (`git-workflow-and-versioning` P17), enforced by `merge-pr.js`, not by a native required-approval rule: that rule blocks the author's own low and medium merges and cannot count a reviewer that shares the author's account. A repository that already requires approvals keeps them until its owner decides; never disable or bypass protection to merge.
+- **Auto-merge:** only through `merge-pr.js`, once its gate passes
 
 ## CI Optimization
 

@@ -116,26 +116,64 @@ test('review follows the blast radius: low and medium merge on green CI, unless 
   assert.match(mergeBlockers({ ...low, body: 'Blast-radius: huge — everything' }).blockers.join(), /Blast-radius/, 'an unknown level');
 });
 
-test('a verdict comment counts when reviewer and author share an account; the template placeholder does not', () => {
-  const author = { login: 'agent' };
-  const head = 'h2';
-  const said = (body, oid = head) => ({ author: { login: 'agent' }, state: 'COMMENTED', body, commit: { oid }, authorAssociation: 'OWNER' });
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('## Review Summary\n\n**Verdict:** APPROVE\n')] }), true);
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** APPROVE | REQUEST CHANGES')] }), false);
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** APPROVE', 'h1')] }), false, 'a verdict on an older head');
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** REQUEST CHANGES', 'h1'), said('**Verdict:** APPROVE')] }), true, 'the newest verdict decides');
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** APPROVE'), said('**Verdict:** REQUEST CHANGES')] }), false);
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('looks fine, Verdict: APPROVE soon')] }), false, 'a reply is not a verdict');
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [{ ...said('**Verdict:** APPROVE'), authorAssociation: 'NONE' }] }), false);
+const { reviewState, parseVerdict } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+const R = 'Reviewer: FAC-1 review (code-reviewer)';
+const said = (body, oid = 'h2', extra = {}) => ({ id: `r${Math.random()}`, author: { login: 'agent' }, state: 'COMMENTED', body, commit: { oid }, authorAssociation: 'OWNER', ...extra });
+const shared = reviews => ({ author: { login: 'agent' }, headRefOid: 'h2', reviews });
+
+test('a named verdict comment counts when reviewer and author share an account', () => {
+  assert.strictEqual(isApproved(shared([said(`## Review Summary\n${R}\n\n**Verdict:** APPROVE\n`)])), true);
+  assert.strictEqual(isApproved(shared([said(`${R}\nVerdict: approve`)])), true, 'the lowercase form code-review-and-quality writes');
+  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE — nits only`)])), true);
+  assert.strictEqual(isApproved(shared([said('**Verdict:** APPROVE')])), false, 'an approval with no reviewer name');
+  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE`, 'h1')])), false, 'a verdict on an older head');
+  assert.strictEqual(isApproved(shared([said('looks fine, Verdict: APPROVE soon')])), false, 'a reply is not a verdict');
+  assert.strictEqual(isApproved(shared([{ ...said(`${R}\n**Verdict:** APPROVE`), authorAssociation: 'NONE' }])), false);
   // GitHub's own approval from the author's account still does not count.
-  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [{ ...said(''), state: 'APPROVED' }] }), false);
+  assert.strictEqual(isApproved(shared([{ ...said(''), state: 'APPROVED' }])), false);
 });
 
-test('the PR check requires a graded blast radius with a reason', () => {
+test('quotes, code examples, placeholders, and conflicting verdicts never approve', () => {
+  assert.strictEqual(parseVerdict(`${R}\n> **Verdict:** APPROVE`), null, 'a quoted verdict is a citation');
+  assert.strictEqual(parseVerdict(`${R}\nVerdict: comment only`), null, 'comment only is a reply');
+  assert.strictEqual(parseVerdict(`${R}\n\`\`\`\n**Verdict:** APPROVE\n\`\`\``), null, 'a fenced verdict is an example');
+  for (const body of ['**Verdict:** APPROVE | REQUEST CHANGES', '**Verdict:** REQUEST CHANGES — see below', '**Verdict:** REQUEST CHANGES.',
+    'Verdict: REQUEST_CHANGES', 'Verdict: request changes', '**Verdict:**\nAPPROVE', '**Verdict:** APPROVE\n**Verdict:** REQUEST CHANGES']) {
+    assert.strictEqual(parseVerdict(`${R}\n${body}`).state, 'CHANGES_REQUESTED', body);
+  }
+});
+
+test('a change request stays until the same reviewer approves; shared-account reviewers are tracked apart', () => {
+  const sec = 'Reviewer: FAC-1 security (security-auditor)';
+  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** APPROVE`), said(`${R}\n**Verdict:** REQUEST CHANGES — see below`)])), false);
+  assert.strictEqual(isApproved(shared([said(`${R}\n**Verdict:** REQUEST CHANGES`, 'h1'), said(`${R}\n**Verdict:** APPROVE`)])), true, 'resolved by the same reviewer on the new head');
+  assert.strictEqual(isApproved(shared([said(`${sec}\n**Verdict:** REQUEST CHANGES`), said(`${R}\n**Verdict:** APPROVE`)])), false, 'one agent does not clear another');
+  assert.strictEqual(isApproved(shared([said('**Verdict:** REQUEST CHANGES'), said(`${R}\n**Verdict:** APPROVE`)])), false, 'an unnamed change request stays');
+  const { approvals } = reviewState(shared([said(`${R}\n**Verdict:** APPROVE`)]));
+  assert.strictEqual(approvals[0].reviewer, 'FAC-1 review (code-reviewer)');
+  assert.strictEqual(approvals[0].own, true, 'the audit trail flags the author account');
+});
+
+test('an outstanding change request blocks a low or medium PR too', () => {
+  const low = { state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  assert.match(mergeBlockers({ ...low, reviews: [said(`${R}\n**Verdict:** REQUEST CHANGES`)] }).blockers.join(), /changes requested by FAC-1 review \(code-reviewer\) \(agent\)/);
+  assert.match(mergeBlockers({ ...low, reviews: [{ author: { login: 'teammate' }, state: 'CHANGES_REQUESTED', commit: { oid: 'h2' }, authorAssociation: 'MEMBER' }] }).blockers.join(), /changes requested by teammate/);
+  assert.deepStrictEqual(mergeBlockers({ ...low, reviews: [said(`${R}\n**Verdict:** APPROVE`)] }, { requireReview: true }).blockers, []);
+});
+
+test('the blast radius is exactly one top-level declaration with a real reason, never a silent lower grade', () => {
   assert.strictEqual(check.blastRadius('Summary\n\nBlast-radius: Medium — one service'), 'medium');
+  assert.strictEqual(check.blastRadius('Blast-radius: high: auth'), 'high');
+  assert.strictEqual(check.blastRadius('Blast-radius: low - docs'), 'low');
   assert.deepStrictEqual(check.checkBlastRadius('Blast-radius: low — tests only'), []);
+  assert.strictEqual(check.blastRadius('Blast-radius: low — docs\nBlast-radius: high — auth'), null, 'two declarations');
+  assert.strictEqual(check.blastRadius('```\nBlast-radius: low — example\n```\nBlast-radius: high — auth'), 'high', 'a fenced example is not a declaration');
+  assert.strictEqual(check.blastRadius('> Blast-radius: low — quoted\nBlast-radius: high — auth'), 'high');
+  for (const bad of ['Blast-radius: medium-high — x', 'Blast-radius: high — <reason>', 'Blast-radius: high', 'Blast-radius: huge — x', '']) {
+    assert.strictEqual(check.checkBlastRadius(bad).length, 1, bad);
+  }
+  assert.match(check.checkBlastRadius('Blast-radius: low — a\nBlast-radius: high — b')[0], /2 times/);
   assert.strictEqual(check.checkBlastRadius('Blast radius: low — tests only').length, 1);
-  assert.strictEqual(check.checkBlastRadius('Blast-radius: low').length, 1);
 });
 
 test('hooks install once and never overwrite a foreign hook', () => {

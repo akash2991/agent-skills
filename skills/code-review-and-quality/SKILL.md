@@ -23,8 +23,8 @@ Multi-dimensional code review with quality gates. Every reviewer runs the fixed 
 
 ## Reviewer roles
 
-- The existing agent takes the role of a reviewer **by importing the relevant skill** (this one plus the discipline skill, e.g. `observability-and-instrumentation`, `test-driven-development`, `coding-standards`). Roles: **code reviewer, QA reviewer, perf reviewer, security reviewer**, etc. Reviewers are **optional** — review may be made optional on the ticket.
-- Reviewed-class PRs merge only on the **discipline code reviewer's approval**; every review comment is resolved by a commit or an explained reply.
+- The existing agent takes the role of a reviewer **by importing the relevant skill** (this one plus the discipline skill, e.g. `observability-and-instrumentation`, `test-driven-development`, `coding-standards`). Roles: **code reviewer, QA reviewer, perf reviewer, security reviewer**, etc. Which PRs get a reviewer, who merges, and the shared-account verdict format are `git-workflow-and-versioning` P8, P10, and P17.
+- A reviewed PR merges only on its reviewer's approval of the head; every review comment is resolved by a commit or an explained reply.
 - Detail lives in `../../references/merge-and-review.md`.
 
 ## The checklist
@@ -50,12 +50,13 @@ Additional checks that follow from the other skills: commit granularity and mess
 | R1 | **Always raise the PR; don't merge directly. Whether a review runs follows the PR's blast radius (`git-workflow-and-versioning` P17).** |
 | R2 | **Don't hold the PR for a security audit.** The security audit can be taken up later as a next requirement / later ticket. |
 | R3 | Reviewers **create an issue on Linear** for each finding and **comment on the PR (if the PR is open)**. |
-| R4 | Approval gates merge for reviewed-class PRs; every comment is resolved by a commit or an explained reply. |
+| R4 | A reviewed PR (high blast radius, or a ticket that asks for review) merges only on its reviewer's approval of the head; an outstanding change request blocks any PR; every comment is resolved by a commit or an explained reply. |
 
 ## Output format for a review
 
 ```
 ## Review — <PR title> (<role>)
+Reviewer: <your assignment name, e.g. FAC-12 review (code-reviewer)>
 Verdict: approve | request changes | comment only
 
 ### Findings
@@ -272,7 +273,7 @@ Model B reviews for correctness and architecture
 Model A addresses the feedback
     │
     ▼
-Human makes the final call
+Reviewer gives the verdict (a human makes the final call only when the ticket asks)
 ```
 
 This catches issues that a single model might miss — different models have different blind spots.
@@ -385,7 +386,7 @@ For triaging `npm audit` findings and supply-chain risk (typosquatting, compromi
 - A change merged directly without a PR (R1)
 - A PR held open waiting for a security audit (R2)
 - A finding with no Linear issue, or no PR comment while the PR is open (R3)
-- A reviewed-class PR merged with an unresolved comment or without the discipline code reviewer's approval (R4)
+- A reviewed PR merged with an unresolved comment or without its reviewer's approval of the head (R4)
 - A review that skips any of checklist items 1–7 or reports no verdict
 - Changes unrelated to the task, or changes not feature-flag gated where applicable, passed without a finding (checks 1, 2)
 - Review that only checks if tests pass (ignoring other axes)

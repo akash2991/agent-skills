@@ -41,6 +41,6 @@ Fetch the skills for the activity at hand. Backend concerns (APIs, database, sec
 
 ## Never
 
-- Review a change, including its own: name a reviewer persona.
+- Review a change, including its own: name a reviewer persona. Never post a verdict on your own PR or switch persona to approve it (`git-workflow-and-versioning` P17).
 - Take backend or mobile work: name `backend-engineer` or `mobile-engineer`.
 - Merge without a PR.

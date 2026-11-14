@@ -3,12 +3,14 @@
 
 // Merges a pull request the one way the organisation allows (git-workflow-and-versioning P7, P8, P10, P12, P15, P17):
 // a merge commit that carries the ticket id, remote and local branch deleted, only when the PR is ready (not a draft),
-// CI is green, and, when its blast radius is high, a reviewer approved the head.
+// its blast radius is graded, CI is green, no reviewer's change request is outstanding, and, when its blast radius is
+// high or the ticket asks for review, a reviewer approved the head.
 // Usage: merge-pr.js <pr-number> [--require-review] [--repo owner/name]
 // --require-review is for a ticket that asks for review on a low or medium PR (P8); a high PR always needs it.
+// A human approval the ticket asks for is not checked here: it is recorded on the ticket before anyone runs this.
 
 const { execFileSync } = require('child_process');
-const { ticketSource, blastRadius } = require('./brain-git-check');
+const { ticketSource, parseBlastRadius, topLevelLines } = require('./brain-git-check');
 
 function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -32,37 +34,69 @@ function isPending(c) {
   return (c.status && c.status !== 'COMPLETED') || ['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS'].includes(c.state);
 }
 
-// The code-reviewer's verdict line ("**Verdict:** APPROVE"), filled in: the template's "APPROVE | REQUEST CHANGES" is not a verdict.
-const VERDICT = /^\W*Verdict:\W*(APPROVE|REQUEST CHANGES)[ \t*]*$/m;
+const ROLES = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+const VERDICT_LINE = /^[ \t]*(?:\*\*)?Verdict:(?:\*\*)?[ \t]*(.*)$/i;
+const REVIEWER_LINE = /^[ \t]*(?:\*\*)?Reviewer:(?:\*\*)?[ \t]*(.*?)[ \t]*$/i;
+const APPROVE = /^approved?(?:[.!]|[ \t]*(?:[—–:]|-[ \t])[^|]*)?$/i;
 
-// A review's verdict: a GitHub APPROVED or CHANGES_REQUESTED from anyone but the author, or a COMMENTED review carrying
-// the verdict line from anyone, the author's login included. GitHub refuses an approval from the PR's own account, so a
-// reviewer agent that shares the author's account posts its verdict as a comment review; the script cannot tell those two
-// agents apart, and a separate reviewer account is what makes the approval provable. Other COMMENTED reviews are replies.
-function verdictOf(r, author) {
-  if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED') return author && r.author.login === author.login ? null : r.state;
-  if (r.state !== 'COMMENTED') return null;
-  const m = VERDICT.exec(r.body || '');
-  return m ? (m[1] === 'APPROVE' ? 'APPROVED' : 'CHANGES_REQUESTED') : null;
+// A comment review's verdict, read from the body's own lines (not quotes or code examples). No verdict line: a reply.
+// One verdict line: APPROVE (any case, optionally followed by a dash and a note) approves; "comment only" is a reply;
+// anything else, the unfilled template "APPROVE | REQUEST CHANGES" included, requests changes. Two or more verdict lines conflict and request changes.
+// The reviewer is the body's one "Reviewer:" line: the review assignment's name, e.g. "FAC-12 review (code-reviewer)".
+function parseVerdict(body) {
+  const lines = topLevelLines(body);
+  const verdicts = lines.map(l => VERDICT_LINE.exec(l)).filter(Boolean);
+  if (!verdicts.length) return null;
+  const reviewers = lines.map(l => REVIEWER_LINE.exec(l)).filter(m => m && m[1]);
+  const reviewer = reviewers.length === 1 ? reviewers[0][1].replace(/[`*]/g, '').trim() || null : null;
+  const value = verdicts[0][1].replace(/\*/g, '').trim();
+  if (verdicts.length === 1 && /^comment( only)?[.!]?$/i.test(value)) return null;
+  const approves = verdicts.length === 1 && APPROVE.test(value);
+  return { state: approves ? 'APPROVED' : 'CHANGES_REQUESTED', reviewer };
 }
 
-// Approved means: every reviewer's newest verdict (on any commit) is not a change request, and at least one such verdict
-// is an approval given on the current head. A change request stays in force after a new push until its reviewer approves
-// or dismisses it.
-function isApproved(view) {
+// Every reviewer's newest verdict. A GitHub APPROVED or CHANGES_REQUESTED counts from anyone with a role in the repository
+// but the author. GitHub refuses an approval from the PR's own account, so agents that share it post their verdict as a
+// comment review with the verdict and reviewer lines; each named reviewer is tracked on its own, and a replacement
+// reviewer takes over an assignment by using the same name. A comment approval without a reviewer name never counts; a
+// comment change request without one stays in force until its body names the reviewer. The script cannot tell a reviewer
+// agent from the authoring agent on a shared account: P17 forbids the author's verdict, and main() reports which review
+// passed the gate. A change request stays in force after a new push until the same reviewer approves.
+function reviewState(view) {
   const newest = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
-    if (!login) continue;
-    const state = verdictOf(r, view.author);
-    if (!state) continue;
-    // Only people with a standing role in the repository (owner, member, collaborator) can approve; any other login is not a reviewer.
-    if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(r.authorAssociation)) continue;
-    newest.set(login, { state, oid: r.commit && r.commit.oid });
+    if (!login || !ROLES.includes(r.authorAssociation)) continue;
+    const own = Boolean(view.author && login === view.author.login);
+    let state;
+    let reviewer = null;
+    let key;
+    if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED') {
+      if (own) continue;
+      state = r.state;
+      key = login;
+    } else if (r.state === 'COMMENTED') {
+      const verdict = parseVerdict(r.body);
+      if (!verdict || (!verdict.reviewer && verdict.state === 'APPROVED')) continue;
+      ({ state, reviewer } = verdict);
+      key = `${login}#${reviewer || `unnamed:${r.id || newest.size}`}`;
+    } else continue;
+    newest.set(key, { state, login, reviewer, own, id: r.id, oid: r.commit && r.commit.oid });
   }
   const verdicts = [...newest.values()];
-  if (verdicts.some(v => v.state === 'CHANGES_REQUESTED')) return false;
-  return verdicts.some(v => v.state === 'APPROVED' && v.oid === view.headRefOid);
+  return {
+    blocking: verdicts.filter(v => v.state === 'CHANGES_REQUESTED'),
+    approvals: verdicts.filter(v => v.state === 'APPROVED' && v.oid === view.headRefOid),
+  };
+}
+
+function isApproved(view) {
+  const { blocking, approvals } = reviewState(view);
+  return !blocking.length && approvals.length > 0;
+}
+
+function describe(v) {
+  return v.reviewer ? `${v.reviewer} (${v.login})` : v.login;
 }
 
 // view is the parsed `gh pr view --json title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state` output.
@@ -71,8 +105,8 @@ function mergeBlockers(view, { requireReview = false } = {}, env = process.env) 
   const blockers = [];
   if (view.state !== 'OPEN') blockers.push(`PR is ${view.state}, not OPEN`);
   if (view.isDraft) blockers.push('PR is a draft; mark it ready for review (P11)');
-  const radius = blastRadius(view.body);
-  if (!radius) blockers.push('PR body has no "Blast-radius: <low|medium|high> — <reason>" line (P17)');
+  const { level: radius, error } = parseBlastRadius(view.body);
+  if (error) blockers.push(`${error}; if pr-rules already failed on this head, push a new commit after fixing the body`);
   const ticket = new RegExp(`^(${ticketSource(env)})(:|\\s)`).exec(view.title || '');
   if (!ticket) blockers.push('PR title does not start with the ticket id (P10)');
   // Every run on the head counts. A failed run blocks the merge until a new commit replaces the head: a re-run of the
@@ -83,10 +117,13 @@ function mergeBlockers(view, { requireReview = false } = {}, env = process.env) 
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
   const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
   if (failing.length) blockers.push(`CI is not green: ${failing.map(c => c.name || c.context).join(', ')} (P12)`);
-  if ((radius === 'high' || requireReview) && !isApproved(view)) {
+  // An outstanding change request blocks at every grade; an approval is required only for high or a requested review.
+  const { blocking, approvals } = reviewState(view);
+  if (blocking.length) blockers.push(`changes requested by ${blocking.map(describe).join(', ')}; the same reviewer approves the head before merge (P10)`);
+  else if ((radius === 'high' || requireReview) && !approvals.length) {
     blockers.push(`review required (${radius === 'high' ? 'blast radius high' : '--require-review'}): no reviewer verdict approves this head (P8, P17)`);
   }
-  return { blockers, ticket: ticket && ticket[1], radius };
+  return { blockers, ticket: ticket && ticket[1], radius, approvals };
 }
 
 function main(argv) {
@@ -97,10 +134,15 @@ function main(argv) {
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state,isCrossRepository']));
-  const { blockers, ticket } = mergeBlockers(view, { requireReview: argv.includes('--require-review') });
+  const { blockers, ticket, approvals } = mergeBlockers(view, { requireReview: argv.includes('--require-review') });
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
     process.exit(1);
+  }
+  // The audit trail: which review passed the gate, and a warning when it came from the author's own account.
+  for (const a of approvals) {
+    console.log(`merge-pr: approved by ${describe(a)} in review ${a.id || '(no id)'} on ${a.oid}`);
+    if (a.own) console.error(`merge-pr: warning: that approval came from the author's account ${a.login}; the reviewer's independence is not authenticated (P17)`);
   }
   // The remote is resolved before the merge: if none points at this repository, nothing is merged and nothing is deleted.
   // Long-lived branches and fork branches are never deleted here, so they need no remote.
@@ -201,4 +243,4 @@ function deleteRemoteBranch(branch, mergedSha, remote = 'origin') {
   }
 }
 
-module.exports = { mergeBlockers, originRepo, isApproved, isPending, deleteRemoteBranch, remoteFor };
+module.exports = { mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor };

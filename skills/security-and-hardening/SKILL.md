@@ -53,7 +53,9 @@ If you can't name the trust boundaries for a feature, you're not ready to secure
 - **Use httpOnly, secure, sameSite cookies** for sessions
 - **Run the detected package manager's native audit** against the committed lockfile before every release
 
-### Ask First (Requires Human Approval)
+### High Blast Radius (`git-workflow-and-versioning` P17)
+
+Grade a PR with any of these `Blast-radius: high`, so a `code-reviewer` reviews it before merge. Ask the user only when the change needs a product or risk decision they have not made, or the ticket asks for their approval.
 
 - Adding new authentication flows or changing auth logic
 - Storing new categories of sensitive data (PII, payment info)
