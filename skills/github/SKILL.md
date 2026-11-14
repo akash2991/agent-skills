@@ -36,7 +36,7 @@ The server entry is in this skill's `mcp.json`; copy it into your tool's MCP con
 | Reply to and resolve a thread (the author replies in the thread or with `gh pr comment`, never with a submitted review) | reply comment, then resolve the thread | `gh api graphql` `resolveReviewThread` after the reply |
 | CI status | `get_pull_request_status` | `gh pr checks` |
 | Merge: merge commit with the ticket id, delete the branch | Do not call `merge_pull_request` directly: it skips the gate | `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>`, which refuses a draft, checks the blast radius, CI, outstanding change requests, and (for a high PR, or with `--require-review`) the approval on the inspected head, prints the review that passed the gate, merges with a merge commit, and removes the branch |
-| Tag and release a surface, `<surface>-vX.Y.Z` (`vX.Y.Z` for a single-surface repository) | `create_release` | `git tag -a <surface>-vX.Y.Z && git push origin <surface>-vX.Y.Z && gh release create <surface>-vX.Y.Z --notes-file <changelog entry>` |
+| Tag and release a surface, `<surface>-vX.Y.Z` | `create_release` | `git tag -a <surface>-vX.Y.Z -m "<Surface> X.Y.Z" && git push origin <surface>-vX.Y.Z && gh release create <surface>-vX.Y.Z --notes-file <changelog entry>` |
 
 ## Interaction with other skills
 

@@ -249,8 +249,8 @@
           "L1"
         ],
         [
-          "Rename the surface's Unreleased to the new version and date",
-          "judgment",
+          "Rename the surface's Unreleased to the new version and date, and open a new empty one",
+          "det",
           null,
           "L1"
         ],
