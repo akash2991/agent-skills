@@ -675,3 +675,26 @@ test('a verdict heading without a colon, or an emphasized change request, blocks
   }
   assert.strictEqual(parseVerdict(`${R}\nVerdict: APPROVE\n\n## Verdict\nREQUEST **CHANGES** in an example`).state, 'APPROVED', 'prose after a valid header is commentary');
 });
+
+test('underscore change requests and underscore-emphasized verdicts block after an approval', () => {
+  const view = body => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] });
+  for (const signal of ['REQUEST_CHANGES: tests fail', 'CHANGES_REQUESTED', 'REQUESTED_CHANGES', '## _Verdict_\n\nfix the tests', '__Verdict__ fix the tests', 'REQUEST **CHANGES**']) {
+    for (const grade of ['low', 'medium', 'high']) {
+      const reviews = [said(`${R}\nVerdict: APPROVE`), said(`${R}\n\n${signal}`)];
+      assert.match(mergeBlockers({ ...view(`Blast-radius: ${grade} — x`), reviews }).blockers.join(), /changes requested by FAC-1 review/, `${grade}: ${signal}`);
+      assert.deepStrictEqual(mergeBlockers({ ...view(`Blast-radius: ${grade} — x`), reviews: [...reviews, said(`${R}\nVerdict: APPROVE`)] }).blockers, [], `resolved: ${grade}: ${signal}`);
+    }
+  }
+  assert.strictEqual(parseVerdict('Thanks, the verdicts pending elsewhere are fine.'), null, 'a different word is not a verdict signal');
+});
+
+test('a spaced grade range is refused; a reason that starts with a grade word is fine', () => {
+  const view = body => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }], reviews: [] });
+  for (const body of ['Blast-radius: medium - high — touches auth', 'Blast-radius: medium – high — touches auth', 'Blast-radius: medium — high — touches auth',
+    'Blast-radius: medium – high', 'Blast-radius: low — medium — x', 'Blast-radius: low - medium: x', 'Blast-radius: low: high: x']) {
+    assert.strictEqual(check.checkBlastRadius(body).length, 1, body);
+    assert.match(mergeBlockers(view(body)).blockers.join(), /Blast-radius/, body);
+  }
+  assert.strictEqual(check.blastRadius('Blast-radius: medium: high-traffic path, one service'), 'medium');
+  assert.strictEqual(check.blastRadius('Blast-radius: low — highly isolated docs change'), 'low');
+});
