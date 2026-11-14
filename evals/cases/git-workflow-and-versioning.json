@@ -42,6 +42,23 @@
         "Commit messages are imperative and standalone",
         "Each commit leaves the tree in a working state"
       ]
+    },
+    {
+      "id": 2,
+      "kind": "dialogue",
+      "prompt": "I finished ENG-42: an optional sort parameter on the orders list endpoint in one service, no personal data, behind no flag, tests passing. Open the PR and get it merged. The ticket asks for no review.",
+      "expected_output": "Runs the app and exercises the acceptance criteria, opens a ready (non-draft) PR whose body has one Blast-radius line graded medium with a reason, and merges it with merge-pr.js on green CI without waiting for the user; names that a high grade or a ticket asking for review would instead start a code-reviewer, which merges after approving the head.",
+      "files": [
+        "git-workflow-and-versioning"
+      ],
+      "expectations": [
+        "Verifies the change in the running app before opening the PR",
+        "Opens the PR ready for review, never as a draft",
+        "The PR body carries exactly one line 'Blast-radius: medium — <reason>'",
+        "Merges it with merge-pr.js once CI is green, without waiting for user approval",
+        "Routes a high grade, or a ticket that asks for review, to a code-reviewer that merges after approving the head",
+        "Does not post a verdict on its own PR"
+      ]
     }
   ]
 }

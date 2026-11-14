@@ -1,6 +1,6 @@
 ---
 name: documentation
-description: How to write a good document, rules W1–W11 — whether to write it at all (not every feature needs an HLD, LLD, or doc update; the ticket and commit message carry most of it), the templates document set with only the sections the work demands, user review of every HLD, LLD, and PRD, economical high-level writing with never code copied into a doc, docs compacted into skills before they bloat, two renderings (Markdown with diagrams as code for agents, interactive HTML for humans, the rendered asset committed beside its Markdown and linked from the PR or the PRD), design as code (Mermaid, .drawio, drawdb), a document index for progressive discovery, and every document in the repository at the root or in the service's docs folder, never in a cloud tool or the agent brain. Use when you write, update, or decide whether to write any document, README, design doc, RCA, PRD, or index — even if the user only says "document this" — or when you must decide where a document lives or how it is rendered.
+description: How to write a good document, rules W1–W11 — whether to write it at all (not every feature needs an HLD, LLD, or doc update; the ticket and commit message carry most of it), the templates document set with only the sections the work demands, user review of an HLD, LLD, or PRD only when asked, economical high-level writing with never code copied into a doc, docs compacted into skills before they bloat, two renderings (Markdown with diagrams as code for agents, interactive HTML for humans, the rendered asset committed beside its Markdown and linked from the PR or the PRD), design as code (Mermaid, .drawio, drawdb), a document index for progressive discovery, and every document in the repository at the root or in the service's docs folder, never in a cloud tool or the agent brain. Use when you write, update, or decide whether to write any document, README, design doc, RCA, PRD, or index — even if the user only says "document this" — or when you must decide where a document lives or how it is rendered.
 category: design
 ---
 
@@ -24,7 +24,7 @@ How a document is written well: whether at all, how short, in what form, and whe
 | --- | --- |
 | W1 | **Not every feature needs an HLD, LLD, or doc update; the ticket and the commit message carry most of it.** Some things are obvious. Focus on good tickets and good commit messages; write a document when they cannot carry it. |
 | W2 | **The document set and anatomies are in `templates/`.** Add a section when the work demands it; not every section must be filled. |
-| W3 | **Every HLD, LLD, and PRD is reviewed by the user** before it counts. |
+| W3 | **An HLD, LLD, or PRD counts once it is merged, linked on its ticket, and has no open question; the user reviews it first only when they or the ticket ask.** |
 
 ## How to write
 
@@ -51,7 +51,7 @@ How a document is written well: whether at all, how short, in what form, and whe
 3. Write high level and short; diagrams as code; no code snippets (W4, W7).
 4. Save as Markdown in the repo, `docs/` at the root or `<service>/docs/` for a service; generate the HTML rendering for humans, commit it beside the Markdown, and link it from the PR or the PRD (W9, W10, W6).
 5. Add it to the document index (W8).
-6. HLD, LLD, or PRD: user review before it is final (W3).
+6. HLD, LLD, or PRD: merged and linked on the ticket, open questions resolved; user review only when asked (W3).
 7. When a doc stabilises, extract the stable part into a skill and shrink the doc (W5).
 
 ## Interaction with other skills
@@ -70,7 +70,7 @@ How a document is written well: whether at all, how short, in what form, and whe
 | "I'll put it in Notion / a Google Doc for now." | No cloud artifacts; every document lives in the repository (W9). |
 | "The HTML rendering is just a preview; the link is enough." | The rendered asset is committed beside its Markdown and linked from the PR or the PRD (W6). |
 | "A screenshot of the diagram is fine." | Diagrams are code: Mermaid, `.drawio`, drawdb, committed and reviewed (W7). |
-| "The HLD is done, review can wait." | Every HLD, LLD, and PRD is reviewed by the user before it is final (W3). |
+| "The HLD is done, the open questions can wait." | A design with an open question does not count; resolve it, or ask the user when it is theirs to decide (W3). |
 | "Nobody will look for it in the index." | Every document is in the index for progressive discovery (W8). |
 
 ## Red Flags
@@ -81,7 +81,7 @@ How a document is written well: whether at all, how short, in what form, and whe
 - A document in a cloud tool, or in the agent brain, instead of the repository (W9).
 - An HTML rendering left as a hosted link or a throwaway artifact instead of committed beside its Markdown (W6).
 - A diagram committed as an image instead of Mermaid, `.drawio`, or drawdb (W7).
-- An HLD, LLD, or PRD treated as final without user review (W3).
+- An HLD, LLD, or PRD treated as final with an open question, or held waiting on a user review nobody asked for (W3).
 - A document missing from the index (W8).
 
 ## Verification
@@ -93,4 +93,4 @@ After documenting:
 - [ ] It is short and high level, with no code snippets and diagrams as code (W4, W7).
 - [ ] It lives in the repository at `docs/` or `<service>/docs/`, with the HTML rendering committed beside it and linked from the PR or the PRD (W9, W10, W6).
 - [ ] It is in the document index (W8).
-- [ ] An HLD, LLD, or PRD has been reviewed by the user (W3).
+- [ ] An HLD, LLD, or PRD is merged, linked on its ticket, and has no open question; reviewed by the user when they asked (W3).

@@ -20,7 +20,7 @@ The repo has five composable layers. Understanding what each one is *for* preven
 
 Two structural rules worth internalizing early:
 
-- **The user (or a slash command) is the orchestrator.** Personas never invoke other personas; the only endorsed multi-persona pattern is parallel fan-out with a merge step (see [references/orchestration-patterns.md](../references/orchestration-patterns.md)).
+- **The user (or a slash command) is the orchestrator.** Personas never invoke other personas, with one exception (an engineer hands a PR to the `code-reviewer` under `git-workflow-and-versioning` P17); the only endorsed multi-persona pattern is parallel fan-out with a merge step (see [references/orchestration-patterns.md](../references/orchestration-patterns.md)).
 - **Don't duplicate, reference.** Skills link to other skills and to `references/` instead of restating content. The same rule applies to docs, including this one.
 
 One scope caveat that trips people up: `AGENTS.md` and `CLAUDE.md` at the repo root configure agents working on *this repo*. They are not reusable assets and setup guides must never tell users to copy them into their own projects; the reusable assets are the skills.

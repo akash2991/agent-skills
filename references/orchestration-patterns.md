@@ -2,7 +2,7 @@
 
 Reference catalog of agent orchestration patterns this repo endorses, plus anti-patterns to avoid. Read this before adding a new slash command that coordinates multiple personas, or before introducing a new persona that "wraps" existing ones.
 
-The governing rule: **the user (or a slash command) is the orchestrator. Personas do not invoke other personas.** Skills are mandatory hops inside a persona's workflow.
+The governing rule: **the user (or a slash command) is the orchestrator. Personas do not invoke other personas.** Skills are mandatory hops inside a persona's workflow. One exception: an engineer starts (and restarts, for each re-review) the `code-reviewer` on a PR that `git-workflow-and-versioning` P17 sends to review. The reviewer itself never delegates further.
 
 ---
 

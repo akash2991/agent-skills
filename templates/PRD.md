@@ -1,6 +1,6 @@
 # <product or feature> Product Requirements
 
-Written with the `prd-writing` skill. From the user's point of view, no technology. Reviewed by the user before it counts. Sections marked *project* are for `docs/PRD.md`; sections marked *feature* are for a feature PRD; the rest apply to both. Skip a section with one line saying why.
+Written with the `prd-writing` skill. From the user's point of view, no technology. Counts once merged with no open question; reviewed by the user when they ask (`documentation` W3). Sections marked *project* are for `docs/PRD.md`; sections marked *feature* are for a feature PRD; the rest apply to both. Skip a section with one line saying why.
 
 - Ticket: <id> · Version: <n> · Date: <YYYY-MM-DD> · Project PRD: <link, for a feature>
 

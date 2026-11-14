@@ -16,6 +16,7 @@ Builds the server side inside the scope the task sets. Owns scoping and the tech
 - Scope follows the task: the whole project, one service, or several. Read and touch nothing the task does not need (`references/context-scope.md`).
 - Business rules and validation live here and nowhere else; a client that needs them is a backend gap.
 - An unagreed dependency shape is a stop, not a note.
+- You take your change to merge yourself, verified in your own environment first: `references/development-loop.md` § From code to merge. Never stop at a draft PR or wait on the user unless the ticket asks.
 
 ## Skills by activity
 
@@ -40,6 +41,6 @@ Fetch the skills for the activity at hand.
 
 ## Never
 
-- Review a change, including its own: name a reviewer persona.
+- Review a change, including its own: name a reviewer persona. Never post a verdict on your own PR, switch persona to approve it, or edit another agent's verdict (`git-workflow-and-versioning` P17).
 - Take web or mobile work: name `web-engineer` or `mobile-engineer`.
 - Merge without a PR, or hold a PR for a security audit.

@@ -594,8 +594,21 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
       const item = record.content?.[surface];
       if (item && Object.hasOwn(item, 'value')) approvedContent.add(JSON.stringify(item.value));
     }
+    // The batch processor starts an export by itself once flushAt spans end,
+    // and forceFlush does not wait for an export already in flight. Track
+    // every batch until its callback so shutdown never destroys a request
+    // before its response (FAC-7). The flush deadline still bounds the wait.
+    const inFlight = new Set();
     const exporter = {
-      export(spans, callback) {
+      export(spans, sdkCallback) {
+        let settle;
+        const settled = new Promise(resolve => { settle = resolve; });
+        inFlight.add(settled);
+        let reported = false;
+        const callback = result => {
+          if (reported) return;
+          reported = true; inFlight.delete(settled); settle(); sdkCallback(result);
+        };
         const batch = spans.map(span => spanEntries.get(span));
         if (!active || batch.some(entry => !entry)) { callback({ code: 1 }); return; }
         // Refuse SDK truncation/masking changes instead of ACKing a prefix or
@@ -679,6 +692,7 @@ async function flushOutbox({ stateDir = defaultStateDir(), credentials, dependen
       span.end(record.endTime);
     }
     await provider.forceFlush();
+    while (inFlight.size) await Promise.all([...inFlight]);
     await provider.shutdown();
   };
   try {

@@ -35,11 +35,11 @@ Do not implement during scoping. Preserve the full requested scope, including la
 
 ### 2. Resolve the design before detailed technical tickets
 
-For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", with user review as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
+For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", settled per `documentation` W3 as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
 
 Use `hld` for component boundaries and communication; `lld` for exact contracts, schema, and internals. Those skills own document content and review.
 
-Reuse approved documents that already answer these questions; do not rewrite them for ceremony. Write or revise the applicable HLD/LLD sections and obtain the user's review before deriving detailed implementation tickets, estimates, or cycle commitments. An approved HLD permits tickets for decisions it actually settles; API or schema details left open require the LLD first. A document still awaiting review is not approved.
+Reuse approved documents that already answer these questions; do not rewrite them for ceremony. Write or revise the applicable HLD/LLD sections and settle them (`documentation` W3) before deriving detailed implementation tickets, estimates, or cycle commitments. An approved HLD permits tickets for decisions it actually settles; API or schema details left open require the LLD first. A document with an open question, or awaiting a user review that was asked for, is not approved.
 
 Before that gate, high-level placeholders such as "Database schema needed" or "API work needed" are allowed in the backlog, explicitly **provisional, unestimated, blocked on design, and not executable**. Do not invent endpoint names, endpoint counts, exact scope, or delivery promises from these placeholders. Promote or split them after design review without creating duplicates.
 
@@ -93,12 +93,12 @@ Milestone dates and future cycles remain forecasts; only design-backed issues ar
 
 Apply `continuous-delivery` when judging the cycle's product outcome; preparatory design tickets are not evidence of a delivered product increment.
 
-### 8. Record and approve the plan
+### 8. Record the plan
 
 - Write `tasks/plan.md` using the template below. Never overwrite an incomplete plan for different work; stop and ask. Revise the same work's plan in place.
 - Through `linear`, create or refine the project, milestones, focused issues, native estimates, dependency relations, and cycle assignments. The plan is an ordered index of real Linear identifiers, never a duplicate TODO tracker. Only when no tracker is configured, use `tasks/todo.md` as the task-list fallback; a failed tracker call does not authorize a second tracker.
-- The appropriate engineer owns the full technical plan; the user reviews and approves it before implementation starts.
-- Checkpoint after every two or three tasks and at each milestone: tests pass, the build is clean, and the core flow works; the user reviews before the next phase. Keep HLD/LLD current; a changed design goes through review before recutting dependent issues.
+- The appropriate engineer owns the full technical plan and starts on it once it is recorded. The user's approval is optional: wait for it only when the user or the ticket asks to approve the plan first.
+- Checkpoint after every two or three tasks and at each milestone: tests pass, the build is clean, and the core flow works; record the checkpoint on the ticket and continue. The user reviews before the next phase only when they asked to. Keep HLD/LLD current; a changed design is settled again (`documentation` W3) before recutting dependent issues.
 
 ### 9. Close every cycle with evidence
 
@@ -173,11 +173,11 @@ Record the usable outcome actually demonstrated and its verification, not only t
 Before implementation:
 
 - [ ] Scope is classified small/large, boundaries are clear, and the appropriate engineer owns the entire plan.
-- [ ] Missing technical design was handled by the first documentation ticket; applicable HLD/LLD sections are current and user-reviewed before detailed implementation tickets.
+- [ ] Missing technical design was handled by the first documentation ticket; applicable HLD/LLD sections are current and settled (`documentation` W3) before detailed implementation tickets.
 - [ ] Early placeholders are provisional and blocked; every executable issue has one definite goal, design basis, acceptance criteria, verification, owned paths, and dependencies.
 - [ ] Native Linear estimates use the team's configured scale, with capacity based on delivery evidence or an explicit assumption.
 - [ ] Every delivery cycle is a real Linear cycle with a working, usable outcome, verification, and a feasible dependency-ordered issue set.
-- [ ] The full scope and deferred work remain visible, the user approved the plan, and no incomplete unrelated plan was overwritten.
+- [ ] The full scope and deferred work remain visible, the plan is recorded (and approved, when the user asked to approve it), and no incomplete unrelated plan was overwritten.
 
 At every cycle close:
 
