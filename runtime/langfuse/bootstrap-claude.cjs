@@ -89,6 +89,21 @@ function supervise(args, input, ms) {
     } catch { finish(); }
   });
 }
+// The supervised child's discovery can block its main thread in a synchronous
+// filesystem call, and a supervisor killed by SIGKILL cannot kill it. A small
+// watchdog thread keeps running while the main thread is blocked: it kills
+// this child's whole group once the supervisor is gone or the deadline passed.
+function watchdog(env = process.env) {
+  const code = `const { parent, deadline } = require('node:worker_threads').workerData;
+    setInterval(() => {
+      if (process.ppid === parent && !(Date.now() >= deadline)) return;
+      try { process.kill(-process.pid, 'SIGKILL'); } catch { process.kill(process.pid, 'SIGKILL'); }
+    }, 50);`;
+  try {
+    new (require('node:worker_threads').Worker)(code, { eval: true,
+      workerData: { parent: process.ppid, deadline: Number(env.BRAIN_TRACE_HOOK_DEADLINE) } }).unref();
+  } catch { /* no watchdog: the supervisor's own kill still applies */ }
+}
 const disabled = env => ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']
   .some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()));
 // Settings written before the PreToolUse matcher fire for every tool. Skip
@@ -106,10 +121,11 @@ if (require.main === module) {
   setTimeout(exit, 7500).unref(); // Backstop under Claude's 8-second native timeout.
   const write = result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result), exit); else exit(); };
   if (process.argv[2] === CHILD) {
+    watchdog();
     readInput(process.stdin, 5000).then(input => input === null ? null : main(input)).then(write).catch(exit);
   } else {
     readInput().then(input => input === null || disabled(process.env) || ignorable(input) ? null
       : supervise([__filename, CHILD], input, superviseMs())).then(write).catch(exit);
   }
 }
-module.exports = { main, readInput, supervise, superviseMs, ignorable };
+module.exports = { main, readInput, supervise, superviseMs, ignorable, watchdog };

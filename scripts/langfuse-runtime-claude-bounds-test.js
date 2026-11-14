@@ -433,6 +433,36 @@ test('event work dies with a hook process that is killed before it can clean up'
   assert.ok(await until(() => git.live().length === 0, 1500), `event work outlived its hook: ${git.live()}`);
 });
 
+for (const [name, args] of [
+  ['the installed bootstrap', [path.join(__dirname, '../runtime/langfuse/bootstrap-claude.cjs')]],
+  ['the per-run exec hook', [path.join(__dirname, '../runtime/langfuse/exec.cjs'), '--claude-hook', '11111111-1111-4111-8111-111111111111', root]]
+]) {
+  test(`a discovery child stalled in the filesystem dies when ${name} is SIGKILLed`, async () => {
+    const dir = fs.mkdtempSync(path.join(root, 'sigkill-'));
+    const shim = path.join(dir, 'stall.cjs'), pidFile = path.join(dir, 'child.pid');
+    // The supervised child records its pid, then blocks its main thread in
+    // discovery. SIGKILL gives the supervisor no chance to clean up.
+    fs.writeFileSync(shim, `if (process.argv.some(arg => /^--(agent-brain-hook-child|claude-hook-child)$/.test(arg))) {
+      require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+      const fs = require('node:fs'); const lstat = fs.lstatSync;
+      fs.lstatSync = (target, ...rest) => { if (String(target).endsWith('tracing.json'))
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 9000); return lstat(target, ...rest); }; }`);
+    const supervisor = spawn(process.execPath, args,
+      { env: { ...process.env, NODE_OPTIONS: `--require ${shim}`, BRAIN_TRACE_HOOK_INLINE_MS: '5000' }, stdio: ['pipe', 'ignore', 'ignore'] });
+    supervisor.stdin.end(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: '11111111-1111-4111-8111-111111111111',
+      cwd: root, tool_use_id: 'toolu_sigkill', tool_name: 'Bash' }));
+    assert.ok(await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8'), 5000), 'child started');
+    const child = Number(fs.readFileSync(pidFile, 'utf8'));
+    await sleep(200); // the child is now blocked in discovery
+    supervisor.kill('SIGKILL');
+    // Its deadline is ~6 s away and its main thread is blocked: only the
+    // watchdog can end it now.
+    const ended = await until(() => !alive(child), 1500);
+    if (!ended) try { process.kill(-child, 'SIGKILL'); } catch { /* gone */ }
+    assert.ok(ended, `discovery child outlived its SIGKILLed supervisor`);
+  });
+}
+
 test('entrypoints skip PreToolUse for ordinary tools before spawning anything', () => {
   const { ignorable } = require('../runtime/langfuse/bootstrap-claude.cjs');
   assert.equal(ignorable(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' })), true);

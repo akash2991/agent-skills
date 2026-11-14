@@ -161,7 +161,10 @@ if (require.main === module) {
     const exit = () => process.exit(0);
     setTimeout(exit, 7500).unref(); // Backstop under Claude's native hook timeout.
     const write = output => { if (output) process.stdout.write(JSON.stringify(output), exit); else exit(); };
-    if (process.argv[2] === '--claude-hook-child') claudeHook(process.argv[3], process.argv[4]).then(write, exit);
+    if (process.argv[2] === '--claude-hook-child') {
+      require('./bootstrap-claude.cjs').watchdog();
+      claudeHook(process.argv[3], process.argv[4]).then(write, exit);
+    }
     else {
       // Target checks touch the filesystem, so they run in a supervised child
       // that is killed with its group past the cap (see bootstrap-claude.cjs).
