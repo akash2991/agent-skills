@@ -27,14 +27,19 @@ async function until(check, ms = 30000) {
   while (Date.now() < end) { if (check()) return true; await sleep(100); }
   return false;
 }
-const idle = stateDir => {
-  try { return fs.readdirSync(path.join(stateDir, 'flusher-claims')).length === 0
-    && fs.readdirSync(path.join(stateDir, 'hook-claims')).length === 0; } catch { return false; }
+const stateDirs = [];
+// Every detached process holds a slot naming its PID until it exits.
+const slotsIdle = stateDir => {
+  try {
+    return fs.readdirSync(path.join(stateDir, 'hook-slots')).every(name => {
+      try { process.kill(Number(fs.readFileSync(path.join(stateDir, 'hook-slots', name), 'utf8').split(' ')[0]), 0); return false; }
+      catch { return true; } });
+  } catch { return true; }
 };
 test.after(async () => {
   // Detached processes spawned by the hooks above may still be finishing.
   await sleep(300);
-  await until(() => idle(process.env.BRAIN_TRACE_STATE_DIR) || !fs.existsSync(process.env.BRAIN_TRACE_STATE_DIR), 20000);
+  for (const stateDir of [process.env.BRAIN_TRACE_STATE_DIR, ...stateDirs]) await until(() => slotsIdle(stateDir), 30000);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
@@ -113,13 +118,13 @@ test('a native tool hook returns at once and a detached process records the even
   assert.ok(elapsed < 2000, `hook took ${elapsed} ms`);
   const flow = createFlow({ harness: 'claude', cwd: root, env: process.env });
   assert.ok(await until(() => flow.session(sessionId)), 'the detached process processed the event');
-  assert.ok(await until(() => idle(flow.stateDir)), 'detached processes release their locks and exit');
+  assert.ok(await until(() => slotsIdle(flow.stateDir)), 'detached processes exit');
 });
 
 const ledger = () => path.join(process.env.BRAIN_TRACE_STATE_DIR, 'hook-slots');
 const ledgerEntries = () => { try { return fs.readdirSync(ledger()); } catch { return []; } };
 const liveSpawns = () => ledgerEntries().filter(name => {
-  try { process.kill(Number(fs.readFileSync(path.join(ledger(), name), 'utf8')), 0); return true; } catch { return false; } }).length;
+  try { process.kill(Number(fs.readFileSync(path.join(ledger(), name), 'utf8').split(' ')[0]), 0); return true; } catch { return false; } }).length;
 
 test('the kill switch and ordinary PreToolUse spawn nothing and return nothing', async () => {
   const before = ledgerEntries().length;
@@ -178,6 +183,7 @@ function stuckGit() {
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     BRAIN_TRACE_STATE_DIR: fs.mkdtempSync(path.join(dir, 'state-')),
     BRAIN_TRACE_HOOK_INLINE_MS: '300', BRAIN_TRACE_HOOK_LIFETIME_MS: '2000' };
+  stateDirs.push(env.BRAIN_TRACE_STATE_DIR);
   const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
   return { project, pids, env, stuck: () => fs.readdirSync(pids).map(Number).filter(alive) };
 }
@@ -253,4 +259,76 @@ test('a Stop processed after a newer prompt never completes the newer turn', asy
   await processClaudeHook({ ...base, hook_event_name: 'Stop' }, at(2000));
   const agent = flow.queued.filter(record => record.type === 'AGENT').at(-1);
   assert.notEqual(agent.outcome, 'completed', 'the second turn is still running');
+});
+
+// Counts detached processes independently of the slot ledger: every detached
+// process asks git for project identity, and this git records its pid and
+// stays alive for a while.
+function countingGit(behaviour) {
+  const dir = fs.mkdtempSync(path.join(root, 'count-'));
+  const bin = path.join(dir, 'bin'), project = path.join(dir, 'project'), pids = path.join(dir, 'pids');
+  fs.mkdirSync(bin); fs.mkdirSync(path.join(project, '.git'), { recursive: true }); fs.mkdirSync(pids);
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\n${behaviour(pids)}\n`, { mode: 0o755 });
+  // A state directory that does not exist yet: admission must still hold.
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, BRAIN_TRACE_STATE_DIR: path.join(dir, 'state') };
+  stateDirs.push(env.BRAIN_TRACE_STATE_DIR);
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  return { project, env, stateDir: env.BRAIN_TRACE_STATE_DIR, live: () => fs.readdirSync(pids).map(Number).filter(alive) };
+}
+async function burst(env, project, count, sessionId) {
+  const { spawn } = require('node:child_process');
+  await Promise.all(Array.from({ length: count }, (_, i) => new Promise(resolve => {
+    const child = spawn(process.execPath, [hookCli], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+    child.once('close', resolve);
+    child.stdin.end(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sessionId || crypto.randomUUID(), cwd: project,
+      tool_use_id: `toolu_${i}`, tool_name: 'Bash', tool_input: {}, tool_response: {}, duration_ms: 1 }));
+  })));
+}
+
+test('a cold-start burst and dead slots never admit more than the cap (counted by real processes)', async () => {
+  const git = countingGit(pids => `echo $$ > "${pids}/$$"\nsleep 1`);
+  let peak = 0;
+  const sampler = setInterval(() => { peak = Math.max(peak, git.live().length); }, 20);
+  await burst(git.env, git.project, 20);
+  await until(() => git.live().length === 0 && slotsIdle(git.stateDir), 30000);
+  // Every slot now names a dead PID; a second burst must reclaim, not exceed.
+  const dead = spawnSync('true').pid;
+  for (let i = 0; i < 8; i++) fs.writeFileSync(path.join(git.stateDir, 'hook-slots', `slot-${i}`), `${dead} stale`);
+  await burst(git.env, git.project, 20);
+  await until(() => git.live().length === 0, 30000);
+  clearInterval(sampler);
+  assert.ok(peak >= 1 && peak <= 8, `peak ${peak} concurrent detached processes`);
+});
+
+test('a subprocess background child dies with its work process on a normal exit', async () => {
+  // git starts a detached background sleep, records it, and exits at once.
+  const git = countingGit(pids => `sleep 30 </dev/null >/dev/null 2>&1 &\necho $! > "${pids}/$!"`);
+  await burst(git.env, git.project, 1);
+  assert.ok(await until(() => git.live().length > 0, 10000), 'background child was started');
+  // Far below the 60-second lifetime: the work process kills its group on exit.
+  assert.ok(await until(() => git.live().length === 0, 15000), `background children alive: ${git.live()}`);
+});
+
+test('a late Stop from an older turn changes nothing about the newer turn', async () => {
+  const flow = new StubFlow();
+  const base = { session_id: 'session-late', cwd: root };
+  const at = time => ({ flow, env: {}, clock: () => time, reconcile: false, flush: false });
+  await processClaudeHook({ ...base, hook_event_name: 'UserPromptSubmit', prompt: 'A' }, at(1000));
+  await processClaudeHook({ ...base, hook_event_name: 'UserPromptSubmit', prompt: 'B' }, at(3000));
+  await processClaudeHook({ ...base, hook_event_name: 'Stop', last_assistant_message: 'answer B' }, at(4000));
+  const terminal = [...flow.states.entries()].find(([key]) => key.startsWith('claude:terminal:'))[1];
+  const published = flow.queued.length;
+  await processClaudeHook({ ...base, hook_event_name: 'Stop', last_assistant_message: 'answer A' }, at(2000));
+  assert.deepEqual([...flow.states.entries()].find(([key]) => key.startsWith('claude:terminal:'))[1], terminal);
+  assert.equal(flow.queued.length, published, 'nothing republished for the late Stop');
+});
+
+test('one session cannot hold more than three detached processes', async () => {
+  const git = countingGit(pids => `echo $$ > "${pids}/$$"\nsleep 1`);
+  let peak = 0;
+  const sampler = setInterval(() => { peak = Math.max(peak, git.live().length); }, 20);
+  await burst(git.env, git.project, 12, crypto.randomUUID());
+  await until(() => git.live().length === 0 && slotsIdle(git.stateDir), 30000);
+  clearInterval(sampler);
+  assert.ok(peak >= 1 && peak <= 3, `peak ${peak} detached processes for one session`);
 });

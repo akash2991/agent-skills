@@ -83,7 +83,7 @@ function remove(file, expected) {
   return true;
 }
 function claimLock(stateDir, kind, { deadlineAt = Date.now() + 5000 } = {}) {
-  if (!['queue', 'flush', 'context', 'hook', 'flusher'].includes(kind)) throw new Error('Invalid lock kind');
+  if (!['queue', 'flush', 'context', 'hook', 'flusher', 'admit'].includes(kind)) throw new Error('Invalid lock kind');
   const budget = () => { if (Date.now() >= deadlineAt) throw new Error('Lock budget exceeded'); };
   budget();
   const start = ownProcessStart();

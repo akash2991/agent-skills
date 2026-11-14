@@ -159,6 +159,7 @@ function exitWithResult(result) {
 if (require.main === module) {
   if (process.argv[2] === '--claude-hook') {
     const exit = () => process.exit(0);
+    setTimeout(exit, 7500).unref(); // Backstop under Claude's native hook timeout.
     claudeHook(process.argv[3], process.argv[4]).then(output => {
       if (output) process.stdout.write(JSON.stringify(output), exit); else exit();
     }, exit);

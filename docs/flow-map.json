@@ -899,19 +899,19 @@
           null
         ],
         [
-          "Admit at most 8 detached processes; drop the event when full",
+          "Admit at most 8 detached processes (3 per session) under the admit lock; drop the event when full",
           "det",
           "runtime/langfuse/claude.cjs",
           null
         ],
         [
-          "Detached work: ticket-ordered hook lock, budgeted transcript reconciliation that saves its cursor",
+          "Detached work: per-session ticket-ordered hook lock, budgeted transcript reconciliation that saves its cursor",
           "det",
           "runtime/langfuse/claude.cjs",
           null
         ],
         [
-          "One flusher delivers the outbox to Langfuse; the lifetime cap kills the process group",
+          "One flusher delivers the outbox to Langfuse; every exit and the lifetime cap kill the process group",
           "det",
           "runtime/langfuse/export.cjs",
           null
