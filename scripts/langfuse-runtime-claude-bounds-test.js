@@ -103,16 +103,15 @@ test('reconciliation stops at its budget, saves the cursor, and the next hook re
   assert.equal(flow.flushes, 0, 'flush:false never delivers inside the hook');
 });
 
-test('a hook returns the event processed, with actor context, well within the cap', async () => {
+test('a hook returns the event processed, with actor context', async () => {
+  // A generous cap: this test is about what the hook returns, not its speed
+  // (the cap tests cover that), so suite load cannot make it flaky.
   const sessionId = crypto.randomUUID();
-  const started = Date.now();
-  const output = await runClaudeHook({ hook_event_name: 'SessionStart', session_id: sessionId, cwd: root });
-  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+  const output = await runClaudeHook({ hook_event_name: 'SessionStart', session_id: sessionId, cwd: root }, { inlineMs: 5000 });
   assert.match(output?.hookSpecificOutput?.additionalContext || '', /--actor [A-Za-z0-9_-]{32,}/);
-  const tool = hook(process.env, { hook_event_name: 'PostToolUse', session_id: sessionId, cwd: root,
+  const tool = hook({ ...process.env, BRAIN_TRACE_HOOK_INLINE_MS: '5000' }, { hook_event_name: 'PostToolUse', session_id: sessionId, cwd: root,
     tool_use_id: 'toolu_inline', tool_name: 'Bash', tool_input: {}, tool_response: {}, duration_ms: 3 });
   assert.equal(tool.stdout, '');
-  assert.ok(tool.elapsed < 2000, `PostToolUse hook took ${tool.elapsed} ms`);
   const flow = createFlow({ harness: 'claude', cwd: root, env: process.env });
   const toolState = flow.readState(`claude:tool:${flow.id(JSON.stringify([sessionId, 'toolu_inline']))}`);
   assert.equal(toolState?.outcome, 'completed', 'processed before the hook returned');
@@ -287,4 +286,40 @@ test('a hook killed mid-reconciliation keeps the cursor of its last published ba
     { flow, env: {}, flush: false }), /killed/);
   const cursor = [...flow.states.entries()].find(([key]) => key.startsWith('claude:cursor:'))?.[1];
   assert.equal(cursor?.offset, rowEnd(25), 'cursor saved with the 25-row batch');
+});
+
+test('a dead uploader does not stop later hooks from starting a new one', async () => {
+  const stateDir = fs.mkdtempSync(path.join(root, 'dead-uploader-'));
+  stateDirs.push(stateDir);
+  fs.chmodSync(stateDir, 0o700);
+  // A claim left by an uploader that was killed: its PID is gone.
+  const dead = spawnSync('true').pid;
+  fs.mkdirSync(path.join(stateDir, 'flusher-claims'), { mode: 0o700 });
+  fs.writeFileSync(path.join(stateDir, 'flusher-claims', `${dead}-${'a'.repeat(32)}.json`),
+    JSON.stringify({ pid: dead, token: 'a'.repeat(32), start: 'Mon Jan  1 00:00:00 2024', choosing: false, ticket: 1 }), { mode: 0o600 });
+  const env = { ...process.env, BRAIN_TRACE_STATE_DIR: stateDir, BRAIN_TRACE_HOOK_INLINE_MS: '5000' };
+  hook(env, { hook_event_name: 'PostToolUse', session_id: crypto.randomUUID(), cwd: root,
+    tool_use_id: 'toolu_after_dead', tool_name: 'Bash', duration_ms: 1 });
+  // The new uploader recovers the dead claim and then releases its own.
+  const claims = () => { try { return fs.readdirSync(path.join(stateDir, 'flusher-claims')); } catch { return []; } };
+  assert.ok(await until(() => !claims().some(name => name.startsWith(`${dead}-`)), 15000), `dead claim still present: ${claims()}`);
+});
+
+test('stalled runtime discovery cannot hold the installed bootstrap or the per-run exec hook', () => {
+  // Discovery stats the tracing marker; stall that for 9 s in every process.
+  const dir = fs.mkdtempSync(path.join(root, 'discover-'));
+  const shim = path.join(dir, 'stall.cjs');
+  fs.writeFileSync(shim, `const fs = require('node:fs'); const lstat = fs.lstatSync;
+    fs.lstatSync = (target, ...rest) => { if (String(target).endsWith('tracing.json'))
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 9000); return lstat(target, ...rest); };`);
+  const env = { ...process.env, NODE_OPTIONS: `--require ${shim}`, BRAIN_TRACE_HOOK_INLINE_MS: '500' };
+  const sessionId = crypto.randomUUID();
+  const input = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sessionId, cwd: root, tool_use_id: 'toolu_discover', tool_name: 'Bash' });
+  const runtime = path.join(__dirname, '../runtime/langfuse');
+  for (const args of [[path.join(runtime, 'bootstrap-claude.cjs')], [path.join(runtime, 'exec.cjs'), '--claude-hook', sessionId, root]]) {
+    const started = Date.now();
+    const result = spawnSync(process.execPath, args, { env, input, encoding: 'utf8', timeout: 20000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(Date.now() - started < 2500, `${path.basename(args[0])} held for ${Date.now() - started} ms`);
+  }
 });

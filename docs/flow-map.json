@@ -961,7 +961,7 @@
       "summary": "Each hook event is processed in native order by a capped work process; tracing may drop data but never slows or blocks the session.",
       "steps": [
         [
-          "Hook receives the event, spawns its work process, and waits at most the cap",
+          "Hook entrypoint supervises discovery and the event's work process, killing both past their caps",
           "det",
           "runtime/langfuse/bootstrap-claude.cjs",
           null
@@ -975,7 +975,7 @@
         [
           "One background uploader delivers captured records to Langfuse; its lifetime cap kills its process group",
           "det",
-          "runtime/langfuse/export.cjs",
+          "runtime/langfuse/claude.cjs",
           null
         ]
       ]

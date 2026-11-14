@@ -815,7 +815,6 @@ async function processClaudeHook(payload, options = {}) {
 // a small budget per hook and resumes at the saved cursor. Only delivery to
 // Langfuse runs in the background, by one uploader at a time; it publishes
 // records already captured and never touches turn state.
-const ACTOR_EVENTS = Object.freeze(['SessionStart', 'UserPromptSubmit', 'SubagentStart']);
 const TERMINAL_EVENTS = Object.freeze(['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd']);
 // PreToolUse binds a dispatch to its caller; it is registered only for these.
 const PRE_TOOLS = Object.freeze(['Agent', 'Task', 'Skill']);
@@ -949,11 +948,25 @@ async function flushSingleFlight(flow, endAt) {
 // A rare duplicate uploader finds the lock busy and exits.
 function requestDelivery(flow, cwd, receivedAt) {
   try { fs.writeFileSync(path.join(flow.stateDir, 'claude-flush-request'), String(Date.now()), { mode: 0o600 }); } catch { return Promise.resolve(); }
+  // An uploader is running only if a claim names a live PID and is younger
+  // than an uploader can live. A dead uploader's claim is left for the next
+  // uploader's claimLock to recover, so it never stops delivery.
   let running = false;
-  try { running = fs.readdirSync(path.join(flow.stateDir, 'flusher-claims')).some(name => !name.startsWith('.')); } catch { /* none yet */ }
+  try {
+    const dir = path.join(flow.stateDir, 'flusher-claims');
+    running = fs.readdirSync(dir).some(name => {
+      const pid = Number(/^(\d+)-[a-f0-9]{32}\.json$/.exec(name)?.[1]);
+      if (!pid) return false;
+      try {
+        if (Date.now() - fs.statSync(path.join(dir, name)).mtimeMs > LIMITS.lifetimeMs + 5000) return false;
+        process.kill(pid, 0); return true;
+      } catch { return false; }
+    });
+  } catch { /* none yet */ }
   if (running) return Promise.resolve();
   return new Promise(resolve => {
-    const timer = setTimeout(resolve, LIMITS.handoffMs);
+    // Short: the event's answer waits for this handoff.
+    const timer = setTimeout(resolve, 200);
     try {
       const child = spawnWorkProcess('flush', receivedAt, limit('BRAIN_TRACE_HOOK_LIFETIME_MS', LIMITS.lifetimeMs, 1000, LIMITS.lifetimeMs));
       child.once('error', () => { clearTimeout(timer); resolve(); });
@@ -1009,4 +1022,4 @@ if (!threads.isMainThread && threads.workerData?.agentBrainClaudeWork === true) 
     ack === 'ack').catch(endGroup);
 }
 
-module.exports = { HOOK_EVENTS, HOOK_MATCHERS, ACTOR_EVENTS, TERMINAL_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };
+module.exports = { HOOK_EVENTS, HOOK_MATCHERS, TERMINAL_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };

@@ -157,12 +157,19 @@ function exitWithResult(result) {
   else process.exitCode = result.code ?? 1;
 }
 if (require.main === module) {
-  if (process.argv[2] === '--claude-hook') {
+  if (process.argv[2] === '--claude-hook' || process.argv[2] === '--claude-hook-child') {
     const exit = () => process.exit(0);
     setTimeout(exit, 7500).unref(); // Backstop under Claude's native hook timeout.
-    claudeHook(process.argv[3], process.argv[4]).then(output => {
-      if (output) process.stdout.write(JSON.stringify(output), exit); else exit();
-    }, exit);
+    const write = output => { if (output) process.stdout.write(JSON.stringify(output), exit); else exit(); };
+    if (process.argv[2] === '--claude-hook-child') claudeHook(process.argv[3], process.argv[4]).then(write, exit);
+    else {
+      // Target checks touch the filesystem, so they run in a supervised child
+      // that is killed with its group past the cap (see bootstrap-claude.cjs).
+      const { readInput, supervise, superviseMs } = require('./bootstrap-claude.cjs');
+      readInput().then(input => input === null ? null
+        : supervise([__filename, '--claude-hook-child', process.argv[3], process.argv[4]], input, superviseMs()))
+        .then(write, exit);
+    }
   } else {
     exec(process.argv.slice(2)).then(exitWithResult).catch(() => { console.error('Traced exec refused or unavailable; no context was guessed.'); process.exitCode = 1; });
   }

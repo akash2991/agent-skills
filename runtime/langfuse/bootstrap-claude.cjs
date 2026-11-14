@@ -47,12 +47,52 @@ function readInput(input = process.stdin, timeoutMs = 750) {
     input.on('data', data); input.once('end', end); input.once('error', fail);
   });
 }
+// The installed hook entry is a thin supervisor: it reads stdin, runs
+// discovery and the hook in a child process in its own process group, waits at
+// most the inline cap plus one second, then kills that group. Discovery does
+// synchronous filesystem work, so it must not run in the process whose timer
+// enforces the deadline. exec.cjs reuses this for per-run hooks.
+const CHILD = '--agent-brain-hook-child';
+function superviseMs(env = process.env) {
+  const value = Number(env.BRAIN_TRACE_HOOK_INLINE_MS);
+  return (Number.isFinite(value) && value > 0 ? Math.min(5000, Math.max(100, value)) : 1500) + 1000;
+}
+function supervise(args, input, ms) {
+  return new Promise(resolve => {
+    let child, done = false;
+    const chunks = [];
+    const finish = () => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      if (child?.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
+      let output = null;
+      try { output = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* no answer */ }
+      resolve(output && typeof output === 'object' ? output : null);
+    };
+    const timer = setTimeout(finish, ms);
+    try {
+      child = require('node:child_process').spawn(process.execPath, args, { detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
+      child.once('error', finish);
+      child.stdout.on('data', chunk => chunks.push(chunk));
+      child.once('close', finish);
+      child.stdin.once('error', () => {});
+      child.stdin.end(input);
+    } catch { finish(); }
+  });
+}
+const disabled = env => ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']
+  .some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()));
+
 if (require.main === module) {
   // Exit explicitly once the answer is flushed: nothing may keep the hook alive.
   const exit = () => process.exit(0);
   setTimeout(exit, 7500).unref(); // Backstop under Claude's 8-second native timeout.
-  readInput().then(input => input === null ? null : main(input))
-    .then(result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result), exit); else exit(); })
-    .catch(exit); // Telemetry failure is nonblocking; never echo payloads/errors.
+  const write = result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result), exit); else exit(); };
+  if (process.argv[2] === CHILD) {
+    readInput(process.stdin, 5000).then(input => input === null ? null : main(input)).then(write).catch(exit);
+  } else {
+    readInput().then(input => input === null || disabled(process.env) ? null
+      : supervise([__filename, CHILD], input, superviseMs())).then(write).catch(exit);
+  }
 }
-module.exports = { main, readInput };
+module.exports = { main, readInput, supervise, superviseMs };
