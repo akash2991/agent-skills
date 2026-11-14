@@ -79,21 +79,21 @@ One workflow per team, the whole cycle from the user's request to production, as
 | Triage | `Triage` | a request arrived (`templates/request.md`), in the user's words, not yet classified | it has a kind, an owning persona, scope boundaries, and a size: design-ready small work → `Todo`; unclear intent → `Spec`; missing technical design → a documentation issue in `Design`; large work → the project's planning issue |
 | Backlog | `Backlog` | accepted, in a project or not, not planned into a cycle | it is pulled into a cycle |
 | Unstarted | `Todo` | one bounded deliverable is ready: implementation has reviewed design and settled contracts; a documentation issue has clear design questions and artifact acceptance criteria | its execution prerequisites are met and an agent declares and starts |
-| Started | `Spec` | intent is being pinned down: interview, refine, spec; a feature gets its phased PRD | the user reviewed the PRD, or the spec is on the issue |
-| Started | `Design` | HLD, LLD, ADRs; the contracts and the DB model | the user reviewed the design and the contracts exist |
+| Started | `Spec` | intent is being pinned down: interview, refine, spec; a feature gets its phased PRD | the PRD is merged with no open question (user review only when asked, `documentation` W3), or the spec is on the issue |
+| Started | `Design` | HLD, LLD, ADRs; the contracts and the DB model | the design is merged with no open question (user review only when asked, `documentation` W3) and the contracts exist |
 | Started | `Planned` | reviewed design has been decomposed into focused issues with real dependency relations | actionable issues have native estimates, owned paths, and cycle assignments whose goals are usable increments |
 | Started | `In Progress` | code and tests, in the agent's own environment | the PR is raised |
-| Started | `In Review` | the PR is open; findings inline and as `review` issues; the author resolves every thread | approved, or review made optional on the issue and CI green |
+| Started | `In Review` | the PR is open, ready, with its blast radius; for a high PR, findings inline and as `review` issues and the author resolves every thread | CI is green, no change request is outstanding, and, for a high PR or an issue that asks for review, the reviewer approved the head; the author (or, after a review, the reviewer) merges (`git-workflow-and-versioning` P17) |
 | Started | `QA` | independent verification of a milestone's usable outcome, end to end and under concurrency | QA verified; a failure is a `bug` issue |
 | Started | `Merged` | in `main`, releasable, changelog line added; build and deploy pending | it is deployed |
 | Started | `Blocked` | it cannot continue; the status update carries the blocker block | the blocker is resolved; it returns to the state it left |
-| Completed | `Done` | the issue's deliverable is verified: code deployed and exercised where specified (production by default); a design-only issue has committed artifacts and recorded user review | never; a regression is a new `bug` |
+| Completed | `Done` | the issue's deliverable is verified: code deployed and exercised where specified (production by default); a design-only issue has merged artifacts, settled per `documentation` W3 | never; a regression is a new `bug` |
 | Canceled | `Canceled` · `Duplicate` | it will not be done, or another issue tracks it (related as duplicate) | |
 
 Typical paths, the skipped states recorded:
 
 - **A design-ready bug or small issue**: `Triage` → `Todo` → `In Progress` → `In Review` → `Merged` → `Done`. Small size alone does not justify skipping unresolved design.
-- **Missing technical design**: track the documentation deliverable in `Design`; keep provisional implementation placeholders in `Backlog` with `blocked by` relations and no estimate or committed cycle. Close a design-only issue after artifact and user-review evidence, recording inapplicable deployment states as skipped. After the design gate in `planning-and-task-breakdown` is met, refine the implementation issues and assign the native estimate and cycle fields.
+- **Missing technical design**: track the documentation deliverable in `Design`; keep provisional implementation placeholders in `Backlog` with `blocked by` relations and no estimate or committed cycle. Close a design-only issue once its artifacts are settled (`documentation` W3), recording inapplicable deployment states as skipped. After the design gate in `planning-and-task-breakdown` is met, refine the implementation issues and assign the native estimate and cycle fields.
 - **A large feature**: one planning issue runs `Triage` → `Spec` → `Design` → `Planned` and produces the project, its milestones, and their issues; then each issue runs `Todo` → `In Progress` → `In Review` → `Merged` → `Done`; the milestone's usable outcome gets a `QA` issue before the milestone closes; the project completes when its last milestone's issues are `Done`.
 - **A one-shot override** (M3): `Todo` → `In Review`, the skipped states named in the note.
 

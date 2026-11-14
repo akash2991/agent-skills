@@ -47,7 +47,7 @@ Apply this to every change before declaring it done.
 - [ ] Security implications reviewed for any untrusted input, auth, or data handling (see `security-and-hardening`)
 - [ ] Observability in place for new critical paths (logs, metrics, traces) (see `observability-and-instrumentation`)
 - [ ] Rollback path exists for anything risky (see `shipping-and-launch`)
-- [ ] The human has reviewed and approved before merge or deploy
+- [ ] Reviewed as the PR's blast radius requires (`git-workflow-and-versioning` P8, P17); a human approves only when the ticket asks for it
 
 ## How to Apply
 
@@ -63,4 +63,4 @@ Tailor the list to the project once, then reuse it unchanged. A Definition of Do
 - "Tests pass" used as a synonym for done while docs, regressions, or runtime verification are skipped.
 - A different bar applied depending on deadline pressure.
 - Acceptance criteria treated as the whole bar, with no standing quality floor.
-- "Done" declared before human review on changes that need it.
+- "Done" declared before the review the blast radius requires, or a finished change left waiting on a human approval nobody asked for.

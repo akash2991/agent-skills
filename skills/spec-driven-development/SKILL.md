@@ -28,8 +28,8 @@ Spec-driven development has four phases, preceded by a scope check (Phase 0) tha
 SPECIFY ──→ PLAN ──→ TASKS ──→ IMPLEMENT
    │          │        │          │
    ▼          ▼        ▼          ▼
- Human      Human    Human      Human
- reviews    reviews  reviews    reviews
+ Validated  Validated Validated Validated
+ (human reviews a phase only when they or the ticket ask)
 ```
 
 ### Phase 0: Scope Check
@@ -61,7 +61,7 @@ Build order: identity → billing, notifications → reporting
 - **Dependency direction, no cycles.** Arrows point one way. If two modules each need the other, they are one module.
 - **Interfaces live at the boundary.** The map records that `billing` depends on `identity`; the contract between them belongs in the provider module's spec (see `api-and-interface-design` for designing it).
 
-**The map is gated like every phase.** The human reviews module boundaries, dependency direction, and build order before any module spec is written. Getting the map wrong is expensive; reviewing ten lines is not.
+**The map is gated like every phase.** Validate module boundaries, dependency direction, and build order before any module spec is written; the human reviews the map first only when they or the ticket ask (`planning-and-task-breakdown`). Getting the map wrong is expensive; reviewing ten lines is not.
 
 **Then recurse per module.** Run Specify → Plan → Tasks → Implement for each module in dependency order. Each module gets its own spec, scoped to that module's objective, boundaries, and success criteria. Save the approved map at the project root and each module's spec alongside it, named by module id (`SPEC-identity.md`, `SPEC-billing.md`) — the map, not filename guessing, is the index of what exists.
 
@@ -110,7 +110,8 @@ Don't silently fill in ambiguous requirements. The spec's entire purpose is to s
 
 6. **Boundaries** — Three-tier system:
    - **Always do:** Run tests before commits, follow naming conventions, validate inputs
-   - **Ask first:** Database schema changes, adding dependencies, changing CI config
+   - **Grade and route (`git-workflow-and-versioning` P17):** database schema changes, adding dependencies, changing CI config — in scope, these ship through the PR's blast radius, not a request for permission
+   - **Ask first:** only what the user or the ticket asked to approve, a decision that is the user's to make, or work outside the authorized scope
    - **Never do:** Commit secrets, edit vendor directories, remove failing tests without approval
 
 **Spec template:**
@@ -218,7 +219,7 @@ The spec is a living document, not a one-time artifact:
 Before proceeding to implementation, confirm:
 
 - [ ] The spec covers all six core areas
-- [ ] The human has reviewed and approved the spec
+- [ ] The spec has no open question; the human approved it when they asked to (`documentation` W3)
 - [ ] Success criteria are specific and testable
 - [ ] Boundaries (Always/Ask First/Never) are defined
 - [ ] The spec is saved to a file in the repository

@@ -56,14 +56,14 @@
     {
       "id": 2,
       "prompt": "Read portal-brief.md and produce the spec work for the customer portal initiative.",
-      "expected_output": "A capability map with stable module ids and one-way dependency direction, gated on approval before per-module specs; any module spec written is scoped to its module only",
+      "expected_output": "A capability map with stable module ids and one-way dependency direction, validated before per-module specs (user approval only if asked); any module spec written is scoped to its module only",
       "files": [
         "spec-driven-development-decomposition"
       ],
       "expectations": [
         "A capability map with module ids and their dependencies is proposed before any full spec is written",
         "Dependency direction is one-way (no cycles) and drives the proposed build order",
-        "Approval of the map is requested before per-module specs are drafted",
+        "The map is validated before per-module specs are drafted; user approval is requested only if the user or the ticket asked for it",
         "Any module spec produced is scoped to a single module rather than restating the whole initiative",
         "No implementation code is written"
       ]

@@ -6,7 +6,7 @@
 //   branch [<name>]              P5       branch is <ticket>-<slug>
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
 //   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
-//   pr --base <ref>              P10, P11, P13   title starts with the ticket id, size within limits, changelog touched
+//   pr --base <ref>              P10, P11, P13, P17   title starts with the ticket id, size within limits, changelog touched, blast radius graded
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
 // Environment: LINEAR_TEAM narrows the ticket pattern to one team key; BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
 // override 400 and 10; PR_TITLE and PR_BODY supply the title and body (CI passes them without shell quoting).
@@ -65,6 +65,62 @@ function checkPrTitle(title, env = process.env) {
     return [`PR title must be "<ticket>: <goal>": got "${title || ''}" (P10)`];
   }
   return [];
+}
+
+// The body's opening block: its lines from the first non-blank line to the next blank line, each an unindented
+// "Key: value" (the key may be bold: "**Key:**" or "**Key**:"). The blast radius and verdicts live only here, so nothing in
+// the Markdown that follows (code, quotes, lists, tables, HTML) can supply or hide one. Size-exception is still read anywhere:
+// it only relaxes a size warning and grants no merge. A block with any other line is no
+// header at all: null.
+const HEADER_LINE = /^(?:\*\*)?([A-Za-z][A-Za-z -]*?)(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*(.*?)[ \t]*$/;
+
+function headerFields(body) {
+  const lines = String(body || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  const fields = [];
+  for (; i < lines.length && lines[i].trim(); i++) {
+    const m = HEADER_LINE.exec(lines[i]);
+    if (!m) return null;
+    fields.push({ key: m[1].trim().toLowerCase(), value: m[2] });
+  }
+  return fields;
+}
+
+// P17: the PR body's opening block holds exactly one "Blast-radius: <low|medium|high> — <reason>". A missing,
+// duplicated, or malformed grade is an error, never a lower grade: "medium-high" is not "medium". A line elsewhere in
+// the body is not a declaration.
+// The separator is a colon, or a dash with whitespace before it: "medium–high" or "medium-high" is a range, refused.
+const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*:|[ \t]+[—–-])[ \t]*(\S.*)$/i;
+// The reason may not name a grade other than the declared one, anywhere and in any form ("medium-to-high", "(high)",
+// "high-traffic", "could be high"): one grade, no ranges or hedges. Repeating the declared grade is fine.
+const GRADE_WORD = /(?<![A-Za-z])(low|medium|high)(?![A-Za-z])/gi;
+const FORM = '"Blast-radius: <low|medium|high> — <reason>" in the PR body\'s opening block of "Key: value" lines, before its first blank line (P17)';
+
+function parseBlastRadius(body) {
+  const fields = headerFields(body);
+  if (!fields) return { level: null, error: `PR body must open with a block of "Key: value" lines holding ${FORM}` };
+  const declared = fields.filter(f => f.key === 'blast-radius');
+  if (!declared.length) {
+    const near = fields.find(f => /^blast[ _]?radius$/.test(f.key));
+    return { level: null, error: near ? `found "${near.key}:"; the key is "Blast-radius:": ${FORM}` : `PR body needs ${FORM}` };
+  }
+  if (declared.length > 1) return { level: null, error: `PR body declares the blast radius ${declared.length} times; keep exactly one ${FORM}` };
+  const m = BLAST_RADIUS.exec(declared[0].value);
+  if (!m || /^<.*>$/.test(m[2].trim())) return { level: null, error: `"Blast-radius: ${declared[0].value}" is not ${FORM} with a real reason` };
+  const level = m[1].toLowerCase();
+  const other = [...m[2].matchAll(GRADE_WORD)].map(g => g[1].toLowerCase()).find(g => g !== level);
+  if (other) return { level: null, error: `Blast-radius names a second grade (${other}); declare exactly one and describe the change without another grade word (P17)` };
+  return { level, error: null };
+}
+
+function blastRadius(body) {
+  return parseBlastRadius(body).level;
+}
+
+function checkBlastRadius(body) {
+  const { error } = parseBlastRadius(body);
+  return error ? [error] : [];
 }
 
 // numstat is the output of `git diff --numstat -z`: "<added>\t<deleted>\t<path>\0" per file, binary files "-\t-".
@@ -247,6 +303,7 @@ function main(argv) {
     const { live, removed, base: baseChangelogs } = changelogInventory(base, head);
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
+      ...checkBlastRadius(body),
       ...checkSize(files, body),
       ...checkChangelog(files, [...live, ...removed], removed, baseChangelogs),
     ]);
@@ -257,4 +314,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, headerFields, parseBlastRadius, blastRadius, checkBlastRadius, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };

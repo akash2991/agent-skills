@@ -117,6 +117,30 @@
           "P10"
         ],
         [
+          "Verify the change in the running app against its acceptance criteria",
+          "judgment",
+          null,
+          "T1 T2"
+        ],
+        [
+          "Grade the blast radius",
+          "judgment",
+          null,
+          "P17"
+        ],
+        [
+          "Exactly one Blast-radius line in the PR body's opening block, its reason naming no other grade",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/brain-git-check.js",
+          "P17"
+        ],
+        [
+          "Open the PR ready, never as a draft",
+          "det",
+          "skills/git-workflow-and-versioning/scripts/merge-pr.js",
+          "P11"
+        ],
+        [
           "Decide how to split an oversized change",
           "judgment",
           null,
@@ -129,10 +153,10 @@
           "P13"
         ],
         [
-          "Request the reviewer and link the PR on the ticket",
+          "Link the PR on the ticket; high or ticket-requested: hand the code-reviewer the PR to review and merge, under its assignment name",
           "det",
           null,
-          "P10"
+          "P10 P17"
         ]
       ]
     },
@@ -155,10 +179,10 @@
           "P10"
         ],
         [
-          "Post inline comments and a submitted verdict",
+          "Post inline comments and a verdict opening with the Reviewer and Verdict lines",
           "det",
           null,
-          "P10"
+          "P10 P17"
         ],
         [
           "File a review issue in Linear per finding",
@@ -177,6 +201,12 @@
           "det",
           null,
           "T8"
+        ],
+        [
+          "Author hands the new head back to the same assignment until it approves; on a delivery assignment the reviewer merges on green CI, otherwise it only returns the verdict",
+          "judgment",
+          null,
+          "P17"
         ]
       ]
     },
@@ -184,13 +214,13 @@
       "id": "merge",
       "name": "Merge a pull request",
       "area": "Git and delivery",
-      "summary": "P12, P15: a merge commit with the ticket id, only when green and approved.",
+      "summary": "P12, P15, P17: a merge commit with the ticket id, when green and, for a high blast radius, approved; the author or the reviewer merges.",
       "steps": [
         [
-          "CI green and review approved (or review optional on the ticket)",
+          "Ready (not a draft), one graded blast radius, CI green, no outstanding change request, and approved when high or the ticket asks",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
-          "P10 P12"
+          "P8 P10 P12 P17"
         ],
         [
           "Merge commit, never squash, ticket id in the message",
@@ -353,8 +383,8 @@
           "M7"
         ],
         [
-          "Review the plan and the PRD",
-          "human",
+          "Settle the plan and the PRD; the user reviews only when asked",
+          "judgment",
           null,
           "W3"
         ]
@@ -385,8 +415,8 @@
           "W2"
         ],
         [
-          "User reviews the PRD",
-          "human",
+          "Settle open questions; the user reviews only when asked",
+          "judgment",
           null,
           "W3"
         ]
@@ -396,7 +426,7 @@
       "id": "design-docs",
       "name": "Write HLD, LLD and ADRs",
       "area": "Planning and design",
-      "summary": "Design as code, reviewed by the user.",
+      "summary": "Design as code, settled with no open question; the user reviews only when asked.",
       "steps": [
         [
           "Decide the architecture and the contracts",
@@ -423,10 +453,16 @@
           "W6"
         ],
         [
-          "User reviews the design",
-          "human",
+          "Settle open questions; the user reviews only when asked",
+          "judgment",
           null,
           "W3"
+        ],
+        [
+          "User reviews an ADR for a one-way-door decision",
+          "human",
+          null,
+          ""
         ]
       ]
     },

@@ -1,6 +1,6 @@
 # <feature or service> Low-Level Design
 
-Written with the `lld` skill. Reviewed by the user before it counts. Updated by the PR that changes a contract, schema, or type. Skip a section with one line saying why.
+Written with the `lld` skill. Counts once merged with no open question; reviewed by the user when they ask (`documentation` W3). Updated by the PR that changes a contract, schema, or type. Skip a section with one line saying why.
 
 - HLD: <link> · Schema: `schema.ddb` (drawdb) · OpenAPI: `<path>` → generated client `<sdk path>`
 

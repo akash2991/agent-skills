@@ -8,7 +8,7 @@ category: process
 
 ## Overview
 
-The PRD is the contract between product and engineering. It states what must be true for the feature to be done, in testable terms, which phase ships first, and what is deliberately not being built yet. Engineers design and plan from it; QA verifies against it; the user reviews it before it counts. The anatomy is `templates/PRD.md`, one template for both altitudes: the project PRD and a feature PRD.
+The PRD is the contract between product and engineering. It states what must be true for the feature to be done, in testable terms, which phase ships first, and what is deliberately not being built yet. Engineers design and plan from it; QA verifies against it; it counts once merged with no open question, and the user reviews it first only when asked (`documentation` W3). The anatomy is `templates/PRD.md`, one template for both altitudes: the project PRD and a feature PRD.
 
 ## When to Use
 
@@ -29,7 +29,7 @@ Each step fills a section of `templates/PRD.md`; a section is skipped with one l
 6. **Stories** in user terms, each with acceptance criteria a QA reviewer could verify without asking, the services that change, and whether a contract is needed first.
 7. **Success criteria**: product metrics (usage and funnel) and business metrics (what the success target is measured by); engineers emit them.
 8. **Non-functional requirements, risks and assumptions, open questions.** Blocking questions are named for the user.
-9. **Publish**: `docs/PRD.md` for the project, the service's `docs/` for a feature, linked from the Linear project and every story; hand it to the user for review.
+9. **Publish**: `docs/PRD.md` for the project, the service's `docs/` for a feature, linked from the Linear project and every story; it is settled per `documentation` W3, and handed to the user for review only when they or the ticket ask.
 
 ## Interaction with other skills
 
@@ -52,7 +52,7 @@ Each step fills a section of `templates/PRD.md`; a section is skipped with one l
 - An acceptance criterion containing "should work correctly".
 - A template section empty with no line saying why; no MVP phase; no "Deliberately not".
 - A story that touches a service the PRD does not name.
-- A PRD that lives only in chat or in the tracker, or was never reviewed by the user.
+- A PRD that lives only in chat or in the tracker, or that counts while a question in it is still open (`documentation` W3).
 
 ## Verification
 
@@ -60,4 +60,4 @@ Each step fills a section of `templates/PRD.md`; a section is skipped with one l
 - [ ] Every template section is filled or skipped with a reason; phase 1 is the MVP.
 - [ ] The success target and the product and business metrics are named.
 - [ ] Blocking questions are named for the user; the PRD is in `docs/` and linked from the project and every story.
-- [ ] The user has reviewed the PRD.
+- [ ] The PRD is settled (`documentation` W3); reviewed by the user when they asked.

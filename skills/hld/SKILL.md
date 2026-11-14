@@ -36,7 +36,7 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 10. **SLOs** for the critical paths at the level the PRD justifies; **observability** at high level: metrics and log points (`../../references/metrics-and-logging.md`). Detail belongs in code.
 11. **Sketches for the LLD** only where parallel work needs them before the LLD exists; **left to the LLD** says what this document does not decide.
 12. **Diagrams as code**: `hld.drawio` next to the file, Mermaid inline.
-13. **Hand off**: write it where `../../references/documentation-map.md` says and obtain user review. Resolve the contracts and internals left open through `lld`, with review, before `planning-and-task-breakdown` derives dependent implementation tickets. Earlier high-level placeholders are provisional, not executable scope.
+13. **Hand off**: write it where `../../references/documentation-map.md` says; it counts as settled per `documentation` W3. Resolve the contracts and internals left open through `lld` before `planning-and-task-breakdown` derives dependent implementation tickets. Earlier high-level placeholders are provisional, not executable scope.
 
 ## Interaction with other skills
 
@@ -54,7 +54,7 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 | "I'll explain the options and rationale here, the ADR can come later." | The HLD links the ADR; options and rationale live only there. Write it with the HLD. |
 | "The interface can be defined during implementation." | Then two services implement two interfaces. Names and interactions come first; the contract follows in the LLD. |
 | "We may need to scale, so design for it now." | Design for the estimated scale. Record scale as a later concern. |
-| "The design is obvious, skip the review." | Every HLD, LLD, and PRD is reviewed by the user. |
+| "The design is obvious, skip writing it down." | A design counts only once merged with no open question; the user reviews it when they ask (`documentation` W3). |
 | "Every feature needs a new full HLD." | Reuse current reviewed design where it applies; fill missing design before detailed implementation planning, and skip inapplicable sections with a reason. |
 
 ## Red Flags
@@ -64,7 +64,7 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 - An exact contract or a folder layout beyond the sketches section.
 - A one-way door or technology choice with no linked ADR, or options and rationale restated in the HLD.
 - A diagram that exists only as an image.
-- An HLD treated as approved before the user reviewed it.
+- An HLD treated as settled with an open question, or before the user reviewed it when they asked to (`documentation` W3).
 - An HLD that does not say what is left to the LLD.
 
 ## Verification
@@ -75,4 +75,4 @@ Each step fills a section of `templates/HLD.md`; a section is skipped with one l
 - [ ] The domain model is in `docs/DOMAIN.md` and consistent across services.
 - [ ] Diagrams are committed as code next to the HLD.
 - [ ] What is left to the LLD is called out.
-- [ ] The user has reviewed the HLD.
+- [ ] The HLD is settled (`documentation` W3): merged, linked on its ticket, no open question; reviewed by the user when they asked.

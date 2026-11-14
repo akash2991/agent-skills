@@ -1,6 +1,6 @@
 # <feature or service> High-Level Design
 
-Written with the `hld` skill. Reviewed by the user before it counts. `hld.drawio` for the architecture diagram next to this file. Skip a section with one line saying why.
+Written with the `hld` skill. Counts once merged with no open question; reviewed by the user when they ask (`documentation` W3). `hld.drawio` for the architecture diagram next to this file. Skip a section with one line saying why.
 
 - PRD: <link> · Status: DRAFT | APPROVED
 
