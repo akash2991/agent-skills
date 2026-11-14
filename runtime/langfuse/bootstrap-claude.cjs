@@ -18,6 +18,8 @@ async function main(input, options = {}) {
   if (!entry) return null;
   const runtimeDir = path.dirname(entry);
   const adapter = options.adapter || require(path.join(runtimeDir, 'claude.cjs'));
+  // Current adapters bound the hook and acknowledge inside that bound.
+  if (typeof adapter.runClaudeHook === 'function') return adapter.runClaudeHook(payload, { acknowledgeSession: true });
   if (payload.hook_event_name === 'SessionStart' && !options.adapter) {
     const flow = require(path.join(runtimeDir, 'flow.cjs')).createFlow({ harness: 'claude', cwd: payload.cwd, env });
     flow.acknowledgeSession(payload.session_id);

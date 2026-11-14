@@ -23,14 +23,28 @@ function processStart(pid) {
     return /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) +(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} +\d{2}:\d{2}:\d{2} +\d{4}$/.test(start) ? start : null;
   } catch { return null; }
 }
+// A birth lookup spawns /bin/ps. Waiters poll every 10 ms, so look up each
+// live peer once per process: afterwards only an ESRCH probe runs. Caching can
+// only keep a peer "alive" longer (a later PID reuse waits out the budget); it
+// never admits a second owner, so mutual exclusion is unchanged.
+const verifiedAlive = new Set();
+let ownStart;
+function ownProcessStart() {
+  if (!ownStart) ownStart = processStart(process.pid);
+  return ownStart;
+}
 function alive(owner, hashed = false) {
   try { process.kill(owner.pid, 0); }
   catch (error) { return error.code !== 'ESRCH'; }
+  const cacheKey = `${owner.pid}:${hashed}:${owner.start}`;
+  if (owner.start && verifiedAlive.has(cacheKey)) return true;
   // Legacy null-birth records are deliberately conservative: an existing PID
   // is insufficient evidence for recovery. An operator must stop that owner
   // (or clean the private state offline); neither age nor a new lookup helps.
   const current = owner.start ? processStart(owner.pid) : null;
-  return !current || (hashed ? birthHash(current) : current) === owner.start;
+  const live = !current || (hashed ? birthHash(current) : current) === owner.start;
+  if (live && current) verifiedAlive.add(cacheKey);
+  return live;
 }
 function safeFile(stat) {
   if (!stat.isFile() || !privateOwner(stat) || (stat.mode & 0o077) || stat.nlink !== 1 || stat.size > 1024) throw new Error('Unsafe lock claim');
@@ -66,10 +80,10 @@ function remove(file, expected) {
   return true;
 }
 function claimLock(stateDir, kind, { deadlineAt = Date.now() + 5000 } = {}) {
-  if (!['queue', 'flush', 'context'].includes(kind)) throw new Error('Invalid lock kind');
+  if (!['queue', 'flush', 'context', 'hook', 'flusher'].includes(kind)) throw new Error('Invalid lock kind');
   const budget = () => { if (Date.now() >= deadlineAt) throw new Error('Lock budget exceeded'); };
   budget();
-  const start = processStart(process.pid);
+  const start = ownProcessStart();
   budget();
   if (!start) throw new Error('Process birth identity unavailable');
   const directory = path.join(stateDir, `${kind}-claims`);

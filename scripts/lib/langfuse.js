@@ -12,6 +12,10 @@ const LEGACY_PI_PACKAGE = 'npm:@langfuse/pi-observability-plugin@0.1.2';
 const LEGACY_CLAUDE_PLUGIN = 'langfuse-observability@langfuse-observability';
 const CLAUDE_HOOK_COMMAND = 'node "$HOME/.cache/agent-brain/bootstrap/bootstrap-claude.cjs"';
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'UserPromptExpansion', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStart', 'SubagentStop', 'Stop', 'StopFailure', 'SessionEnd', 'PostModelSwitch'];
+// PreToolUse binds a subagent dispatch to its caller and records a skill
+// invocation. For other tools PostToolUse (duration_ms) and the transcript
+// carry timing and outcome, so the extra hook per call is not worth its cost.
+const HOOK_MATCHERS = { PreToolUse: 'Agent|Task|Skill' };
 const OLD_PI = /^npm:@langfuse\/pi-observability-plugin(?:@|$)/;
 const OLD_CLAUDE = /^langfuse-observability@/;
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
@@ -189,7 +193,8 @@ function installLangfuse(target, run = spawnSync, options = {}) {
   const hooks = structuredClone(settings.claude.hooks || {});
   for (const event of HOOK_EVENTS) {
     const other = (hooks[event] || []).map(entry => ({ ...entry, hooks: (entry.hooks || []).filter(hook => hook.command !== CLAUDE_HOOK_COMMAND) })).filter(entry => entry.hooks.length);
-    other.push({ hooks: [{ type: 'command', command: CLAUDE_HOOK_COMMAND, timeout: event === 'SessionEnd' ? 10 : 8 }] });
+    other.push({ ...(HOOK_MATCHERS[event] ? { matcher: HOOK_MATCHERS[event] } : {}),
+      hooks: [{ type: 'command', command: CLAUDE_HOOK_COMMAND, timeout: event === 'SessionEnd' ? 10 : 8 }] });
     hooks[event] = other;
   }
   const claude = { ...settings.claude, enabledPlugins: disabled, hooks };

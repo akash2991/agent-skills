@@ -47,8 +47,8 @@ async function main() {
 }
 
 if (require.main === module) {
-  // The transport may have sockets/timers after the bounded flush. SessionEnd
-  // has a small native budget. This is best effort, not a SIGKILL guarantee.
+  // Delivery runs in a detached process; exit as soon as the bounded hook
+  // returns. This is best effort, not a SIGKILL guarantee.
   main().then(() => process.exit(0), () => process.exit(0));
 }
 module.exports = { MAX_INPUT_BYTES, readPayload, main };
