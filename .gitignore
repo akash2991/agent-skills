@@ -18,3 +18,8 @@ build/
 *.tfstate.*
 terraform.tfvars
 *.tfplan
+evals/lab/results/
+evals/lab/fixture-brain/
+evals/lab/fixture2-brain/
+evals/lab/venv/
+evals/lab/prompts.json
