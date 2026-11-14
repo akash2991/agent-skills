@@ -91,9 +91,10 @@ function headerFields(body) {
 // duplicated, or malformed grade is an error, never a lower grade: "medium-high" is not "medium". A line elsewhere in
 // the body is not a declaration.
 // The separator is a colon, or a dash with whitespace before it: "medium–high" or "medium-high" is a range, refused.
-// A reason that opens with a second grade ("medium - high — x", "low — medium: x") is a spaced range, refused too;
-// a reason that merely starts with a grade word ("high-traffic path") is fine.
-const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*:|[ \t]+[—–-])(?![ \t]*(?:low|medium|high)(?:[ \t]*$|[ \t]*:|[ \t]+[—–-]|[—–]))[ \t]*(\S.*)$/i;
+// A reason that opens with a second grade after any run of whitespace, dashes, or colons ("medium - high — x",
+// "medium -- high", "low — high (auth)", "medium: - high") is a range, refused; a reason that merely starts with a
+// grade word ("high-traffic path", "highly isolated") is fine.
+const BLAST_RADIUS = /^(low|medium|high)(?:[ \t]*:|[ \t]+[—–-])(?![\s—–:-]*(?:low|medium|high)(?![A-Za-z]|-[A-Za-z]))[ \t]*(\S.*)$/i;
 const FORM = '"Blast-radius: <low|medium|high> — <reason>" in the PR body\'s opening block of "Key: value" lines, before its first blank line (P17)';
 
 function parseBlastRadius(body) {

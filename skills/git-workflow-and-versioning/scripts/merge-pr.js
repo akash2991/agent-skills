@@ -155,10 +155,23 @@ function mergeBlockers(view, { requireReview = false } = {}, env = process.env) 
   return { blockers, ticket: ticket && ticket[1], radius, approvals };
 }
 
+// A mistyped flag must not drop a requested review: anything but one PR number, --require-review, and --repo <owner/name> is refused.
+function argvProblem(argv) {
+  const rest = [...argv];
+  const repo = rest.indexOf('--repo');
+  if (repo !== -1) rest.splice(repo, 2);
+  const unknown = rest.filter(a => a !== '--require-review' && !/^\d+$/.test(a));
+  if (unknown.length) return `unknown argument${unknown.length > 1 ? 's' : ''}: ${unknown.join(' ')}`;
+  if (rest.filter(a => /^\d+$/.test(a)).length !== 1) return 'give exactly one PR number';
+  return null;
+}
+
 function main(argv) {
-  const pr = argv.find(a => /^\d+$/.test(a));
-  if (!pr) { console.error('usage: merge-pr.js <pr-number> [--require-review] [--repo owner/name]'); process.exit(2); }
+  const usage = 'usage: merge-pr.js <pr-number> [--require-review] [--repo owner/name]';
   if (argv.includes('--review-optional')) { console.error('merge-pr: --review-optional is gone; review follows the PR\'s blast radius (P17)'); process.exit(2); }
+  const problem = argvProblem(argv);
+  if (problem) { console.error(`merge-pr: ${problem}\n${usage}`); process.exit(2); }
+  const pr = argv.find(a => /^\d+$/.test(a));
   const flag = argv.indexOf('--repo');
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
@@ -273,4 +286,4 @@ function deleteRemoteBranch(branch, mergedSha, remote = 'origin') {
   }
 }
 
-module.exports = { mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor };
+module.exports = { argvProblem, mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor };

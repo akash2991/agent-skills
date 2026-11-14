@@ -698,3 +698,24 @@ test('a spaced grade range is refused; a reason that starts with a grade word is
   assert.strictEqual(check.blastRadius('Blast-radius: medium: high-traffic path, one service'), 'medium');
   assert.strictEqual(check.blastRadius('Blast-radius: low — highly isolated docs change'), 'low');
 });
+
+test('every hedged way to write a grade range is refused through the checker and the merge gate', () => {
+  const view = body => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }], reviews: [] });
+  for (const reason of ['medium -- high — touches auth', 'medium — high, touches auth', 'medium — high? touches auth', 'medium: - high', 'low — high (auth)', 'low — high\u00A0— touches auth']) {
+    const body = `Blast-radius: ${reason}`;
+    assert.strictEqual(check.checkBlastRadius(body).length, 1, body);
+    assert.match(mergeBlockers(view(body)).blockers.join(), /Blast-radius/, body);
+  }
+  for (const [reason, level] of [['high-traffic path', 'medium'], ['high-risk area nearby', 'low'], ['highest-volume table untouched', 'low'], ['n/a docs', 'low']]) {
+    assert.strictEqual(check.blastRadius(`Blast-radius: ${level} — ${reason}`), level, reason);
+  }
+});
+
+test('merge-pr refuses unknown flags so a typo cannot drop a requested review', () => {
+  const { argvProblem } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  assert.strictEqual(argvProblem(['12']), null);
+  assert.strictEqual(argvProblem(['12', '--require-review', '--repo', 'o/r']), null);
+  for (const bad of [['12', '--require-reviews'], ['12', '--requireReview'], ['12', '--require_review'], ['12', '13'], [], ['--repo', 'o/r']]) {
+    assert.ok(argvProblem(bad), bad.join(' '));
+  }
+});
