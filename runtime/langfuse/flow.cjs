@@ -15,6 +15,7 @@ const { claimLock } = require('./locks.cjs');
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 const id = seed => seed === undefined ? crypto.randomBytes(8).toString('hex') : hash(seed).slice(0, 16);
 const MAX_STATE = 1024 * 1024;
+const QUARANTINE_FILES = 16384;
 const ADAPTER_LIMITS = Object.freeze({ files: 2048, bytes: 32 * 1024 * 1024, retentionMs: 7 * 24 * 3600 * 1000 });
 const ACCOUNTING_KEYS = new Set(['input', 'output', 'total', 'input_tokens', 'output_tokens',
   'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_reasoning_tokens']);
@@ -371,6 +372,47 @@ function createFlow(options = {}) {
       });
     } catch { return; } // Unsafe/unknown state remains an explicit exporter refusal.
   }
+  // Capacity fallback (FAC-7). The rules above deliberately keep some files
+  // written by older runtime versions (pre-ticket pending batches, ownerless
+  // legacy checkpoints). Enough of them fill the cap, and then every new
+  // capture is refused. When collect() cannot make room, move files older than
+  // the retention window, oldest first, out of the capped directories into a
+  // private quarantine. Nothing there is deleted or replayed; files inside the
+  // retention window are never moved; a full quarantine fails closed as before.
+  function quarantineStale(fits) {
+    const diagnostics = [fileFor('health'), fileFor('delivery')];
+    const stale = [];
+    for (const file of checkpointFiles()) {
+      if (!file.endsWith('.json') || diagnostics.includes(file)) continue;
+      let stat;
+      try { stat = fs.lstatSync(file); } catch { continue; }
+      if (!stat.isFile()) continue;
+      const data = readFile(file);
+      const at = [1, 2].includes(data?.checkpointVersion) && Number.isFinite(data.updatedAt) ? data.updatedAt
+        : Number.isSafeInteger(data?.createdAt) ? data.createdAt : stat.mtimeMs;
+      if (clock() - at > ADAPTER_LIMITS.retentionMs) stale.push([at, file]);
+    }
+    if (!stale.length) return 0;
+    const root = privateDir(path.join(stateDir, 'quarantine'));
+    let held = 0;
+    for (const name of fs.readdirSync(root)) {
+      const dir = path.join(root, name);
+      try { for (const entry of fs.readdirSync(dir)) held += entry === 'pending' ? fs.readdirSync(path.join(dir, entry)).length : 1; } catch {}
+    }
+    stale.sort((a, b) => a[0] - b[0]);
+    const target = path.join(root, `adapters-${new Date(clock()).toISOString().slice(0, 10)}`);
+    let moved = 0;
+    for (const [, file] of stale) {
+      if (moved % 64 === 0 && fits()) break;
+      if (held + moved >= QUARANTINE_FILES) break;
+      const dir = privateDir(path.dirname(file) === pendingDir ? path.join(privateDir(target), 'pending') : target);
+      try { fs.renameSync(file, path.join(dir, path.basename(file))); moved++; } catch {}
+    }
+    return moved;
+  }
+  function noteCapacity(update) {
+    try { writeState('health', { ...(readState('health') || {}), ...update }); } catch {}
+  }
   function reserve(writes) {
     const fits = () => {
       const sizes = new Map(checkpointFiles().map(file => [file, fs.lstatSync(file).size]));
@@ -379,12 +421,27 @@ function createFlow(options = {}) {
       const diagnosticFiles = [fileFor('health'), fileFor('delivery')];
       const diagnostics = writes.every(([file]) => diagnosticFiles.includes(file));
       const ordinary = [...sizes].filter(([file]) => !diagnosticFiles.includes(file));
+      // Older runtimes could fill every slot, leaving no room even for the
+      // reason (FAC-7). Diagnostics are two small files: bound them by their
+      // own size, never by ordinary state, so a refusal is always recorded.
+      if (diagnostics) return diagnosticFiles.reduce((sum, file) => sum + (sizes.get(file) || 0), 0) <= 16384;
       return sizes.size + 1 <= ADAPTER_LIMITS.files
         && [...sizes.values()].reduce((sum, size) => sum + size, 0) + MAX_STATE <= ADAPTER_LIMITS.bytes
-        && (diagnostics || (ordinary.length <= ADAPTER_LIMITS.files - 3
-          && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes - MAX_STATE - 8192));
+        && ordinary.length <= ADAPTER_LIMITS.files - 3
+        && ordinary.reduce((sum, [, size]) => sum + size, 0) <= ADAPTER_LIMITS.bytes - MAX_STATE - 8192;
     };
-    if (!fits()) { collect(); if (!fits()) throw new Error('Tracing checkpoint capacity exceeded'); }
+    if (fits()) return;
+    collect();
+    if (fits()) return;
+    // Diagnostic writes never quarantine or record health: that would recurse.
+    const diagnostic = writes.every(([file]) => [fileFor('health'), fileFor('delivery')].includes(file));
+    if (diagnostic) throw new Error('Tracing checkpoint capacity exceeded');
+    const moved = quarantineStale(fits);
+    if (moved) noteCapacity({ lineageLossObserved: true, quarantined: moved, reason: 'adapter_capacity_quarantined' });
+    if (!fits()) {
+      noteCapacity({ captureFailureObserved: true, reason: 'adapter_capacity' });
+      throw new Error('Tracing checkpoint capacity exceeded');
+    }
   }
   const writeState = (key, data) => transaction(() => {
     data = safeState(data); // Never accept a typed-content bypass via the generic API.

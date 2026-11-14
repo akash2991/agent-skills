@@ -408,3 +408,44 @@ test('checkpoint expiry preserves live sessions, unresolved descendants and outb
   assert.equal(flow.resolve(unresolved), null);
   assert.equal(f.outbox().length, 1);
 });
+
+// FAC-7: legacy files that the GC rules keep forever used to fill the cap and
+// refuse every new capture. Stale ones are quarantined; fresh ones are not.
+function fillAdapters(stateDir) {
+  const adapters = path.join(stateDir, 'adapters'), pending = path.join(adapters, 'pending');
+  let written = 0;
+  for (; written < 1500; written++) {
+    fs.writeFileSync(path.join(pending, `${crypto.randomUUID()}.json`), JSON.stringify({ runId: 'legacy-run', records: [{ nativeSessionId: 'legacy' }] }), { mode: 0o600 });
+  }
+  for (; written < ADAPTER_LIMITS.files; written++) {
+    fs.writeFileSync(path.join(adapters, `${crypto.randomBytes(32).toString('hex')}.json`), JSON.stringify({ nonce: 'legacy' }), { mode: 0o600 });
+  }
+}
+const adapterFiles = stateDir => fs.readdirSync(path.join(stateDir, 'adapters')).filter(name => name.endsWith('.json')).length
+  + fs.readdirSync(path.join(stateDir, 'adapters', 'pending')).length;
+
+test('a cap full of stale legacy files is quarantined, not deleted, and capture continues', t => {
+  const f = fixture(t);
+  const later = Date.now() + ADAPTER_LIMITS.retentionMs + 60000;
+  const flow = createFlow({ harness: 'claude', cwd: f.cwd, stateDir: f.stateDir, env: {}, clock: () => later });
+  fillAdapters(f.stateDir);
+  flow.writeState('fac7-probe', { probe: 1 });
+  assert.deepEqual(flow.readState('fac7-probe'), { probe: 1 });
+  const quarantine = path.join(f.stateDir, 'quarantine');
+  const held = fs.readdirSync(quarantine).flatMap(dir => fs.readdirSync(path.join(quarantine, dir))
+    .flatMap(name => name === 'pending' ? fs.readdirSync(path.join(quarantine, dir, name)) : [name]));
+  assert.ok(held.length > 0);
+  assert.equal(adapterFiles(f.stateDir) + held.length, ADAPTER_LIMITS.files + 2); // probe + health, nothing lost
+  const health = flow.readState('health');
+  assert.equal(health.reason, 'adapter_capacity_quarantined'); assert.equal(health.quarantined, held.length);
+});
+
+test('a cap full of fresh files is never quarantined and the refusal is recorded', t => {
+  const f = fixture(t);
+  const flow = createFlow({ harness: 'claude', cwd: f.cwd, stateDir: f.stateDir, env: {} });
+  fillAdapters(f.stateDir);
+  assert.throws(() => flow.writeState('fac7-probe', { probe: 1 }), /capacity/);
+  assert.equal(fs.existsSync(path.join(f.stateDir, 'quarantine')), false);
+  assert.equal(adapterFiles(f.stateDir), ADAPTER_LIMITS.files + 1); // health only
+  assert.deepEqual(flow.readState('health'), { captureFailureObserved: true, reason: 'adapter_capacity' });
+});
