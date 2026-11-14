@@ -47,7 +47,7 @@ Additional checks that follow from the other skills: commit granularity and mess
 
 | ID | Rule |
 | --- | --- |
-| R1 | **Always raise the PR; don't merge directly. Review can be made optional.** |
+| R1 | **Always raise the PR; don't merge directly. Whether a review runs follows the PR's blast radius (`git-workflow-and-versioning` P17).** |
 | R2 | **Don't hold the PR for a security audit.** The security audit can be taken up later as a next requirement / later ticket. |
 | R3 | Reviewers **create an issue on Linear** for each finding and **comment on the PR (if the PR is open)**. |
 | R4 | Approval gates merge for reviewed-class PRs; every comment is resolved by a commit or an explained reply. |
@@ -373,7 +373,7 @@ For triaging `npm audit` findings and supply-chain risk (typosquatting, compromi
 | "It's only a small addition to this file" | Small diffs still push files past a healthy size and bolt branches onto unrelated flows. Judge the resulting structure, not the diff size. |
 | "It's just a version bump" | A bump is a behavior change you didn't write. Read the changelog; semver doesn't guarantee no breakage. |
 | "I'll upgrade everything in one PR to save time" | A bulk bump that breaks the build hides which package did it. One dependency per change keeps the cause and the revert clean. |
-| "It's a one-line fix, I'll merge it straight to main" | Always raise the PR; don't merge directly. Review can be made optional (R1). |
+| "It's a one-line fix, I'll merge it straight to main" | Always raise the PR; don't merge directly. Its blast radius decides whether it is reviewed (R1). |
 | "This touches auth, hold the PR until the security audit" | Don't hold the PR for a security audit; it is a later ticket (R2). |
 | "A PR comment is enough for this finding" | Reviewers create an issue on Linear for each finding and comment on the PR (R3). |
 | "That comment is minor, it can stay open" | Every comment is resolved by a commit or an explained reply (R4). |

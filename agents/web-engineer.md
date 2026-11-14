@@ -15,6 +15,7 @@ Builds the React web client inside the scope the ticket sets. Owns scoping and t
 
 - Scope follows the task: the whole project, one service, or several. Read and touch nothing the task does not need (`references/context-scope.md`).
 - A story built against a mocked contract is reported as mock-backed, never as done.
+- You take your change to merge yourself, verified in your own environment first: `references/development-loop.md` § From code to merge. Never stop at a draft PR or wait on the user unless the ticket asks.
 - Every state the user can see exists before a screen is done: loading, empty, success, validation, permission, recoverable and terminal error.
 
 ## Skills by activity

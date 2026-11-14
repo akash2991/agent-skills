@@ -1,6 +1,6 @@
 ---
 name: git-workflow-and-versioning
-description: Rules for commits, branches, pull requests, and merging — always raise a PR and never merge directly, never hold a PR for a security audit, regular merge commit versus squash (conflict flagged), delete remote and local branches, small working commits that never break the app, commit messages carrying model, thinking effort, harness, and ticket id, branch-per-ticket naming, PR template, PR size limits (~400 lines / 10 files), main always releasable, and the changelog line per merged task. Use when you commit, branch, open, update, or merge a PR, or write a commit message — even for a one-line change or "just push it". Use when making any code change, resolving conflicts, splitting uncommitted work in a messy working tree into clean atomic commits, pushing to a remote, or when you need to organize work across multiple parallel streams. Use when cutting, tagging, or versioning a release, choosing a semantic version bump, or writing a changelog.
+description: Rules for commits, branches, pull requests, and merging — always raise a PR and never merge directly, never hold a PR for a security audit, regular merge commit versus squash (conflict flagged), delete remote and local branches, small working commits that never break the app, commit messages carrying model, thinking effort, harness, and ticket id, branch-per-ticket naming, PR template, every PR's blast radius deciding its review and who merges, PR size limits (~400 lines / 10 files), main always releasable, and the changelog line per merged task. Use when you commit, branch, open, update, or merge a PR, or write a commit message — even for a one-line change or "just push it". Use when making any code change, resolving conflicts, splitting uncommitted work in a messy working tree into clean atomic commits, pushing to a remote, or when you need to organize work across multiple parallel streams. Use when cutting, tagging, or versioning a release, choosing a semantic version bump, or writing a changelog.
 category: delivery
 ---
 
@@ -10,7 +10,7 @@ category: delivery
 
 Git is your safety net. Treat commits as save points, branches as sandboxes, and history as documentation. With AI agents generating code at high speed, disciplined version control is the mechanism that keeps changes manageable, reviewable, and reversible.
 
-This skill holds the rules (P1–P16) and the git mechanics. The GitHub calls that carry them out are `github`; what a review produces is `../../references/merge-and-review.md`.
+This skill holds the rules (P1–P17) and the git mechanics. The GitHub calls that carry them out are `github`; what a review produces is `../../references/merge-and-review.md`.
 
 ## When to Use
 
@@ -105,15 +105,29 @@ main ──●──●──●──●──●──●──●──●─
 
 | ID | Rule |
 | --- | --- |
-| P8 | **Always raise a PR; never merge directly. Review may be made optional on the ticket.** There is no direct-merge exception for small changes. |
+| P8 | **Always raise a PR; never merge directly.** There is no direct-merge exception for small changes. Review follows the PR's blast radius (P17); a ticket may ask for review on any PR. Human approval is never required unless the ticket asks for it. |
 | P9 | **Never hold a PR for a security audit; the audit is a later ticket / next requirement.** |
-| P10 | **Every task ships through a pull request with the PR template; reviewed-class PRs merge only on the discipline code reviewer's approval; every review comment is resolved by a commit or an explained reply.** |
-| P11 | **A PR is never held open to grow.** Open it when the first verifiable slice is ready; at roughly **400 changed lines or 10 files, split it** — land the mechanical part, the contract, or the flagged-off skeleton first. A long-lived branch is a merge conflict accruing interest. |
+| P10 | **Every task ships through a pull request with the PR template; a reviewed PR merges only on the code reviewer's approval of its head; every review comment is resolved by a commit or an explained reply.** |
+| P11 | **A PR is never held open to grow.** Open it ready for review, never as a draft, when the first verifiable slice is ready and you have run it; at roughly **400 changed lines or 10 files, split it** — land the mechanical part, the contract, or the flagged-off skeleton first. A long-lived branch is a merge conflict accruing interest. |
 | P12 | **Only a change that is deployable on its own merges**; `main` is always releasable. |
 | P13 | **Every merged task adds a changelog line** (global and per service), written in the same change while the impact is fresh. |
 | P14 | Reviewers create Linear issues for findings and comment on the PR while it is open. |
 
 - One ticket per PR; the title starts with the ticket id; the PR links the ticket and the ticket links the PR (P2, P4).
+
+## Blast radius
+
+| ID | Rule |
+| --- | --- |
+| P17 | **Every PR grades its blast radius on a line of its body: `Blast-radius: <low\|medium\|high> — <reason>`.** The grade decides the review and who merges. When two levels fit, take the higher; when unsure, go up one. |
+
+| Level | The change | Review | Who merges |
+| --- | --- | --- | --- |
+| **high** | touches auth, payments, personal data, or permissions; a migration that drops, rewrites, or backfills data; a breaking change to a published contract (API, event, schema); CI/CD, deploy, infrastructure, or secrets; a shared kernel or more than one service; anything one revert does not undo | `code-reviewer` | the reviewer, on its approval of the head and green CI |
+| **medium** | behavior a user or another service can reach, inside one service, undone by one revert; an additive contract or migration | none unless the ticket asks | the author, on green CI |
+| **low** | nothing reachable changes: docs, tests, a refactor under passing tests, code behind a flag that is off or with no entry point | none unless the ticket asks | the author, on green CI |
+
+A human approves only when the ticket says so, at any level. When the reviewer and the author share a GitHub account, GitHub refuses the approval: the reviewer posts its verdict as a comment review carrying the template's `**Verdict:**` line (`github`).
 
 ## Merge
 
@@ -124,7 +138,7 @@ main ──●──●──●──●──●──●──●──●─
 
 ## Enforced by script
 
-P2, P3, P5, P10, P11, and P13 are checked by `scripts/brain-git-check.js` instead of by memory; P7, P10, P12, and P15 are carried out by `scripts/merge-pr.js`. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks. A PR over the size limit records `Size-exception: <reason>` in its body rather than growing silently. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12); that stays with the author and the reviewer.
+P2, P3, P5, P10, P11, P13, and P17 are checked by `scripts/brain-git-check.js` instead of by memory; P7, P8, P10, P11, P12, P15, and P17 are carried out by `scripts/merge-pr.js`, which refuses a draft, reads the blast radius from the PR body, and requires an approval of the head only for a high PR or with `--require-review`. Run this skill's `scripts/install-hooks.js` once per clone for the `commit-msg` and `pre-push` hooks, and copy `templates/pr-rules.yml` to the project's `.github/workflows/` so CI runs the same checks. A PR over the size limit records `Size-exception: <reason>` in its body rather than growing silently. The script cannot judge whether a commit is one coherent capability (P2) or whether a PR is deployable on its own (P12), nor whether its blast radius is graded right (P17); that stays with the author and the reviewer.
 
 ## The Save Point Pattern
 
@@ -278,6 +292,8 @@ Write the entry in the same change that makes the change, while the impact is fr
 | "I'll commit when the feature is done" | One giant commit is impossible to review, debug, or revert. Commit each slice (P1, P2). |
 | "It's a one-line change, I'll merge it directly" | Always raise a PR; there is no direct-merge exception for small changes (P8). |
 | "Let's hold the PR until the security audit is done" | Never hold a PR for a security audit; the audit is a later ticket (P9). |
+| "I'll open it as a draft and let the user take it from there" | Open it ready for review; a low or medium PR is yours to merge on green CI, a high one the reviewer's (P11, P17). |
+| "This one is probably low; the reviewer would slow it down" | When two levels fit, take the higher. A wrong low grade skips the only review the change gets (P17). |
 | "I'll open the PR once there's enough to review" | A PR is never held open to grow; open it at the first verifiable slice and split at ~400 lines / 10 files (P11). |
 | "Model, effort and harness lines are noise in a commit message" | The message carries the model, thinking effort, harness, and ticket id (P3); reviewers and future agents need them. |
 | "The message doesn't matter" | Messages are documentation. Future you (and future agents) will need to understand what changed and why. |
@@ -294,6 +310,8 @@ Write the entry in the same change that makes the change, while the impact is fr
 
 - A change merged to `main` without a PR (P8)
 - A PR waiting on a security audit (P9)
+- A draft PR, or a PR waiting on the user when the ticket never asked for their approval (P8, P11)
+- A PR without a `Blast-radius:` line, or graded low while it touches auth, data, contracts, or deploy (P17)
 - A PR past ~400 changed lines or 10 files that has not been split (P11)
 - A commit message without the ticket id, model, thinking effort, or harness (P3)
 - A branch not named `<ticket>-<slug>`, or work done outside your own worktree (P5, P6)
@@ -320,7 +338,7 @@ Before you push — checklist:
 3. Message has ticket id, model, thinking effort, harness. (P3, P2)
 4. Unfinished paths behind a flag defaulting off or without an entry point. (P12)
 5. Changelog line added. (P13)
-6. PR opened from `<ticket>-<slug>` with the template; review required or explicitly optional per the ticket. (P5, P10, P8)
+6. PR opened ready from `<ticket>-<slug>` with the template and its blast radius; high goes to `code-reviewer`, low and medium you merge on green CI. (P5, P8, P10, P11, P17)
 7. Never wait for a security audit. (P9)
 8. On merge: regular merge commit with the ticket id; delete remote and local branch. (P15, P16)
 

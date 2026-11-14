@@ -8,7 +8,7 @@
     { "name": "Design",      "type": "started",   "description": "HLD, LLD, ADRs; contracts and the DB model. Leaves when the user reviewed the design and the contracts exist." },
     { "name": "Planned",     "type": "started",   "description": "Reviewed design is decomposed into focused issues and dependencies. Leaves when actionable issues have native estimates, owned paths and cycle assignments with usable goals." },
     { "name": "In Progress", "type": "started",   "description": "Code and tests in the agent's own environment. Leaves when the PR is raised." },
-    { "name": "In Review",   "type": "started",   "description": "PR open; findings inline and as review issues; every thread resolved. Leaves when approved, or review made optional and CI green." },
+    { "name": "In Review",   "type": "started",   "description": "PR open and ready, with its blast radius; a high PR is reviewed and every thread resolved. Leaves when CI is green and, for a high PR, the reviewer approved the head; then it is merged." },
     { "name": "QA",          "type": "started",   "description": "Independent verification of a milestone's usable outcome, end to end and under concurrency. A failure is a bug issue." },
     { "name": "Merged",      "type": "started",   "description": "In main, releasable, changelog line added; build and deploy pending. Leaves when deployed." },
     { "name": "Blocked",     "type": "started",   "description": "Cannot continue; the status update carries the blocker block. Returns to the state it left." },

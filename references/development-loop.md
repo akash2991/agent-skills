@@ -24,6 +24,16 @@ Every agent creates its own worktree, containers, LocalStack, data, and optional
 
 A failing test before the code, end to end the way users use the product, concurrency, canvas automation, deferred performance testing: `test-driven-development` T1–T5.
 
+## From code to merge
+
+The engineer takes its own change to merge; the user is not a step unless the ticket names them.
+
+1. **Verify it yourself.** Run the tests and the running app in your own environment, and exercise every acceptance criterion through the entry point a user uses (`test-driven-development` T1, T2). Never leave testing to the user, the reviewer, or QA.
+2. **Grade the blast radius** and open the PR ready for review, never as a draft, with the verification in its body (`git-workflow-and-versioning` P11, P17).
+3. **Low or medium:** when CI is green, merge it yourself with `merge-pr.js` (`github`) and move the ticket.
+4. **High:** start a `code-reviewer` subagent on the PR (`project/AGENTS.md` names its default model, harness, and effort). Resolve every finding with a commit or a reply; the reviewer approves the head and merges when CI is green.
+5. **Wait on the user only when the ticket asks** for their review, approval, or testing; record that on the ticket and say so in the PR.
+
 ## Large-scale deprecation or migration
 
 The seven-step sequence and its invariants: `deprecation-and-migration`.

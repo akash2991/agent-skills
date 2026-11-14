@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-// Merges a pull request the one way the organisation allows (git-workflow-and-versioning P7, P10, P12, P15):
-// a merge commit that carries the ticket id, remote and local branch deleted, only when CI is green and the
-// PR is approved. Usage: merge-pr.js <pr-number> [--review-optional] [--repo owner/name]
-// --review-optional is for a ticket that made review optional (P8); pass it only then.
+// Merges a pull request the one way the organisation allows (git-workflow-and-versioning P7, P8, P10, P12, P15, P17):
+// a merge commit that carries the ticket id, remote and local branch deleted, only when the PR is ready (not a draft),
+// CI is green, and, when its blast radius is high, a reviewer approved the head.
+// Usage: merge-pr.js <pr-number> [--require-review] [--repo owner/name]
+// --require-review is for a ticket that asks for review on a low or medium PR (P8); a high PR always needs it.
 
 const { execFileSync } = require('child_process');
-const { ticketSource } = require('./brain-git-check');
+const { ticketSource, blastRadius } = require('./brain-git-check');
 
 function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8' });
@@ -31,29 +32,47 @@ function isPending(c) {
   return (c.status && c.status !== 'COMPLETED') || ['PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS'].includes(c.state);
 }
 
-// Approved means: branch protection says so, or every reviewer's newest verdict (APPROVED or CHANGES_REQUESTED, on any
-// commit) is not a change request, and at least one such verdict is an APPROVED given on the current head. A change
-// request stays in force after a new push until its reviewer approves or dismisses it. COMMENTED reviews are replies.
+// The code-reviewer's verdict line ("**Verdict:** APPROVE"), filled in: the template's "APPROVE | REQUEST CHANGES" is not a verdict.
+const VERDICT = /^\W*Verdict:\W*(APPROVE|REQUEST CHANGES)[ \t*]*$/m;
+
+// A review's verdict: a GitHub APPROVED or CHANGES_REQUESTED from anyone but the author, or a COMMENTED review carrying
+// the verdict line from anyone, the author's login included. GitHub refuses an approval from the PR's own account, so a
+// reviewer agent that shares the author's account posts its verdict as a comment review; the script cannot tell those two
+// agents apart, and a separate reviewer account is what makes the approval provable. Other COMMENTED reviews are replies.
+function verdictOf(r, author) {
+  if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED') return author && r.author.login === author.login ? null : r.state;
+  if (r.state !== 'COMMENTED') return null;
+  const m = VERDICT.exec(r.body || '');
+  return m ? (m[1] === 'APPROVE' ? 'APPROVED' : 'CHANGES_REQUESTED') : null;
+}
+
+// Approved means: every reviewer's newest verdict (on any commit) is not a change request, and at least one such verdict
+// is an approval given on the current head. A change request stays in force after a new push until its reviewer approves
+// or dismisses it.
 function isApproved(view) {
   const newest = new Map();
   for (const r of view.reviews || []) {
     const login = r.author && r.author.login;
-    if (!login || (view.author && login === view.author.login)) continue;
-    if (r.state !== 'APPROVED' && r.state !== 'CHANGES_REQUESTED') continue;
+    if (!login) continue;
+    const state = verdictOf(r, view.author);
+    if (!state) continue;
     // Only people with a standing role in the repository (owner, member, collaborator) can approve; any other login is not a reviewer.
     if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(r.authorAssociation)) continue;
-    newest.set(login, { state: r.state, oid: r.commit && r.commit.oid });
+    newest.set(login, { state, oid: r.commit && r.commit.oid });
   }
   const verdicts = [...newest.values()];
   if (verdicts.some(v => v.state === 'CHANGES_REQUESTED')) return false;
   return verdicts.some(v => v.state === 'APPROVED' && v.oid === view.headRefOid);
 }
 
-// view is the parsed `gh pr view --json title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state` output.
+// view is the parsed `gh pr view --json title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state` output.
 // An empty check rollup is not green: Actions may not have registered its checks yet.
-function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env) {
+function mergeBlockers(view, { requireReview = false } = {}, env = process.env) {
   const blockers = [];
   if (view.state !== 'OPEN') blockers.push(`PR is ${view.state}, not OPEN`);
+  if (view.isDraft) blockers.push('PR is a draft; mark it ready for review (P11)');
+  const radius = blastRadius(view.body);
+  if (!radius) blockers.push('PR body has no "Blast-radius: <low|medium|high> — <reason>" line (P17)');
   const ticket = new RegExp(`^(${ticketSource(env)})(:|\\s)`).exec(view.title || '');
   if (!ticket) blockers.push('PR title does not start with the ticket id (P10)');
   // Every run on the head counts. A failed run blocks the merge until a new commit replaces the head: a re-run of the
@@ -64,18 +83,21 @@ function mergeBlockers(view, { reviewOptional = false } = {}, env = process.env)
   if (pending.length) blockers.push(`CI is still running: ${pending.map(c => c.name || c.context).join(', ')} (P12)`);
   const failing = checks.filter(c => !isPending(c) && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion || c.state));
   if (failing.length) blockers.push(`CI is not green: ${failing.map(c => c.name || c.context).join(', ')} (P12)`);
-  if (!reviewOptional && !isApproved(view)) blockers.push('no approval of this head from a reviewer other than the author (P10)');
-  return { blockers, ticket: ticket && ticket[1] };
+  if ((radius === 'high' || requireReview) && !isApproved(view)) {
+    blockers.push(`review required (${radius === 'high' ? 'blast radius high' : '--require-review'}): no reviewer verdict approves this head (P8, P17)`);
+  }
+  return { blockers, ticket: ticket && ticket[1], radius };
 }
 
 function main(argv) {
   const pr = argv.find(a => /^\d+$/.test(a));
-  if (!pr) { console.error('usage: merge-pr.js <pr-number> [--review-optional]'); process.exit(2); }
+  if (!pr) { console.error('usage: merge-pr.js <pr-number> [--require-review] [--repo owner/name]'); process.exit(2); }
+  if (argv.includes('--review-optional')) { console.error('merge-pr: --review-optional is gone; review follows the PR\'s blast radius (P17)'); process.exit(2); }
   const flag = argv.indexOf('--repo');
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
-  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,headRefName,headRefOid,reviewDecision,reviews,author,statusCheckRollup,state,isCrossRepository']));
-  const { blockers, ticket } = mergeBlockers(view, { reviewOptional: argv.includes('--review-optional') });
+  const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state,isCrossRepository']));
+  const { blockers, ticket } = mergeBlockers(view, { requireReview: argv.includes('--require-review') });
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
     process.exit(1);

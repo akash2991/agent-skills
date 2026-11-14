@@ -4,7 +4,7 @@ What a review produces and when a change merges. Loaded by the engineers and the
 
 ## When a review runs
 
-Review may be made optional on the ticket by the engineer or the user (`git-workflow-and-versioning` P8). A QA pass (`test-engineer`) runs on a story reported done.
+The PR's blast radius decides (`git-workflow-and-versioning` P17): a high PR gets a `code-reviewer`; a low or medium PR gets none unless the ticket asks for one (P8). A human approves only when the ticket says so. A QA pass (`test-engineer`) runs on a story reported done.
 
 ## What a review produces
 
@@ -15,4 +15,4 @@ Reviewers are specialized and adversarial. They never edit the change.
 
 ## Merge
 
-After the verdict, or after CI when review was optional: a regular merge commit, ticket id in the message, branch deleted remote and local, changelog line, ticket moved.
+Through `merge-pr.js` (`github`): a regular merge commit, ticket id in the message, branch deleted remote and local, changelog line, ticket moved. A high PR is merged by its reviewer after its approval of the head and green CI; a low or medium PR by its author on green CI.

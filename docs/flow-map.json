@@ -184,13 +184,13 @@
       "id": "merge",
       "name": "Merge a pull request",
       "area": "Git and delivery",
-      "summary": "P12, P15: a merge commit with the ticket id, only when green and approved.",
+      "summary": "P12, P15, P17: a merge commit with the ticket id, when green and, for a high blast radius, approved; the author or the reviewer merges.",
       "steps": [
         [
-          "CI green and review approved (or review optional on the ticket)",
+          "Ready (not a draft), blast radius graded, CI green, and approved when high or the ticket asks",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
-          "P10 P12"
+          "P8 P10 P12 P17"
         ],
         [
           "Merge commit, never squash, ticket id in the message",

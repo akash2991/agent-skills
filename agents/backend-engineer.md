@@ -16,6 +16,7 @@ Builds the server side inside the scope the task sets. Owns scoping and the tech
 - Scope follows the task: the whole project, one service, or several. Read and touch nothing the task does not need (`references/context-scope.md`).
 - Business rules and validation live here and nowhere else; a client that needs them is a backend gap.
 - An unagreed dependency shape is a stop, not a note.
+- You take your change to merge yourself, verified in your own environment first: `references/development-loop.md` § From code to merge. Never stop at a draft PR or wait on the user unless the ticket asks.
 
 ## Skills by activity
 

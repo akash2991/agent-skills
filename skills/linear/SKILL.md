@@ -83,7 +83,7 @@ One workflow per team, the whole cycle from the user's request to production, as
 | Started | `Design` | HLD, LLD, ADRs; the contracts and the DB model | the user reviewed the design and the contracts exist |
 | Started | `Planned` | reviewed design has been decomposed into focused issues with real dependency relations | actionable issues have native estimates, owned paths, and cycle assignments whose goals are usable increments |
 | Started | `In Progress` | code and tests, in the agent's own environment | the PR is raised |
-| Started | `In Review` | the PR is open; findings inline and as `review` issues; the author resolves every thread | approved, or review made optional on the issue and CI green |
+| Started | `In Review` | the PR is open, ready, with its blast radius; for a high PR, findings inline and as `review` issues and the author resolves every thread | CI is green and, for a high PR or an issue that asks for review, the reviewer approved the head; the author (or, after a review, the reviewer) merges |
 | Started | `QA` | independent verification of a milestone's usable outcome, end to end and under concurrency | QA verified; a failure is a `bug` issue |
 | Started | `Merged` | in `main`, releasable, changelog line added; build and deploy pending | it is deployed |
 | Started | `Blocked` | it cannot continue; the status update carries the blocker block | the blocker is resolved; it returns to the state it left |

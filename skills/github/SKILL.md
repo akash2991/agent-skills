@@ -27,14 +27,15 @@ The server entry is in this skill's `mcp.json`; copy it into your tool's MCP con
 |---|---|---|
 | Find the branch or PR for a ticket (before creating one) | `list_pull_requests` / `search_pull_requests` with the ticket id | `gh pr list --search "<ticket>"` |
 | Create branch `<ticket>-<slug>` | `create_branch` | `git switch -c <ticket>-<slug>` |
-| Raise a PR with the template | `create_pull_request` | `gh pr create --title "<ticket>: <goal>" --body-file <template>` |
+| Raise a PR with the template, ready for review (never a draft), its body carrying the `Blast-radius:` line | `create_pull_request` with `draft: false` | `gh pr create --title "<ticket>: <goal>" --body-file <template>` (no `--draft`) |
 | Link PR and ticket | title starts with the ticket id; PR URL on the ticket's `PR:` line (`linear`) | same |
 | Request a reviewer | `request_reviewers` | `gh pr edit --add-reviewer <login>` |
 | Inline comment at a line (`linear`) | `create_pending_pull_request_review` + `add_comment_to_pending_review` | `gh api repos/{owner}/{repo}/pulls/{n}/comments` |
 | Verdict | `submit_pending_pull_request_review` with `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` | `gh pr review --approve` / `--request-changes` / `--comment` |
+| Verdict when the reviewer shares the author's GitHub account (GitHub refuses the approval) | `submit_pending_pull_request_review` with `COMMENT`, the body carrying `**Verdict:** APPROVE` or `**Verdict:** REQUEST CHANGES` | `gh pr review --comment --body-file <review>` with the same line |
 | Reply to and resolve a thread | reply comment, then resolve the thread | `gh api graphql` `resolveReviewThread` after the reply |
 | CI status | `get_pull_request_status` | `gh pr checks` |
-| Merge: merge commit with the ticket id, delete the branch | Do not call `merge_pull_request` directly: it skips the gate | `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>`, which checks CI and approval on the inspected head, merges with a merge commit, and removes the branch |
+| Merge: merge commit with the ticket id, delete the branch | Do not call `merge_pull_request` directly: it skips the gate | `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>`, which refuses a draft, checks the blast radius, CI, and (for a high PR) the approval on the inspected head, merges with a merge commit, and removes the branch |
 | Tag and release `vX.Y.Z` | `create_release` | `git tag -a vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --notes-file <changelog entry>` |
 
 ## Interaction with other skills

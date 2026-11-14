@@ -92,16 +92,50 @@ test('a changelog line is required in the global file and in the service it touc
   assert.deepStrictEqual(check.checkChangelog(pn('1\t0\tdocs/CHANGELOG.md\n1\t0\tservices/api/CHANGELOG.md\n1\t0\tservices/api/src/a.ts'), all), []);
 });
 
-test('merge is blocked unless open, ticketed, green, and approved', () => {
+test('merge is blocked unless open, ready, ticketed, graded, green, and approved when high', () => {
   const approval = { author: { login: 'teammate' }, state: 'APPROVED', commit: { oid: 'h1' }, authorAssociation: 'MEMBER' };
-  const ok = { state: 'OPEN', title: 'ENG-1: x', headRefOid: 'h1', author: { login: 'agent' }, reviews: [approval], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  const ok = { state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: high — touches auth', headRefOid: 'h1', author: { login: 'agent' }, reviews: [approval], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
   assert.deepStrictEqual(mergeBlockers(ok).blockers, []);
   assert.strictEqual(mergeBlockers(ok).ticket, 'ENG-1');
+  assert.strictEqual(mergeBlockers(ok).radius, 'high');
   // approval comes from the reviews on this head, not from the repository's decision field
   assert.strictEqual(mergeBlockers({ ...ok, reviews: [] }).blockers.length, 1);
-  assert.deepStrictEqual(mergeBlockers({ ...ok, reviewDecision: null }, { reviewOptional: true }).blockers, []);
   assert.match(mergeBlockers({ ...ok, statusCheckRollup: [{ name: 'ci', conclusion: 'FAILURE' }] }).blockers[0], /CI is not green: ci/);
   assert.strictEqual(mergeBlockers({ ...ok, title: 'x', state: 'MERGED' }).blockers.length, 2);
+  assert.match(mergeBlockers({ ...ok, isDraft: true }).blockers.join(), /draft/);
+});
+
+test('review follows the blast radius: low and medium merge on green CI, unless the ticket requires review', () => {
+  const low = { state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low - docs only', headRefOid: 'h1', author: { login: 'agent' }, reviews: [], statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }] };
+  assert.deepStrictEqual(mergeBlockers(low).blockers, []);
+  assert.deepStrictEqual(mergeBlockers({ ...low, body: 'Blast-radius: medium: one service, one revert' }).blockers, []);
+  assert.match(mergeBlockers(low, { requireReview: true }).blockers.join(), /review required \(--require-review\)/);
+  assert.match(mergeBlockers({ ...low, body: 'Blast-radius: high — payments' }).blockers.join(), /review required \(blast radius high\)/);
+  assert.match(mergeBlockers({ ...low, body: '' }).blockers.join(), /Blast-radius/);
+  assert.match(mergeBlockers({ ...low, body: 'Blast-radius: high' }).blockers.join(), /Blast-radius/, 'a level without a reason');
+  assert.match(mergeBlockers({ ...low, body: 'Blast-radius: huge — everything' }).blockers.join(), /Blast-radius/, 'an unknown level');
+});
+
+test('a verdict comment counts when reviewer and author share an account; the template placeholder does not', () => {
+  const author = { login: 'agent' };
+  const head = 'h2';
+  const said = (body, oid = head) => ({ author: { login: 'agent' }, state: 'COMMENTED', body, commit: { oid }, authorAssociation: 'OWNER' });
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('## Review Summary\n\n**Verdict:** APPROVE\n')] }), true);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** APPROVE | REQUEST CHANGES')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** APPROVE', 'h1')] }), false, 'a verdict on an older head');
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** REQUEST CHANGES', 'h1'), said('**Verdict:** APPROVE')] }), true, 'the newest verdict decides');
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('**Verdict:** APPROVE'), said('**Verdict:** REQUEST CHANGES')] }), false);
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [said('looks fine, Verdict: APPROVE soon')] }), false, 'a reply is not a verdict');
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [{ ...said('**Verdict:** APPROVE'), authorAssociation: 'NONE' }] }), false);
+  // GitHub's own approval from the author's account still does not count.
+  assert.strictEqual(isApproved({ author, headRefOid: head, reviews: [{ ...said(''), state: 'APPROVED' }] }), false);
+});
+
+test('the PR check requires a graded blast radius with a reason', () => {
+  assert.strictEqual(check.blastRadius('Summary\n\nBlast-radius: Medium — one service'), 'medium');
+  assert.deepStrictEqual(check.checkBlastRadius('Blast-radius: low — tests only'), []);
+  assert.strictEqual(check.checkBlastRadius('Blast radius: low — tests only').length, 1);
+  assert.strictEqual(check.checkBlastRadius('Blast-radius: low').length, 1);
 });
 
 test('hooks install once and never overwrite a foreign hook', () => {

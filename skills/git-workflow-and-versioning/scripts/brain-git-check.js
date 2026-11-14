@@ -6,7 +6,7 @@
 //   branch [<name>]              P5       branch is <ticket>-<slug>
 //   commits --base <ref>         P3, P4   every commit in <base>..<head> passes commit-msg
 //   push                         P5       stdin from git's pre-push hook: each pushed refs/heads/* branch is <ticket>-<slug>
-//   pr --base <ref>              P10, P11, P13   title starts with the ticket id, size within limits, changelog touched
+//   pr --base <ref>              P10, P11, P13, P17   title starts with the ticket id, size within limits, changelog touched, blast radius graded
 // Exit 0 when every check passes, 1 with one line per failure, 2 on bad usage.
 // Environment: LINEAR_TEAM narrows the ticket pattern to one team key; BRAIN_PR_MAX_LINES and BRAIN_PR_MAX_FILES
 // override 400 and 10; PR_TITLE and PR_BODY supply the title and body (CI passes them without shell quoting).
@@ -65,6 +65,19 @@ function checkPrTitle(title, env = process.env) {
     return [`PR title must be "<ticket>: <goal>": got "${title || ''}" (P10)`];
   }
   return [];
+}
+
+// P17: the PR body grades its blast radius on a line of its own, "Blast-radius: <low|medium|high> — <reason>".
+// Returns the level, or null when the line is missing or carries no reason.
+const BLAST_RADIUS = /^Blast-radius:[ \t]*(low|medium|high)[ \t]*[—–:-][ \t]*\S/im;
+
+function blastRadius(body) {
+  const m = BLAST_RADIUS.exec(body || '');
+  return m ? m[1].toLowerCase() : null;
+}
+
+function checkBlastRadius(body) {
+  return blastRadius(body) ? [] : ['PR body needs a line "Blast-radius: <low|medium|high> — <reason>" (P17)'];
 }
 
 // numstat is the output of `git diff --numstat -z`: "<added>\t<deleted>\t<path>\0" per file, binary files "-\t-".
@@ -247,6 +260,7 @@ function main(argv) {
     const { live, removed, base: baseChangelogs } = changelogInventory(base, head);
     return report([
       ...checkPrTitle(optionValue(rest, '--title') || process.env.PR_TITLE),
+      ...checkBlastRadius(body),
       ...checkSize(files, body),
       ...checkChangelog(files, [...live, ...removed], removed, baseChangelogs),
     ]);
@@ -257,4 +271,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };
+module.exports = { checkCommitMessage, checkBranchName, checkPrTitle, blastRadius, checkBlastRadius, parseNumstat, checkSize, checkChangelog, requiredChangelogs, checkPushedRefs, ticketSource, GLOBAL_CHANGELOGS, listChangelogs, changelogInventory };
