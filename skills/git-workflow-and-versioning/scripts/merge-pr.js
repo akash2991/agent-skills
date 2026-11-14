@@ -41,9 +41,11 @@ const VERDICT_LIKE = /verdict\W*:|request(?:ed)?[ \t_-]*changes|changes[ \t_-]*r
 
 // A comment review's verdict lives in its opening block of "Key: value" lines (headerFields): one "Reviewer:" naming the
 // review assignment, e.g. "FAC-12 review (code-reviewer)", and one "Verdict:". Prose follows after a blank line and is
-// commentary only. A header "Verdict: APPROVE" (any case) approves; "comment only" is a reply; any other value, two
-// verdicts, or the unfilled template requests changes. With no header verdict, a body that mentions a verdict or
-// requested changes anywhere requests changes (fixed by editing the review's opening lines); anything else is a reply.
+// commentary only. A header "Verdict: APPROVE" (any case) with exactly one real reviewer name approves; "comment only" is
+// a reply; anything else (another value, two verdicts, the unfilled template, an APPROVE without exactly one real
+// reviewer name) is a malformed verdict and requests changes, with a note saying why. With no header verdict, a body that
+// mentions a verdict or requested changes anywhere requests changes; anything else is a reply. A malformed or unnamed
+// verdict is fixed by editing the review's opening lines.
 function parseVerdict(body) {
   const fields = headerFields(body) || [];
   const verdicts = fields.filter(f => f.key === 'verdict');
@@ -54,22 +56,27 @@ function parseVerdict(body) {
   if (verdicts.length === 1) {
     const value = verdicts[0].value.replace(/[`*]/g, '').trim();
     if (/^comment( only)?$/i.test(value)) return null;
-    return { state: /^approve$/i.test(value) ? 'APPROVED' : 'CHANGES_REQUESTED', reviewer };
+    if (/^request[ _-]*changes$/i.test(value)) return { state: 'CHANGES_REQUESTED', reviewer, note: reviewer ? undefined : 'REQUEST CHANGES without a Reviewer: name, so no later approval can clear it' };
+    if (/^approve$/i.test(value) && reviewer) return { state: 'APPROVED', reviewer };
+    const note = /^approve$/i.test(value) ? 'APPROVE without exactly one real Reviewer: name' : `Verdict "${value}" is not APPROVE or REQUEST CHANGES`;
+    return { state: 'CHANGES_REQUESTED', reviewer, note };
   }
-  if (verdicts.length > 1 || VERDICT_LIKE.test(body || '')) return { state: 'CHANGES_REQUESTED', reviewer };
+  if (verdicts.length > 1) return { state: 'CHANGES_REQUESTED', reviewer, note: 'more than one Verdict: line' };
+  if (VERDICT_LIKE.test(body || '')) return { state: 'CHANGES_REQUESTED', reviewer, note: 'a verdict or change request outside the opening Reviewer:/Verdict: lines' };
   return null;
 }
 
 // Every reviewer's newest verdict. A GitHub APPROVED or CHANGES_REQUESTED counts from anyone with a role in the repository
 // but the author. GitHub refuses an approval from the PR's own account, so agents that share it post their verdict as a
 // comment review with the verdict and reviewer lines; each named reviewer is tracked on its own, and a replacement
-// reviewer takes over an assignment by using the same name. A comment approval without a reviewer name never counts; a
-// comment change request without one stays in force until its body is edited to name the reviewer. On an account that is
+// reviewer takes over an assignment by using the same name. A comment change request without a reviewer name stays in
+// force until its body is edited to name the reviewer. On an account that is
 // not the author's, one reviewer may switch between a native review and a named comment verdict: when that account has
 // exactly one reviewer on record and one side is native, the new verdict replaces it; with several named reviewers on
 // the account a native review clears none of them. The script cannot tell a reviewer agent from the authoring agent on a
 // shared account: P17 forbids the author's verdict, and main() reports which review passed the gate. A change request
-// stays in force after a new push until the same reviewer approves.
+// stays in force, across pushes and format switches, until the same reviewer approves the current head: an approval of
+// another commit (or of no known commit) never clears it.
 function reviewState(view) {
   const byLogin = new Map();
   for (const r of view.reviews || []) {
@@ -79,22 +86,28 @@ function reviewState(view) {
     let state;
     let reviewer = null;
     let key;
+    let note;
     if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED') {
       if (own) continue;
       state = r.state;
       key = NATIVE;
     } else if (r.state === 'COMMENTED') {
       const verdict = parseVerdict(r.body);
-      if (!verdict || (!verdict.reviewer && verdict.state === 'APPROVED')) continue;
+      if (!verdict) continue;
       ({ state, reviewer } = verdict);
+      ({ note } = verdict);
       key = reviewer || `unnamed:${r.id || byLogin.size}`;
     } else continue;
     const entries = byLogin.get(login) || new Map();
     byLogin.set(login, entries);
     const [only] = entries.size === 1 ? [...entries.keys()] : [];
     const named = k => typeof k === 'string' && !k.startsWith('unnamed:');
-    if (!own && only !== undefined && only !== key && (only === NATIVE ? named(key) : key === NATIVE && named(only))) entries.delete(only);
-    entries.set(key, { state, login, reviewer, own, id: r.id, oid: r.commit && r.commit.oid });
+    const switching = !own && only !== undefined && only !== key && (only === NATIVE ? named(key) : key === NATIVE && named(only));
+    const prior = entries.get(key) || (switching ? entries.get(only) : undefined);
+    const oid = r.commit && r.commit.oid;
+    if (prior && prior.state === 'CHANGES_REQUESTED' && state === 'APPROVED' && (!oid || oid !== view.headRefOid)) continue;
+    if (switching) entries.delete(only);
+    entries.set(key, { state, login, reviewer, own, native: key === NATIVE, note: key === NATIVE ? undefined : note, id: r.id, oid });
   }
   const verdicts = [...byLogin.values()].flatMap(e => [...e.values()]);
   return {
@@ -109,8 +122,8 @@ function isApproved(view) {
 }
 
 function describe(v) {
-  if (v.reviewer) return `${v.reviewer} (${v.login})`;
-  return v.id ? `${v.login} in unnamed review ${v.id}: edit its opening Reviewer: and Verdict: lines (github)` : v.login;
+  const who = v.reviewer ? `${v.reviewer} (${v.login})` : v.native ? `${v.login} (GitHub review ${v.id || 'without id'})` : `${v.login} in unnamed review ${v.id || 'without id'}`;
+  return v.note ? `${who}: ${v.note}; edit the review's opening Reviewer: and Verdict: lines (github)` : who;
 }
 
 // view is the parsed `gh pr view --json title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state` output.

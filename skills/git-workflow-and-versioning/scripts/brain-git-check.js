@@ -68,8 +68,9 @@ function checkPrTitle(title, env = process.env) {
 }
 
 // The body's opening block: its lines from the first non-blank line to the next blank line, each an unindented
-// "Key: value" (the key may be bold: "**Key:**" or "**Key**:"). Machine-read fields live only here, so nothing in the
-// Markdown that follows (code, quotes, lists, tables, HTML) can supply or hide one. A block with any other line is no
+// "Key: value" (the key may be bold: "**Key:**" or "**Key**:"). The blast radius and verdicts live only here, so nothing in
+// the Markdown that follows (code, quotes, lists, tables, HTML) can supply or hide one. Size-exception is still read anywhere:
+// it only relaxes a size warning and grants no merge. A block with any other line is no
 // header at all: null.
 const HEADER_LINE = /^(?:\*\*)?([A-Za-z][A-Za-z -]*?)(?:\*\*)?[ \t]*:(?:\*\*)?[ \t]*(.*?)[ \t]*$/;
 

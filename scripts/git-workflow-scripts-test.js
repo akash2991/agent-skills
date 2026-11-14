@@ -600,5 +600,47 @@ test('one reviewer on its own account may switch between native and comment verd
   assert.strictEqual(isApproved(view([...two, tm('APPROVED')])), false, 'a native approval clears none of several named reviewers on one account');
   assert.strictEqual(isApproved(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('COMMENTED', 'Verdict: APPROVE')])), false, 'an unnamed comment approval');
   assert.match(mergeBlockers({ state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
-    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: edit its opening/);
+    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: REQUEST CHANGES without a Reviewer: name.*edit the review.s opening/);
+});
+
+test('an approval of another commit never clears the same reviewer\'s change request', () => {
+  const view = (reviews, body = 'Blast-radius: low — docs') => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }], reviews });
+  const tm = (state, body = '', oid = 'h2', login = 'tm') => ({ id: `PRR_${login}${oid}${state}`, author: { login }, state, body, commit: oid ? { oid } : null, authorAssociation: 'MEMBER' });
+  const named = v => `Reviewer: FAC-1 review (code-reviewer)\nVerdict: ${v}`;
+  const transitions = [
+    ['native, native', tm('CHANGES_REQUESTED'), tm('APPROVED', '', 'h1')],
+    ['comment, comment', tm('COMMENTED', named('REQUEST CHANGES')), tm('COMMENTED', named('APPROVE'), 'h1')],
+    ['native, comment', tm('CHANGES_REQUESTED'), tm('COMMENTED', named('APPROVE'), 'h1')],
+    ['comment, native', tm('COMMENTED', named('REQUEST CHANGES')), tm('APPROVED', '', 'h1')],
+    ['shared account', said(`${R}\nVerdict: REQUEST CHANGES`), said(`${R}\nVerdict: APPROVE`, 'h1')],
+    ['no commit on the approval', tm('CHANGES_REQUESTED'), tm('APPROVED', '', null)],
+  ];
+  for (const [name, request, stale] of transitions) {
+    assert.match(mergeBlockers(view([request, stale])).blockers.join(), /changes requested/, `low: ${name}`);
+    const other = tm('APPROVED', '', 'h2', 'other');
+    assert.match(mergeBlockers(view([request, stale, other], 'Blast-radius: high — auth')).blockers.join(), /changes requested/, `high: ${name}`);
+  }
+  // Resolved by the same reviewer approving the current head.
+  assert.deepStrictEqual(mergeBlockers(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('APPROVED')])).blockers, []);
+  assert.deepStrictEqual(mergeBlockers(view([said(`${R}\nVerdict: REQUEST CHANGES`, 'h1'), said(`${R}\nVerdict: APPROVE`)], 'Blast-radius: high — auth')).blockers, []);
+});
+
+test('an approval header without exactly one real reviewer name blocks, even after a valid approval', () => {
+  const view = (reviews, body) => ({ state: 'OPEN', title: 'ENG-1: x', body, headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }], reviews });
+  const valid = said(`${R}\nVerdict: APPROVE`);
+  for (const header of ['Verdict: APPROVE', 'Reviewer:\nVerdict: APPROVE', 'Reviewer: <name>\nVerdict: APPROVE', `${R}\n${R}\nVerdict: APPROVE`]) {
+    for (const body of ['Blast-radius: low — docs', 'Blast-radius: high — auth']) {
+      assert.match(mergeBlockers(view([valid, said(header)], body)).blockers.join(), /APPROVE without exactly one real Reviewer: name/, `${body}: ${header}`);
+    }
+  }
+  assert.match(mergeBlockers(view([said(`${R}\nVerdict: APPROVED`)], 'Blast-radius: low — docs')).blockers.join(), /Verdict "APPROVED" is not APPROVE or REQUEST CHANGES/);
+  assert.deepStrictEqual(mergeBlockers(view([valid, said(`${R}\nVerdict: comment only`)], 'Blast-radius: high — auth')).blockers, [], 'comment only clears nothing and blocks nothing');
+});
+
+test('a native change request names the GitHub review, not a header repair', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
+    reviews: [{ id: 'PRR_kwDOabc', author: { login: 'teammate' }, state: 'CHANGES_REQUESTED', body: 'needs work', commit: { oid: 'h2' }, authorAssociation: 'MEMBER' }] };
+  const text = mergeBlockers(view).blockers.join();
+  assert.match(text, /changes requested by teammate \(GitHub review PRR_kwDOabc\)/);
+  assert.doesNotMatch(text, /opening Reviewer/);
 });

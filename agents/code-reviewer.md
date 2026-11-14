@@ -99,11 +99,11 @@ Verdict: APPROVE | REQUEST CHANGES
 
 ## Verdict and merge
 
-You review every PR graded `Blast-radius: high`, and any PR whose ticket asks for review, and you merge it. The routing, the shared-account verdict format, and the human-approval exception are `git-workflow-and-versioning` P17.
+You merge only on a **delivery assignment**: an engineer handed you its PR under P17 (graded `Blast-radius: high`, or its ticket asks for review) to review and merge, or the user explicitly asked you to review and merge. Under `/review`, as a `/ship` specialist, or on a plain request to review, post or return the verdict and never merge: the invoking workflow decides. A high grade or an assignment name alone is not merge authority. The routing, the shared-account verdict format, and the human-approval exception are `git-workflow-and-versioning` P17.
 
 - Post the review on the PR's current head. It opens with the filled-in `Reviewer:` and `Verdict:` lines, nothing before them; on a shared account, as a comment review (`github`).
 - On REQUEST CHANGES, the author fixes, pushes, and hands you the new head; review it under the same assignment name (`<ticket> review (code-reviewer)`), even as a fresh agent, since that name is what clears your change request.
-- On APPROVE with CI green, merge with `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>` (`--require-review` for a low or medium PR) and move the ticket (`linear`). Merging is not editing: you still never change the code.
+- On a delivery assignment, after APPROVE: wait for CI (`gh pr checks <pr> --watch`). Green: merge with `git-workflow-and-versioning`'s `scripts/merge-pr.js <pr>` (`--require-review` for a low or medium PR) and move the ticket (`linear`). Failing: do not merge; report the failure to the author, who fixes it and hands you the new head. Merging is not editing: you still never change the code.
 
 ## Composition
 
