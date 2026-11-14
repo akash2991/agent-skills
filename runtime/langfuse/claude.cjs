@@ -849,11 +849,18 @@ function runEvent(payload, receivedAt, options) {
       if (child?.pid) killGroup(child.pid);
       resolve(value || null);
     };
-    const cap = options.inlineMs ?? limit('BRAIN_TRACE_HOOK_INLINE_MS', LIMITS.inlineMs, 100, LIMITS.inlineMaxMs, options.env);
+    let cap = options.inlineMs ?? limit('BRAIN_TRACE_HOOK_INLINE_MS', LIMITS.inlineMs, 100, LIMITS.inlineMaxMs, options.env);
+    // A supervising entrypoint passes its absolute deadline: the work process
+    // must be gone by then, so both the wait and its lifetime end there.
+    const deadline = Number(options.env.BRAIN_TRACE_HOOK_DEADLINE);
+    const remaining = Number.isFinite(deadline) ? deadline - Date.now() : Infinity;
+    if (remaining < 50) { resolve(null); return; }
+    cap = Math.min(cap, remaining);
     const timer = setTimeout(() => finish(null), cap);
     try {
       // The child's own lifetime is a backstop if this hook process is killed.
-      child = spawnWorkProcess('event', receivedAt, cap + 500, options.acknowledgeSession === true ? ['ack'] : [], options.env);
+      child = spawnWorkProcess('event', receivedAt, Math.max(1, Math.min(cap + 500, remaining)),
+        options.acknowledgeSession === true ? ['ack'] : [], options.env);
       child.once('error', () => finish(null));
       child.stdout.on('data', chunk => chunks.push(chunk));
       child.once('close', () => {

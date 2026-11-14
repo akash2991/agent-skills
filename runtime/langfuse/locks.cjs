@@ -51,6 +51,8 @@ function alive(owner, hashed = false) {
   const live = !current || (hashed ? birthHash(current) : current) === owner.start;
   if (live && current) verifiedAlive.set(cacheKey, Date.now());
   else verifiedAlive.delete(cacheKey);
+  // Keep the cache small in long-lived processes: expired entries go.
+  if (verifiedAlive.size > 64) for (const [key, at] of verifiedAlive) if (Date.now() - at >= VERIFIED_TTL_MS) verifiedAlive.delete(key);
   return live;
 }
 function safeFile(stat) {

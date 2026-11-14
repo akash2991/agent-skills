@@ -71,7 +71,10 @@ function supervise(args, input, ms) {
     };
     const timer = setTimeout(finish, ms);
     try {
-      child = require('node:child_process').spawn(process.execPath, args, { detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
+      // The event's own work process runs in another group, so pass the
+      // deadline down: no event work may outlive this supervisor.
+      const env = { ...process.env, BRAIN_TRACE_HOOK_DEADLINE: String(Date.now() + ms - 100) };
+      child = require('node:child_process').spawn(process.execPath, args, { detached: true, env, stdio: ['pipe', 'pipe', 'ignore'] });
       child.once('error', finish);
       child.stdout.on('data', chunk => chunks.push(chunk));
       child.once('close', finish);

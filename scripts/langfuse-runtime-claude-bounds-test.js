@@ -323,3 +323,31 @@ test('stalled runtime discovery cannot hold the installed bootstrap or the per-r
     assert.ok(Date.now() - started < 2500, `${path.basename(args[0])} held for ${Date.now() - started} ms`);
   }
 });
+
+test('event work never outlives a supervising entrypoint that timed out after slow discovery', async () => {
+  // Discovery in the supervised child is slow but succeeds just before the
+  // supervisor's deadline; the event's work process must not run past it.
+  const dir = fs.mkdtempSync(path.join(root, 'slow-discover-'));
+  const shim = path.join(dir, 'slow.cjs');
+  // Discovery in the supervised child takes 1.25 s of its 1.5 s; the event's
+  // work process then takes 0.6 s longer, so without the shared deadline it
+  // would finish after the entrypoint returned.
+  fs.writeFileSync(shim, `const delay = process.argv.includes('--claude-hook-child') ? 1250
+      : process.argv.includes('--agent-brain-detached') && process.argv.includes('event') ? 600 : 0;
+    if (delay) { const fs = require('node:fs'); const lstat = fs.lstatSync; let slowed = false;
+      fs.lstatSync = (target, ...rest) => { if (!slowed && String(target).endsWith('tracing.json')) { slowed = true;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay); } return lstat(target, ...rest); }; }`);
+  const sessionId = crypto.randomUUID();
+  const env = { ...process.env, NODE_OPTIONS: `--require ${shim}`, BRAIN_TRACE_HOOK_INLINE_MS: '500' };
+  const input = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: sessionId, cwd: root,
+    tool_use_id: 'toolu_slow_discovery', tool_name: 'Bash', tool_input: {}, tool_response: {}, duration_ms: 1 });
+  const result = spawnSync(process.execPath, [path.join(__dirname, '../runtime/langfuse/exec.cjs'), '--claude-hook', sessionId, root],
+    { env, input, encoding: 'utf8', timeout: 20000 });
+  assert.equal(result.status, 0, result.stderr);
+  const flow = createFlow({ harness: 'claude', cwd: root, env: process.env });
+  const toolKey = `claude:tool:${flow.id(JSON.stringify([sessionId, 'toolu_slow_discovery']))}`;
+  const atReturn = flow.readState(toolKey);
+  await sleep(2000);
+  // Whatever the event managed before the hook returned may stand; nothing after.
+  assert.deepEqual(flow.readState(toolKey), atReturn, 'event state changed after the hook returned');
+});
