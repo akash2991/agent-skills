@@ -600,7 +600,7 @@ test('one reviewer on its own account may switch between native and comment verd
   assert.strictEqual(isApproved(view([...two, tm('APPROVED')])), false, 'a native approval clears none of several named reviewers on one account');
   assert.strictEqual(isApproved(view([tm('CHANGES_REQUESTED', '', 'h1'), tm('COMMENTED', 'Verdict: APPROVE')])), false, 'an unnamed comment approval');
   assert.match(mergeBlockers({ state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
-    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: REQUEST CHANGES without a Reviewer: name.*edit the review.s opening/);
+    reviews: [{ ...said('Verdict: REQUEST CHANGES'), id: 'PRR_9' }] }).blockers.join(), /unnamed review PRR_9: REQUEST CHANGES without a Reviewer: name.*only the agent that posted it repairs/);
 });
 
 test('an approval of another commit never clears the same reviewer\'s change request', () => {
@@ -643,4 +643,11 @@ test('a native change request names the GitHub review, not a header repair', () 
   const text = mergeBlockers(view).blockers.join();
   assert.match(text, /changes requested by teammate \(GitHub review PRR_kwDOabc\)/);
   assert.doesNotMatch(text, /opening Reviewer/);
+});
+
+test('a malformed review is repaired only by the agent that posted it', () => {
+  const view = { state: 'OPEN', title: 'ENG-1: x', body: 'Blast-radius: low — docs', headRefOid: 'h2', author: { login: 'agent' }, statusCheckRollup: [{ name: 'ci', conclusion: 'SUCCESS' }],
+    reviews: [{ ...said(`${R}\nVerdict: APPROVED`), id: 'PRR_x' }] };
+  const text = mergeBlockers(view).blockers.join();
+  assert.match(text, /only the agent that posted it repairs its opening Reviewer: and Verdict: lines, keeping its verdict; the author never edits another agent's review/);
 });

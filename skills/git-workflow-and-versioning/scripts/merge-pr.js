@@ -45,7 +45,7 @@ const VERDICT_LIKE = /verdict\W*:|request(?:ed)?[ \t_-]*changes|changes[ \t_-]*r
 // a reply; anything else (another value, two verdicts, the unfilled template, an APPROVE without exactly one real
 // reviewer name) is a malformed verdict and requests changes, with a note saying why. With no header verdict, a body that
 // mentions a verdict or requested changes anywhere requests changes; anything else is a reply. A malformed or unnamed
-// verdict is fixed by editing the review's opening lines.
+// verdict is repaired only by the agent that posted it, keeping its verdict (P17).
 function parseVerdict(body) {
   const fields = headerFields(body) || [];
   const verdicts = fields.filter(f => f.key === 'verdict');
@@ -123,7 +123,7 @@ function isApproved(view) {
 
 function describe(v) {
   const who = v.reviewer ? `${v.reviewer} (${v.login})` : v.native ? `${v.login} (GitHub review ${v.id || 'without id'})` : `${v.login} in unnamed review ${v.id || 'without id'}`;
-  return v.note ? `${who}: ${v.note}; edit the review's opening Reviewer: and Verdict: lines (github)` : who;
+  return v.note ? `${who}: ${v.note}; only the agent that posted it repairs its opening Reviewer: and Verdict: lines, keeping its verdict; the author never edits another agent's review (P17, github)` : who;
 }
 
 // view is the parsed `gh pr view --json title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state` output.
@@ -161,12 +161,13 @@ function main(argv) {
   const repo = flag === -1 ? originRepo() : argv[flag + 1];
   if (!repo || !/^[^/]+\/[^/]+$/.test(repo)) { console.error('merge-pr: --repo takes owner/name'); process.exit(2); }
   const view = JSON.parse(gh(['pr', 'view', pr, '--repo', repo, '--json', 'title,body,isDraft,headRefName,headRefOid,reviews,author,statusCheckRollup,state,isCrossRepository']));
-  const { blockers, ticket, approvals } = mergeBlockers(view, { requireReview: argv.includes('--require-review') });
+  const { blockers, ticket, approvals, radius } = mergeBlockers(view, { requireReview: argv.includes('--require-review') });
   if (blockers.length) {
     for (const b of blockers) console.error(`merge-pr: ${b}`);
     process.exit(1);
   }
   // The audit trail: which review passed the gate, and a warning when it came from the author's own account.
+  console.log(`merge-pr: blast radius ${radius}${approvals.length ? '' : ', no review required or given (P17)'}`);
   for (const a of approvals) {
     console.log(`merge-pr: approved by ${describe(a)} in review ${a.id || '(no id)'} on ${a.oid}`);
     if (a.own) console.error(`merge-pr: warning: that approval came from the author's account ${a.login}; the reviewer's independence is not authenticated (P17)`);

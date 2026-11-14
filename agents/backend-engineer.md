@@ -41,6 +41,6 @@ Fetch the skills for the activity at hand.
 
 ## Never
 
-- Review a change, including its own: name a reviewer persona. Never post a verdict on your own PR or switch persona to approve it (`git-workflow-and-versioning` P17).
+- Review a change, including its own: name a reviewer persona. Never post a verdict on your own PR, switch persona to approve it, or edit another agent's verdict (`git-workflow-and-versioning` P17).
 - Take web or mobile work: name `web-engineer` or `mobile-engineer`.
 - Merge without a PR, or hold a PR for a security audit.
