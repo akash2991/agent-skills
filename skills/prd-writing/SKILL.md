@@ -8,7 +8,7 @@ category: process
 
 ## Overview
 
-The PRD is the contract between product and engineering. It states what must be true for the feature to be done, in testable terms, which phase ships first, and what is deliberately not being built yet. Engineers design and plan from it; QA verifies against it; the user reviews it before it counts. The anatomy is `templates/PRD.md`, one template for both altitudes: the project PRD and a feature PRD.
+The PRD is the contract between product and engineering. It states what must be true for the feature to be done, in testable terms, which phase ships first, and what is deliberately not being built yet. Engineers design and plan from it; QA verifies against it; it counts once merged with no open question, and the user reviews it first only when asked (`documentation` W3). The anatomy is `templates/PRD.md`, one template for both altitudes: the project PRD and a feature PRD.
 
 ## When to Use
 
@@ -52,7 +52,7 @@ Each step fills a section of `templates/PRD.md`; a section is skipped with one l
 - An acceptance criterion containing "should work correctly".
 - A template section empty with no line saying why; no MVP phase; no "Deliberately not".
 - A story that touches a service the PRD does not name.
-- A PRD that lives only in chat or in the tracker, or was never reviewed by the user.
+- A PRD that lives only in chat or in the tracker, or that counts while a question in it is still open (`documentation` W3).
 
 ## Verification
 

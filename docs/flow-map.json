@@ -353,8 +353,8 @@
           "M7"
         ],
         [
-          "Review the plan and the PRD",
-          "human",
+          "Settle the plan and the PRD; the user reviews only when asked",
+          "judgment",
           null,
           "W3"
         ]
@@ -385,8 +385,8 @@
           "W2"
         ],
         [
-          "User reviews the PRD",
-          "human",
+          "Settle open questions; the user reviews only when asked",
+          "judgment",
           null,
           "W3"
         ]
@@ -396,7 +396,7 @@
       "id": "design-docs",
       "name": "Write HLD, LLD and ADRs",
       "area": "Planning and design",
-      "summary": "Design as code, reviewed by the user.",
+      "summary": "Design as code, settled with no open question; the user reviews only when asked.",
       "steps": [
         [
           "Decide the architecture and the contracts",
@@ -423,8 +423,8 @@
           "W6"
         ],
         [
-          "User reviews the design",
-          "human",
+          "Settle open questions; the user reviews only when asked",
+          "judgment",
           null,
           "W3"
         ]

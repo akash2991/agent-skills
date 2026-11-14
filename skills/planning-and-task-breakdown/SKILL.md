@@ -35,11 +35,11 @@ Do not implement during scoping. Preserve the full requested scope, including la
 
 ### 2. Resolve the design before detailed technical tickets
 
-For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", with user review as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
+For a technical requirement with missing, incomplete, or outdated design, the **first actionable ticket creates or updates the required design documents**. Its goal is a bounded artifact, such as "Create checkout HLD" or "Specify order-close LLD", settled per (`documentation` W3) as acceptance criteria. This documentation ticket can be scoped and estimated before implementation is known.
 
 Use `hld` for component boundaries and communication; `lld` for exact contracts, schema, and internals. Those skills own document content and review.
 
-Reuse approved documents that already answer these questions; do not rewrite them for ceremony. Write or revise the applicable HLD/LLD sections and obtain the user's review before deriving detailed implementation tickets, estimates, or cycle commitments. An approved HLD permits tickets for decisions it actually settles; API or schema details left open require the LLD first. A document still awaiting review is not approved.
+Reuse approved documents that already answer these questions; do not rewrite them for ceremony. Write or revise the applicable HLD/LLD sections and settle them (`documentation` W3) before deriving detailed implementation tickets, estimates, or cycle commitments. An approved HLD permits tickets for decisions it actually settles; API or schema details left open require the LLD first. A document with an open question, or awaiting a user review that was asked for, is not approved.
 
 Before that gate, high-level placeholders such as "Database schema needed" or "API work needed" are allowed in the backlog, explicitly **provisional, unestimated, blocked on design, and not executable**. Do not invent endpoint names, endpoint counts, exact scope, or delivery promises from these placeholders. Promote or split them after design review without creating duplicates.
 
@@ -173,7 +173,7 @@ Record the usable outcome actually demonstrated and its verification, not only t
 Before implementation:
 
 - [ ] Scope is classified small/large, boundaries are clear, and the appropriate engineer owns the entire plan.
-- [ ] Missing technical design was handled by the first documentation ticket; applicable HLD/LLD sections are current and user-reviewed before detailed implementation tickets.
+- [ ] Missing technical design was handled by the first documentation ticket; applicable HLD/LLD sections are current and settled (`documentation` W3) before detailed implementation tickets.
 - [ ] Early placeholders are provisional and blocked; every executable issue has one definite goal, design basis, acceptance criteria, verification, owned paths, and dependencies.
 - [ ] Native Linear estimates use the team's configured scale, with capacity based on delivery evidence or an explicit assumption.
 - [ ] Every delivery cycle is a real Linear cycle with a working, usable outcome, verification, and a feasible dependency-ordered issue set.

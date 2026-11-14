@@ -6,7 +6,7 @@ How a development agent moves from a request to a deployed change. Loaded by the
 
 The loop is the Linear workflow (`linear` § Workflow): one ordered set of states from the user's request to production, on the issue itself, so the ticket always shows where the work is. Use its readiness gates and skipped-state procedure rather than a separate shortcut for bugs or small tasks. The user may short-circuit the workflow; record the instruction and skipped states on the issue.
 
-Every HLD, LLD, and PRD is reviewed by the user before it counts as approved.
+An HLD, LLD, or PRD counts once merged with no open question; the user reviews it first only when they or the ticket ask (`documentation` W3).
 
 ## Size
 
