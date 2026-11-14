@@ -961,13 +961,13 @@
       "summary": "Each hook event is processed in native order by a capped work process; tracing may drop data but never slows or blocks the session.",
       "steps": [
         [
-          "Hook entrypoint supervises discovery and the event's work process, killing both past their caps",
+          "Hook entrypoint runs discovery in a child process group, kills it past the cap, and passes its deadline down",
           "det",
           "runtime/langfuse/bootstrap-claude.cjs",
           null
         ],
         [
-          "Work process applies the event and reads a budgeted transcript slice; killed with its process group past the cap",
+          "Event work process applies the event and reads a budgeted transcript slice; it ends by the passed deadline with its process group",
           "det",
           "runtime/langfuse/claude.cjs",
           null

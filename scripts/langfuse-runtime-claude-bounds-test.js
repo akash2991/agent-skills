@@ -351,3 +351,81 @@ test('event work never outlives a supervising entrypoint that timed out after sl
   // Whatever the event managed before the hook returned may stand; nothing after.
   assert.deepEqual(flow.readState(toolKey), atReturn, 'event state changed after the hook returned');
 });
+
+test('a scan killed mid-backlog keeps the cursor of every batch it published', () => {
+  // A hook killed at its cap dies mid-scan. Progress must already be saved
+  // with each small batch, not once after the scan (deterministic stand-in
+  // for a slow machine: the 8th generation write "kills" the work).
+  const { reconcileTranscript } = require('../runtime/langfuse/claude.cjs');
+  const dir = fs.mkdtempSync(path.join(root, 'midscan-'));
+  const file = transcript(dir, 12);
+  const flow = new StubFlow();
+  const run = flow.begin({ nativeSessionId: 'session-midscan' });
+  const cursorKey = `claude:cursor:${flow.id(JSON.stringify([run.nativeSessionId, file]))}`;
+  const write = flow.writeState.bind(flow);
+  let generationWrites = 0, killAt = 8;
+  flow.writeState = (key, value) => {
+    // A publication failure propagates past the scan, so nothing after it
+    // runs: the same as a kill at that point.
+    if (key.startsWith('claude:generation:') && ++generationWrites === killAt) {
+      throw Object.assign(new Error('killed at the cap'), { claudePublicationFailure: true });
+    }
+    write(key, value);
+  };
+  assert.throws(() => reconcileTranscript(flow, run, file, undefined), /killed at the cap/);
+  const saved = flow.readState(cursorKey)?.offset || 0;
+  assert.ok(saved > 0, 'the cursor of the first published batch survived the kill');
+  // The next hook resumes after that batch instead of starting over.
+  killAt = Infinity; generationWrites = 0;
+  reconcileTranscript(flow, run, file, undefined);
+  assert.equal(generationWrites, 7, 'resumed after the 5 generations already published');
+  assert.equal(generations(flow), 12);
+});
+
+test('a hook refused at the adapter cap still asks for delivery, so a full state drains', async () => {
+  const stateDir = fs.mkdtempSync(path.join(root, 'full-'));
+  stateDirs.push(stateDir);
+  fs.chmodSync(stateDir, 0o700);
+  const adapters = path.join(stateDir, 'adapters');
+  fs.mkdirSync(path.join(adapters, 'pending'), { recursive: true, mode: 0o700 });
+  // Fresh ownerless checkpoints fill the cap: neither reclaimed nor quarantined.
+  const { ADAPTER_LIMITS } = require('../runtime/langfuse/flow.cjs');
+  for (let i = 0; i < ADAPTER_LIMITS.files; i++) {
+    fs.writeFileSync(path.join(adapters, `${crypto.randomBytes(32).toString('hex')}.json`), JSON.stringify({ nonce: 'legacy' }), { mode: 0o600 });
+  }
+  const env = { ...process.env, BRAIN_TRACE_STATE_DIR: stateDir, BRAIN_TRACE_HOOK_INLINE_MS: '5000' };
+  hook(env, { hook_event_name: 'PostToolUse', session_id: crypto.randomUUID(), cwd: root,
+    tool_use_id: 'toolu_full', tool_name: 'Bash', duration_ms: 1 });
+  const health = createFlow({ harness: 'claude', cwd: root, env }).readState('health');
+  assert.equal(health?.reason, 'adapter_capacity', 'the capture was refused');
+  assert.ok(fs.existsSync(path.join(stateDir, 'claude-flush-request')), 'delivery was requested');
+});
+
+test('a supervisor ended by SIGTERM takes its child down with it', async () => {
+  const dir = fs.mkdtempSync(path.join(root, 'sigterm-'));
+  const shim = path.join(dir, 'stall.cjs'), pidFile = path.join(dir, 'child.pid');
+  // The supervised child records its pid, then stalls in discovery.
+  fs.writeFileSync(shim, `if (process.argv.includes('--agent-brain-hook-child')) {
+    require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+    const fs = require('node:fs'); const lstat = fs.lstatSync;
+    fs.lstatSync = (target, ...rest) => { if (String(target).endsWith('tracing.json'))
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 9000); return lstat(target, ...rest); }; }`);
+  const supervisor = spawn(process.execPath, [path.join(__dirname, '../runtime/langfuse/bootstrap-claude.cjs')],
+    { env: { ...process.env, NODE_OPTIONS: `--require ${shim}`, BRAIN_TRACE_HOOK_INLINE_MS: '5000' }, stdio: ['pipe', 'ignore', 'ignore'] });
+  supervisor.stdin.end(JSON.stringify({ hook_event_name: 'PostToolUse', session_id: crypto.randomUUID(), cwd: root, tool_use_id: 'toolu_sig', tool_name: 'Bash' }));
+  assert.ok(await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8'), 5000), 'child started');
+  const child = Number(fs.readFileSync(pidFile, 'utf8'));
+  supervisor.kill('SIGTERM');
+  assert.ok(await until(() => !alive(child), 2000), 'child outlived its supervisor');
+});
+
+test('entrypoints skip PreToolUse for ordinary tools before spawning anything', () => {
+  const { ignorable } = require('../runtime/langfuse/bootstrap-claude.cjs');
+  assert.equal(ignorable(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' })), true);
+  assert.equal(ignorable(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'TaskCreate' })), true);
+  for (const tool_name of ['Agent', 'Task', 'Skill']) assert.equal(ignorable(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name })), false);
+  assert.equal(ignorable(JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash' })), false);
+  const pattern = new RegExp(require('../runtime/langfuse/claude.cjs').HOOK_MATCHERS.PreToolUse);
+  assert.deepEqual(['Agent', 'Task', 'Skill', 'TaskCreate', 'TaskUpdate', 'mcp__x__Task'].map(name => pattern.test(name)),
+    [true, true, true, false, false, false]);
+});

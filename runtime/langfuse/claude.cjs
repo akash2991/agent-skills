@@ -529,9 +529,10 @@ function reconcileTranscript(flow, run, file, childId, deadlineAt = Infinity) {
       startTime: state.startTime, endTime: state.endTime,
       ...(state.model ? { model: state.model, provider: 'anthropic' } : {}),
       usage: state.usage, outcome: 'completed' }));
-    // Publish in small batches and save the cursor with each, so a hook killed
-    // at its cap still keeps the progress it made.
-    if (generations.size >= 25) {
+    // Publish in small batches and save the cursor with each, including the
+    // batch that reaches the deadline: the budget then pays for publishing,
+    // and a hook killed at its cap still keeps the progress it made.
+    if (generations.size >= 5 || Date.now() >= deadlineAt) {
       submitRecords(flow, run, [...generations.values()]); generations.clear();
       flow.writeState(cursorKey, { offset: position, inode });
     }
@@ -818,7 +819,8 @@ async function processClaudeHook(payload, options = {}) {
 const TERMINAL_EVENTS = Object.freeze(['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd']);
 // PreToolUse binds a dispatch to its caller; it is registered only for these.
 const PRE_TOOLS = Object.freeze(['Agent', 'Task', 'Skill']);
-const HOOK_MATCHERS = Object.freeze({ PreToolUse: PRE_TOOLS.join('|') });
+// Anchored: an unanchored pattern also matches TaskCreate, TaskUpdate and the like.
+const HOOK_MATCHERS = Object.freeze({ PreToolUse: `^(?:${PRE_TOOLS.join('|')})$` });
 const LIMITS = Object.freeze({ inlineMs: 1500, inlineMaxMs: 5000, handoffMs: 1000,
   reconcileMs: 300, flushPassMs: 2000, lifetimeMs: 60000 });
 const DETACHED = '--agent-brain-detached';
@@ -830,9 +832,11 @@ function limit(name, fallback, min, max, env = process.env) {
 }
 const killGroup = pid => { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } };
 
+// The lifetime travels as an absolute end time, so the work process's own
+// backstop does not drift by its boot time.
 function spawnWorkProcess(mode, receivedAt, lifetimeMs, extra = [], env = process.env) {
   return require('node:child_process').spawn(process.execPath,
-    [__filename, DETACHED, mode, String(receivedAt), String(lifetimeMs), ...extra],
+    [__filename, DETACHED, mode, String(receivedAt), String(Date.now() + lifetimeMs), ...extra],
     { detached: true, env, stdio: ['pipe', mode === 'event' ? 'pipe' : 'ignore', 'ignore'] });
 }
 
@@ -990,18 +994,20 @@ async function work(mode, input, receivedAt, endAt, acknowledgeSession) {
   const env = process.env;
   const flow = require('./flow.cjs').createFlow({ harness: 'claude', cwd: input.cwd, env });
   if (mode === 'flush') { await flushSingleFlight(flow, endAt); return null; }
-  const output = await processClaudeHook(input, { flow, env, acknowledgeSession, clock: () => receivedAt,
-    reconcileBudgetMs: LIMITS.reconcileMs, flush: false });
-  await requestDelivery(flow, input.cwd, receivedAt);
-  return output;
+  // Delivery is requested even when capture fails: a full outbox or adapter
+  // cap refuses new records, and only delivery frees that space.
+  try {
+    return await processClaudeHook(input, { flow, env, acknowledgeSession, clock: () => receivedAt,
+      reconcileBudgetMs: LIMITS.reconcileMs, flush: false });
+  } finally { await requestDelivery(flow, input.cwd, receivedAt); }
 }
 
 // A work process's main thread only supervises: synchronous work in the worker
 // cannot delay the lifetime cap. Every exit path kills the whole group, so a
 // subprocess's background child cannot outlive this process.
 function endGroup() { killGroup(process.pid); process.exit(0); }
-async function workMain(mode, receivedAt, lifetimeMs, acknowledgeSession) {
-  const endAt = Date.now() + lifetimeMs;
+async function workMain(mode, receivedAt, endAt, acknowledgeSession) {
+  const lifetimeMs = Math.max(0, endAt - Date.now());
   setTimeout(endGroup, lifetimeMs);
   let input;
   try { input = JSON.parse(await readStdin(Math.min(5000, lifetimeMs))); } catch { endGroup(); }
@@ -1022,11 +1028,10 @@ if (!threads.isMainThread && threads.workerData?.agentBrainClaudeWork === true) 
   work(mode, input, receivedAt, endAt, acknowledgeSession)
     .then(output => threads.parentPort.postMessage(output || null), () => threads.parentPort.postMessage(null));
 } else if (require.main === module && process.argv[2] === DETACHED) {
-  const [mode, received, lifetime, ack] = process.argv.slice(3);
-  const receivedAt = Number(received), lifetimeMs = Number(lifetime);
+  const [mode, received, end, ack] = process.argv.slice(3);
+  const receivedAt = Number(received), endAt = Number(end);
   workMain(mode, Number.isFinite(receivedAt) ? receivedAt : Date.now(),
-    Number.isFinite(lifetimeMs) && lifetimeMs > 0 ? Math.min(lifetimeMs, LIMITS.lifetimeMs) : LIMITS.lifetimeMs,
-    ack === 'ack').catch(endGroup);
+    Math.min(Number.isFinite(endAt) ? endAt : 0, Date.now() + LIMITS.lifetimeMs), ack === 'ack').catch(endGroup);
 }
 
 module.exports = { HOOK_EVENTS, HOOK_MATCHERS, TERMINAL_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };

@@ -61,10 +61,16 @@ function supervise(args, input, ms) {
   return new Promise(resolve => {
     let child, done = false;
     const chunks = [];
+    const kill = () => { if (child?.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
+    // Claude may end the hook with a signal; the child must not outlive it.
+    const onSignal = () => { kill(); process.exit(0); };
+    const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+    for (const signal of signals) process.once(signal, onSignal);
     const finish = () => {
       if (done) return;
       done = true; clearTimeout(timer);
-      if (child?.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
+      for (const signal of signals) process.removeListener(signal, onSignal);
+      kill();
       let output = null;
       try { output = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* no answer */ }
       resolve(output && typeof output === 'object' ? output : null);
@@ -85,6 +91,14 @@ function supervise(args, input, ms) {
 }
 const disabled = env => ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']
   .some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()));
+// Settings written before the PreToolUse matcher fire for every tool. Skip
+// those before spawning anything (same list as PRE_TOOLS in claude.cjs).
+function ignorable(input) {
+  try {
+    const payload = JSON.parse(input);
+    return payload?.hook_event_name === 'PreToolUse' && !['Agent', 'Task', 'Skill'].includes(payload.tool_name);
+  } catch { return false; }
+}
 
 if (require.main === module) {
   // Exit explicitly once the answer is flushed: nothing may keep the hook alive.
@@ -94,8 +108,8 @@ if (require.main === module) {
   if (process.argv[2] === CHILD) {
     readInput(process.stdin, 5000).then(input => input === null ? null : main(input)).then(write).catch(exit);
   } else {
-    readInput().then(input => input === null || disabled(process.env) ? null
+    readInput().then(input => input === null || disabled(process.env) || ignorable(input) ? null
       : supervise([__filename, CHILD], input, superviseMs())).then(write).catch(exit);
   }
 }
-module.exports = { main, readInput, supervise, superviseMs };
+module.exports = { main, readInput, supervise, superviseMs, ignorable };

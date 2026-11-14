@@ -268,3 +268,17 @@ test('policy is checked at the actual event/tool cwd and refusal added after sta
   assert.deepEqual([later.runs, later.records.length, later.states.size, later.flushes], before, 'no flush/checkpoint/export after refusal');
   assert.equal(later.controller.getRoots().size, 0, 'refused shutdown still releases in-memory controller');
 });
+
+test('a turn and a shutdown deliver even when capture is refused at capacity', async () => {
+  const h = harness();
+  await h.emit('session_start');
+  await h.emit('input', { text: 'synthetic' });
+  await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
+  // A full outbox or adapter cap refuses new records; only delivery frees it.
+  h.flow.submit = () => { throw new Error('Tracing checkpoint capacity exceeded'); };
+  await h.emit('agent_before_settle', { outcome: 'completed' });
+  await h.emit('agent_settled', { aborted: false });
+  assert.equal(h.flushes, 1, 'agent_settled delivers after a refused capture');
+  await h.emit('session_shutdown');
+  assert.equal(h.flushes, 2, 'session_shutdown delivers after a refused capture');
+});

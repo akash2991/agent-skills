@@ -55,7 +55,7 @@ test('metadata-only registration preserves unrelated settings and suppresses leg
     const ours = claude.hooks[event].filter(entry => entry.hooks.some(hook => hook.command === CLAUDE_HOOK_COMMAND));
     assert.equal(ours.length, 1);
     // Only dispatch and skill calls need PreToolUse; other events see every call.
-    assert.equal(ours[0].matcher, event === 'PreToolUse' ? 'Agent|Task|Skill' : undefined, event);
+    assert.equal(ours[0].matcher, event === 'PreToolUse' ? '^(?:Agent|Task|Skill)$' : undefined, event);
   }
   assert.equal(json(path.join(f.target, '.agent-brain/tracing.json')).captureMode, 'metadata-only');
   assert.equal(fs.readFileSync(path.join(f.target, '.env'), 'utf8'), 'DO_NOT_COPY=SYNTHETIC_NOT_A_REAL_SECRET\n');

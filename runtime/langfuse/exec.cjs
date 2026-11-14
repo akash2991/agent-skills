@@ -165,8 +165,8 @@ if (require.main === module) {
     else {
       // Target checks touch the filesystem, so they run in a supervised child
       // that is killed with its group past the cap (see bootstrap-claude.cjs).
-      const { readInput, supervise, superviseMs } = require('./bootstrap-claude.cjs');
-      readInput().then(input => input === null ? null
+      const { readInput, supervise, superviseMs, ignorable } = require('./bootstrap-claude.cjs');
+      readInput().then(input => input === null || ignorable(input) ? null
         : supervise([__filename, '--claude-hook-child', process.argv[3], process.argv[4]], input, superviseMs()))
         .then(write, exit);
     }
