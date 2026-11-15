@@ -256,6 +256,10 @@ function createController(pi, options = {}) {
       }
     }
     const previousState = current();
+    // A new turn stops selecting the previous one before anything that can
+    // fail: if this turn's root is refused, its events are dropped rather
+    // than attributed to the previous turn.
+    active = undefined;
     if (previousState?.generation) closeGeneration(previousState, 'interrupted');
     const previous = flow.session(nativeId(ctx));
     let run = flow.begin({ nativeSessionId: nativeId(ctx), cwd: ctx.cwd,

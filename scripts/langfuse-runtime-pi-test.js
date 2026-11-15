@@ -299,7 +299,8 @@ test('a turn delivers even when capture is refused before its root exists', asyn
 // Grid: every flow operation this two-turn metadata-only session reaches
 // fails, on its first call or a later one. In every cell the fault is
 // actually injected, no error reaches Pi, each settled turn still attempts
-// delivery, and shutdown still attempts delivery and leaves no root behind.
+// delivery, nothing from the second turn is attributed to the first, and
+// shutdown still attempts delivery and leaves no root behind.
 // Not covered: resolve and readState, reached only on subagent dispatch and
 // full-content paths.
 for (const method of ['begin', 'submit', 'update', 'writeState', 'captureSkill', 'flush']) {
@@ -316,7 +317,9 @@ for (const method of ['begin', 'submit', 'update', 'writeState', 'captureSkill',
       const flush = h.flow.flush;
       h.flow.flush = async function (...args) { flushAttempts++; return flush.apply(this, args); };
       await h.emit('session_start');
+      const traces = [];
       for (let turn = 0; turn < 2; turn++) {
+        const firstRecord = h.records.length;
         await h.emit('input', { text: 'synthetic' });
         await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
         await h.emit('before_provider_request');
@@ -327,7 +330,11 @@ for (const method of ['begin', 'submit', 'update', 'writeState', 'captureSkill',
         const beforeSettle = flushAttempts;
         await h.emit('agent_settled', { aborted: false });
         assert.ok(flushAttempts > beforeSettle, `turn ${turn + 1} attempted delivery`);
+        traces.push(new Set(h.records.slice(firstRecord).map(record => record.traceId)));
       }
+      // A refused or failed second turn is dropped, never exported under the first.
+      const borrowed = [...traces[1]].filter(trace => traces[0].has(trace));
+      assert.deepEqual(borrowed, [], 'second-turn records carry the first turn\'s trace');
       assert.ok(calls >= from, `the ${method} fault was injected (${calls} calls)`);
       const beforeShutdown = flushAttempts;
       await h.emit('session_shutdown');
