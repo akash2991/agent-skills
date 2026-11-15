@@ -1,8 +1,10 @@
 'use strict';
 
 // Grid test for the Claude tracing hooks. Instead of one test per known bug,
-// every reachable combination of entrypoint × stall × kill × state is run,
-// and the owner's hard rules are checked in each cell:
+// a grid of entrypoint × stall × kill runs in normal state, and each
+// entrypoint also runs unstalled and unkilled with a full adapter cap and
+// with a network that never answers. The owner's hard rules are checked in
+// each cell:
 //   I1 a hook returns within its cap (when nothing kills it);
 //   I2 no process the hook started outlives it (the uploader only by its
 //      own lifetime);
@@ -10,7 +12,10 @@
 //   I4 a full state still asks for delivery, so it drains on its own;
 //   I5 no prompt or tool content reaches disk (metadata-only mode).
 // Not covered here: attribution between concurrent sessions (each cell is
-// one session); the ordering tests in the bounds suite cover that.
+// one session; the ordering tests in the bounds suite cover that); stalls or
+// kills combined with a full or slow-network state; and killing a hook after
+// its uploader started (the uploader is independent of the hook by design and
+// is bounded only by its own lifetime, which the slow-network cells check).
 // Stalls are finite. A long stall outlasts every cap, so a process that
 // wrongly survives is caught alive (I2). A short stall ends before the
 // event's own lifetime, so a process that wrongly survives its killed hook
@@ -58,6 +63,13 @@ if (dir && require('node:worker_threads').isMainThread) {
     : argv.some(arg => arg === '--agent-brain-hook-child' || arg === '--claude-hook-child') ? 'child' : 'entry';
   try { fs.writeFileSync(path.join(dir, 'pid-' + process.pid), role); } catch {}
   if (role === 'uploader' && process.env.GRID_NO_UPLOADER === '1') process.exit(0);
+  // A stall during startup, before the runtime's own code runs: a parent
+  // killed now must still be recognized as gone once the child resumes.
+  if ((process.env.GRID_STALL === 'startup-child' && role === 'child')
+    || (process.env.GRID_STALL === 'startup-event' && role === 'event')) {
+    try { fs.writeFileSync(path.join(dir, 'stalled'), 'startup'); } catch {}
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${SHORT_STALL_MS});
+  }
   if (role === 'child' && process.env.GRID_STALL === 'discovery') {
     const lstat = fs.lstatSync;
     fs.lstatSync = (target, ...rest) => {
@@ -83,6 +95,14 @@ function project(stall) {
     fs.mkdirSync(sub, { recursive: true });
   }
   fs.mkdirSync(stateDir, { mode: 0o700 });
+  // An isolated HOME whose pinned dependency cache is this runtime (its
+  // manifests are the pinned ones; CI installs its node_modules), so delivery
+  // really reaches the network instead of failing on a missing cache.
+  const home = path.join(dir, 'home');
+  const { dependencyCacheDir } = require('../runtime/langfuse/dependencies.cjs');
+  const cache = dependencyCacheDir({ home });
+  fs.mkdirSync(path.dirname(cache), { recursive: true });
+  fs.symlinkSync(runtime, cache);
   fs.symlinkSync(runtime, path.join(proj, 'runtime/langfuse'));
   fs.writeFileSync(path.join(proj, '.agent-brain/tracing.json'),
     JSON.stringify({ schema: 1, enabled: true, captureMode: 'metadata-only', runtime: 'runtime/langfuse' }));
@@ -91,7 +111,7 @@ function project(stall) {
   // survivor of a short stall resumes at once.
   const stallGit = `[ -e "$GRID_PIDS/stalled" ] && exit 128\ntrap '' TERM\necho git > "$GRID_PIDS/pid-$$"\ntouch "$GRID_PIDS/stalled"\nsleep ${seconds}\nexit 0`;
   fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh\n${seconds ? stallGit : 'exit 128'}\n`, { mode: 0o755 });
-  return { dir, proj, bin, pids, stateDir };
+  return { dir, proj, bin, pids, stateDir, home };
 }
 
 const ENTRYPOINTS = {
@@ -137,10 +157,10 @@ async function runCell({ entry, stall = 'none', kill = 'none', state = 'normal' 
   // The cap is under test only in unkilled normal cells. Elsewhere a generous
   // cap lets the event reach its stall, or deliver, even on a loaded machine.
   const inline = state === 'normal' && kill === 'none' ? INLINE_MS : 5000;
-  let server;
+  let server, connections = 0;
   const env = { ...process.env, NODE_OPTIONS: `--require ${tracker}`, GRID_PIDS: cell.pids, GRID_STALL: stall,
     GRID_NO_UPLOADER: state === 'normal' ? '1' : '0', PATH: `${cell.bin}${path.delimiter}${process.env.PATH}`,
-    BRAIN_TRACE_STATE_DIR: cell.stateDir, BRAIN_TRACE_HOOK_INLINE_MS: String(inline),
+    HOME: cell.home, BRAIN_TRACE_STATE_DIR: cell.stateDir, BRAIN_TRACE_HOOK_INLINE_MS: String(inline),
     BRAIN_TRACE_HOOK_LIFETIME_MS: String(LIFETIME_MS),
     LANGFUSE_PUBLIC_KEY: 'pk-lf-synthetic', LANGFUSE_SECRET_KEY: 'sk-lf-synthetic', LANGFUSE_BASE_URL: 'https://127.0.0.1:9' };
   delete env.BRAIN_TRACE_HOOK_DEADLINE;
@@ -158,7 +178,7 @@ async function runCell({ entry, stall = 'none', kill = 'none', state = 'normal' 
   }
   if (state === 'slow-network') {
     // Accepts TLS connections and never answers: every upload hangs.
-    server = net.createServer(socket => { socket.on('error', () => {}); });
+    server = net.createServer(socket => { connections++; socket.on('error', () => {}); });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     env.LANGFUSE_BASE_URL = `https://127.0.0.1:${server.address().port}`;
   }
@@ -211,6 +231,9 @@ async function runCell({ entry, stall = 'none', kill = 'none', state = 'normal' 
       const uploaders = () => tracked(cell).filter(p => p.role === 'uploader' && alive(p.pid));
       assert.ok(await until(() => uploaders().length === 0, LIFETIME_MS + GRACE_MS),
         `I2: the uploader outlived its lifetime: ${JSON.stringify(uploaders())}`);
+      // The lifetime bound only means something if delivery reached the
+      // stalled network (it needs runtime/langfuse/node_modules installed).
+      if (state === 'slow-network') assert.ok(connections > 0, 'delivery never reached the network');
     }
     if (state === 'full') {
       // I4: the refused capture still asked for delivery (the uploader is checked above).
@@ -241,7 +264,10 @@ for (const entry of Object.keys(ENTRYPOINTS)) {
     for (const kill of ['none', 'SIGTERM', 'SIGKILL']) cells.push({ entry, stall, kill });
   }
   // A short event stall ends inside the cap, so only the killed rows differ.
-  for (const kill of ['SIGTERM', 'SIGKILL']) cells.push({ entry, stall: 'event-short', kill });
+  // Startup stalls hold a child before any runtime code runs; the hook is
+  // killed meanwhile, and the child must notice once it resumes.
+  const shortStalls = ['event-short', 'startup-event', ...(ENTRYPOINTS[entry].supervised ? ['startup-child'] : [])];
+  for (const stall of shortStalls) for (const kill of ['SIGTERM', 'SIGKILL']) cells.push({ entry, stall, kill });
   cells.push({ entry, state: 'full' });
   cells.push({ entry, state: 'slow-network' });
 }

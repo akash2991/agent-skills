@@ -837,7 +837,8 @@ const killGroup = pid => { try { process.kill(-pid, 'SIGKILL'); } catch { /* alr
 function spawnWorkProcess(mode, receivedAt, lifetimeMs, extra = [], env = process.env) {
   return require('node:child_process').spawn(process.execPath,
     [__filename, DETACHED, mode, String(receivedAt), String(Date.now() + lifetimeMs), ...extra],
-    { detached: true, env, stdio: ['pipe', mode === 'event' ? 'pipe' : 'ignore', 'ignore'] });
+    { detached: true, env: { ...env, BRAIN_TRACE_HOOK_PARENT: String(process.pid) },
+      stdio: ['pipe', mode === 'event' ? 'pipe' : 'ignore', 'ignore'] });
 }
 
 // The hook only spawns, pipes and waits: it performs no synchronous state I/O,
@@ -1012,8 +1013,11 @@ async function workMain(mode, receivedAt, endAt, acknowledgeSession) {
   // Event work belongs to the hook that spawned it. If that hook is killed
   // (a supervisor's signal or cap), its cleanup never runs: end with it. The
   // uploader is meant to outlive its parent, so only event work watches.
+  // The spawner passes its pid: a parent killed before this process started
+  // must not be mistaken for its replacement (init or a subreaper).
   if (mode === 'event') {
-    const parent = process.ppid;
+    const parent = Number(process.env.BRAIN_TRACE_HOOK_PARENT) || process.ppid;
+    if (process.ppid !== parent) endGroup();
     setInterval(() => { if (process.ppid !== parent) endGroup(); }, 50).unref();
   }
   let input;

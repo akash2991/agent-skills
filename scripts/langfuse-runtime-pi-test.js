@@ -296,11 +296,13 @@ test('a turn delivers even when capture is refused before its root exists', asyn
   assert.equal(h.flushes, 1, 'agent_settled still delivers what is queued');
 });
 
-// Grid: every flow operation the adapter uses fails, on its first call or a
-// later one, across a whole session. In every cell no error reaches Pi, a
-// settled turn still delivers (unless delivery itself is what fails), and
-// shutdown still delivers and cleans up.
-for (const method of ['begin', 'submit', 'update', 'resolve', 'readState', 'writeState', 'captureSkill', 'flush']) {
+// Grid: every flow operation this two-turn metadata-only session reaches
+// fails, on its first call or a later one. In every cell the fault is
+// actually injected, no error reaches Pi, each settled turn still attempts
+// delivery, and shutdown still attempts delivery and leaves no root behind.
+// Not covered: resolve and readState, reached only on subagent dispatch and
+// full-content paths.
+for (const method of ['begin', 'submit', 'update', 'writeState', 'captureSkill', 'flush']) {
   for (const from of [1, 2]) {
     test(`Pi grid: ${method} fails from call ${from}; the session still delivers and never throws`, async () => {
       const h = harness();
@@ -322,12 +324,15 @@ for (const method of ['begin', 'submit', 'update', 'resolve', 'readState', 'writ
         await h.emit('tool_execution_start', { toolCallId: `read-${turn}`, toolName: 'read', args: { path: '/synthetic' } });
         await h.emit('tool_execution_end', { toolCallId: `read-${turn}`, toolName: 'read', result: { content: [] }, isError: false });
         await h.emit('agent_before_settle', { outcome: 'completed' });
+        const beforeSettle = flushAttempts;
         await h.emit('agent_settled', { aborted: false });
-        assert.ok(flushAttempts >= turn + 1, `turn ${turn + 1} attempted delivery (${flushAttempts})`);
+        assert.ok(flushAttempts > beforeSettle, `turn ${turn + 1} attempted delivery`);
       }
+      assert.ok(calls >= from, `the ${method} fault was injected (${calls} calls)`);
       const beforeShutdown = flushAttempts;
       await h.emit('session_shutdown');
       assert.ok(flushAttempts > beforeShutdown, 'shutdown attempted delivery');
+      assert.equal(h.controller.getRoots().size, 0, 'shutdown left no root behind');
     });
   }
 }

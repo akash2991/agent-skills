@@ -79,7 +79,8 @@ function supervise(args, input, ms) {
     try {
       // The event's own work process runs in another group, so pass the
       // deadline down: no event work may outlive this supervisor.
-      const env = { ...process.env, BRAIN_TRACE_HOOK_DEADLINE: String(Date.now() + ms - 100) };
+      const env = { ...process.env, BRAIN_TRACE_HOOK_DEADLINE: String(Date.now() + ms - 100),
+        BRAIN_TRACE_HOOK_PARENT: String(process.pid) };
       child = require('node:child_process').spawn(process.execPath, args, { detached: true, env, stdio: ['pipe', 'pipe', 'ignore'] });
       child.once('error', finish);
       child.stdout.on('data', chunk => chunks.push(chunk));
@@ -94,6 +95,10 @@ function supervise(args, input, ms) {
 // watchdog thread keeps running while the main thread is blocked: it kills
 // this child's whole group once the supervisor is gone or the deadline passed.
 function watchdog(env = process.env) {
+  // The supervisor passes its pid: one killed before this child started must
+  // not be mistaken for its replacement (init or a subreaper).
+  const parent = Number(env.BRAIN_TRACE_HOOK_PARENT) || process.ppid;
+  if (process.ppid !== parent) { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.kill(process.pid, 'SIGKILL'); } }
   const code = `const { parent, deadline } = require('node:worker_threads').workerData;
     setInterval(() => {
       if (process.ppid === parent && !(Date.now() >= deadline)) return;
@@ -101,7 +106,7 @@ function watchdog(env = process.env) {
     }, 50);`;
   try {
     new (require('node:worker_threads').Worker)(code, { eval: true,
-      workerData: { parent: process.ppid, deadline: Number(env.BRAIN_TRACE_HOOK_DEADLINE) } }).unref();
+      workerData: { parent, deadline: Number(env.BRAIN_TRACE_HOOK_DEADLINE) } }).unref();
   } catch { /* no watchdog: the supervisor's own kill still applies */ }
 }
 const disabled = env => ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']
