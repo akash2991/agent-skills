@@ -295,3 +295,39 @@ test('a turn delivers even when capture is refused before its root exists', asyn
   assert.equal(h.runs, 0, 'no root was created');
   assert.equal(h.flushes, 1, 'agent_settled still delivers what is queued');
 });
+
+// Grid: every flow operation the adapter uses fails, on its first call or a
+// later one, across a whole session. In every cell no error reaches Pi, a
+// settled turn still delivers (unless delivery itself is what fails), and
+// shutdown still delivers and cleans up.
+for (const method of ['begin', 'submit', 'update', 'resolve', 'readState', 'writeState', 'captureSkill', 'flush']) {
+  for (const from of [1, 2]) {
+    test(`Pi grid: ${method} fails from call ${from}; the session still delivers and never throws`, async () => {
+      const h = harness();
+      const original = h.flow[method];
+      let calls = 0;
+      h.flow[method] = function (...args) {
+        if (++calls >= from) throw new Error('Tracing checkpoint capacity exceeded');
+        return original.apply(this, args);
+      };
+      let flushAttempts = 0;
+      const flush = h.flow.flush;
+      h.flow.flush = async function (...args) { flushAttempts++; return flush.apply(this, args); };
+      await h.emit('session_start');
+      for (let turn = 0; turn < 2; turn++) {
+        await h.emit('input', { text: 'synthetic' });
+        await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
+        await h.emit('before_provider_request');
+        await h.emit('message_end', { message: { role: 'assistant', model: 'm', provider: 'p', content: [], usage: { input: 1, output: 1 }, stopReason: 'toolUse' } });
+        await h.emit('tool_execution_start', { toolCallId: `read-${turn}`, toolName: 'read', args: { path: '/synthetic' } });
+        await h.emit('tool_execution_end', { toolCallId: `read-${turn}`, toolName: 'read', result: { content: [] }, isError: false });
+        await h.emit('agent_before_settle', { outcome: 'completed' });
+        await h.emit('agent_settled', { aborted: false });
+        assert.ok(flushAttempts >= turn + 1, `turn ${turn + 1} attempted delivery (${flushAttempts})`);
+      }
+      const beforeShutdown = flushAttempts;
+      await h.emit('session_shutdown');
+      assert.ok(flushAttempts > beforeShutdown, 'shutdown attempted delivery');
+    });
+  }
+}
