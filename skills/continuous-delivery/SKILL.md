@@ -16,19 +16,26 @@ How any requirement is planned and shipped: `main` is always releasable, the app
 - You decide what to build first.
 - You wonder whether to ship behind a flag.
 - The user gives you a large scope, even if they just say "build feature X".
-- Cutting a release: semver and the changelog (L1).
+- Cutting a release of a surface (backend, web, mobile app): its semver and the changelog (L1).
 - NOT for the mechanics of commits, branches, PR size, and merge (`git-workflow-and-versioning`); the agent's environment and how parallel work is set up (`development-setup`); replacing a flow that is in use (`deprecation-and-migration`).
 
 ## Rules
 
 | ID | Rule |
 | --- | --- |
-| L1 | **Semver, and a changelog.** A changelog is maintained globally and per service; every merged task adds a line; every release publishes a changelog entry that lists its tickets. |
+| L1 | **Semver per surface, and a changelog line for every change.** Backend, web, and the mobile app are each versioned on their own and tagged `<surface>-vX.Y.Z`. A changelog is maintained globally and per service; every merged task adds its line, with its ticket, in the same PR. A release of one surface bumps its version, promotes its Unreleased lines, and tags it. The layout is in "Versions and the changelog" below. |
 | L2 | **Every merged change is deployable; `main` is always releasable:** CI is green, migrations are backward compatible for one release, and anything incomplete is behind a flag that defaults off. A change that cannot be deployed on its own is not ready to merge. |
 | L3 | **A progressively usable product: the app works at every point.** Create one API, test it, commit it, then the next; never make the product unusable to make progress, however large the scope. Every delivery sprint (a Linear cycle) lands a working product and a demonstrable usable increment toward the full scope. Individual contract, schema, or documentation tickets may be prerequisites, but a cycle of only isolated layers or documents is not a delivered product increment. "Localhost keeps working after every commit" is an explicit acceptance criterion on every task, because historically it was not met. |
 | L4 | **Feature flags, and code without an entry point, for what is not ready.** Flags default off. |
 | L5 | **An MVP ships first for any requirement, however big; the original scope continues after.** Discovered work is classified before it enters scope; only MVP requirements and MVP blockers enter automatically. |
 | L6 | **Where slicing is technically impossible (some migrations), say so on the ticket.** The user may ask for one-shot development, the whole change in one pass with one round of testing, when speed is required: only on an explicit user instruction, recorded in `docs/LEARNINGS.md` and noted on the ticket. |
+
+## Versions and the changelog (L1)
+
+- **Surfaces.** `backend`, `web`, and `mobile`, each with its own `MAJOR.MINOR.PATCH`. Backend modules share the backend version (S2); shared packages (`packages/*`) are not surfaces. A project without one of the three has no section and no tag for it. The tag always carries the prefix, even with one surface, so adding a second needs no renaming.
+- **Global changelog**, `docs/CHANGELOG.md` (`templates/CHANGELOG.md`): one section per surface plus `Project`, each with its own `Unreleased`, lines grouped Added / Changed / Fixed / Deprecated / Removed / Security. A change goes under every surface whose users or clients see its effect; a shared-package change goes under each surface that ships the effect. A change that no surface's users see (README, CI, `infra/`, docs) goes under `Project`, which is never versioned or released.
+- **Service changelogs.** Each backend module keeps `<module>/docs/CHANGELOG.md` from its first commit, holding only its own lines under the backend's `Unreleased` and version headings. `brain-git-check.js` requires an added line in the global changelog, in the nearest changelog above each changed file, and in any changelog the PR touches; it does not notice a module that has none.
+- **Release of a surface.** Pick the bump from that surface's `Unreleased` lines (what a bump means, tag mechanics, and mobile build numbers: `git-workflow-and-versioning`). Rename its `Unreleased` to `X.Y.Z - YYYY-MM-DD` in the global changelog and in each backend module's changelog for a backend release, open a new empty `Unreleased` above it, tag, and publish.
 
 ## Planning recipe for a large scope
 
@@ -36,7 +43,7 @@ How any requirement is planned and shipped: `main` is always releasable, the app
 2. Cut the MVP; everything else stays on the ticket as later scope (L5).
 3. Order the slices so each leaves the app working; put unfinished paths behind a flag or leave them without an entry point (L3, L4).
 4. One API at a time: implement, test, commit, PR (L3).
-5. Bump semver and add the changelog line on merge (L1).
+5. Add the changelog line under Unreleased in each PR; bump the surface's semver when its release is cut (L1).
 6. If a slice cannot keep the app working, say so on the ticket; if the user asks for one-shot, record the override in `docs/LEARNINGS.md` (L6).
 
 ## Interaction with other skills
@@ -71,5 +78,5 @@ Before a slice merges, confirm:
 - [ ] At delivery-cycle close, the planned usable increment has been exercised end to end; completed prerequisites alone are not reported as a product outcome (L3).
 - [ ] CI is green; migrations are backward compatible for one release; incomplete paths are behind a flag defaulting off or have no entry point (L2, L4).
 - [ ] The MVP is cut and later scope stays on the ticket (L5).
-- [ ] Semver bumped and changelog line added on merge (L1).
+- [ ] Changelog line added in this PR under each affected surface's `Unreleased`, or `Project`'s when none is affected; the version is bumped when the surface's release is cut (L1).
 - [ ] Any slice that cannot keep the app working is stated on the ticket; any one-shot override is recorded in `docs/LEARNINGS.md` (L6).
