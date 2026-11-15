@@ -296,50 +296,79 @@ test('a turn delivers even when capture is refused before its root exists', asyn
   assert.equal(h.flushes, 1, 'agent_settled still delivers what is queued');
 });
 
-// Grid: every flow operation this two-turn metadata-only session reaches
-// fails, on its first call or a later one. In every cell the fault is
-// actually injected, no error reaches Pi, each settled turn still attempts
-// delivery, nothing from the second turn is attributed to the first, and
-// shutdown still attempts delivery and leaves no root behind.
-// Not covered: resolve and readState, reached only on subagent dispatch and
-// full-content paths.
-for (const method of ['begin', 'submit', 'update', 'writeState', 'captureSkill', 'flush']) {
-  for (const from of [1, 2]) {
-    test(`Pi grid: ${method} fails from call ${from}; the session still delivers and never throws`, async () => {
-      const h = harness();
-      const original = h.flow[method];
-      let calls = 0;
-      h.flow[method] = function (...args) {
-        if (++calls >= from) throw new Error('Tracing checkpoint capacity exceeded');
-        return original.apply(this, args);
-      };
-      let flushAttempts = 0;
-      const flush = h.flow.flush;
-      h.flow.flush = async function (...args) { flushAttempts++; return flush.apply(this, args); };
-      await h.emit('session_start');
-      const traces = [];
-      for (let turn = 0; turn < 2; turn++) {
-        const firstRecord = h.records.length;
-        await h.emit('input', { text: 'synthetic' });
-        await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
-        await h.emit('before_provider_request');
-        await h.emit('message_end', { message: { role: 'assistant', model: 'm', provider: 'p', content: [], usage: { input: 1, output: 1 }, stopReason: 'toolUse' } });
-        await h.emit('tool_execution_start', { toolCallId: `read-${turn}`, toolName: 'read', args: { path: '/synthetic' } });
-        await h.emit('tool_execution_end', { toolCallId: `read-${turn}`, toolName: 'read', result: { content: [] }, isError: false });
-        await h.emit('agent_before_settle', { outcome: 'completed' });
-        const beforeSettle = flushAttempts;
-        await h.emit('agent_settled', { aborted: false });
-        assert.ok(flushAttempts > beforeSettle, `turn ${turn + 1} attempted delivery`);
-        traces.push(new Set(h.records.slice(firstRecord).map(record => record.traceId)));
-      }
-      // A refused or failed second turn is dropped, never exported under the first.
-      const borrowed = [...traces[1]].filter(trace => traces[0].has(trace));
-      assert.deepEqual(borrowed, [], 'second-turn records carry the first turn\'s trace');
-      assert.ok(calls >= from, `the ${method} fault was injected (${calls} calls)`);
-      const beforeShutdown = flushAttempts;
-      await h.emit('session_shutdown');
-      assert.ok(flushAttempts > beforeShutdown, 'shutdown attempted delivery');
-      assert.equal(h.controller.getRoots().size, 0, 'shutdown left no root behind');
-    });
+// Grid: turn A (which dispatches a child), turn B, then the continuation of
+// A when its child's result arrives. Every flow operation this session
+// reaches fails from its Nth call on, or in a burst of 1 to 6 calls from the
+// Nth (transient failures, then recovery: a burst can span the end of one turn
+// and the start of the next, and where it ends decides what recovers). In every cell: the fault was
+// injected; no error reaches Pi; each settled turn attempts delivery; no
+// record of B shares a trace with a record of A or of A's continuation (each
+// phase has its own token count and tool, so ownership is checkable);
+// shutdown attempts delivery and leaves no root behind.
+// Every starting call is tried. Not covered: full-content capture.
+const PHASES = { A: { usage: 101, tool: 'read' }, B: { usage: 202, tool: 'grep' }, C: { usage: 303, tool: 'ls' } };
+async function piPhase(h, phase, start) {
+  await start();
+  await h.emit('before_provider_request');
+  await h.emit('message_end', { message: { role: 'assistant', model: 'm', provider: 'p', content: [],
+    usage: { input: PHASES[phase].usage, output: 1 }, stopReason: 'toolUse' } });
+  await h.emit('tool_execution_start', { toolCallId: `${phase}-1`, toolName: PHASES[phase].tool, args: { path: '/synthetic' } });
+  await h.emit('tool_execution_end', { toolCallId: `${phase}-1`, toolName: PHASES[phase].tool, result: { content: [] }, isError: false });
+}
+const phaseOf = record => Object.keys(PHASES).find(phase => record.type === 'GENERATION'
+  ? record.usage?.input === PHASES[phase].usage : record.type === 'TOOL' && record.toolName === PHASES[phase].tool);
+
+// How often this session calls each operation when nothing fails. Cells only
+// fail calls that happen, and assert the injection, so this table stays true.
+const PI_CALLS = { begin: 2, submit: 11, update: 3, resolve: 1, readState: 1, writeState: 8, captureSkill: 1, flush: 3 };
+for (const [method, reached] of Object.entries(PI_CALLS)) {
+  for (const kind of ['from', 'burst1', 'burst2', 'burst3', 'burst4', 'burst5', 'burst6']) {
+    for (let n = 1; n <= reached; n++) {
+      test(`Pi grid: ${method} fails ${kind} call ${n}; delivery continues and nothing is misattributed`, async () => {
+        const h = harness();
+        const original = h.flow[method];
+        let calls = 0;
+        h.flow[method] = function (...args) {
+          calls++;
+          const failing = kind === 'from' ? calls >= n : calls >= n && calls < n + Number(kind.slice(5));
+          if (failing) throw new Error('Tracing checkpoint capacity exceeded');
+          return original.apply(this, args);
+        };
+        let flushAttempts = 0;
+        const flush = h.flow.flush;
+        h.flow.flush = async function (...args) { flushAttempts++; return flush.apply(this, args); };
+        const settle = async label => {
+          const before = flushAttempts;
+          await h.emit('agent_before_settle', { outcome: 'completed' });
+          await h.emit('agent_settled', { aborted: false });
+          assert.ok(flushAttempts > before, `${label} attempted delivery`);
+        };
+        const details = { id: 'launch-1', name: 'grid-child', agent: 'backend-engineer', sessionFile: '/synthetic/grid-child.jsonl', status: 'started' };
+        await h.emit('session_start');
+        await piPhase(h, 'A', async () => {
+          await h.emit('input', { text: 'synthetic' });
+          await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
+        });
+        await h.emit('tool_execution_start', { toolName: 'subagent', toolCallId: 'dispatch-1', args: { task: 'synthetic' } });
+        await h.emit('tool_execution_end', { toolName: 'subagent', toolCallId: 'dispatch-1', isError: false, result: { details } });
+        await settle('turn A');
+        await piPhase(h, 'B', async () => {
+          await h.emit('input', { text: 'synthetic' });
+          await h.emit('before_agent_start', { messageType: 'user', prompt: 'synthetic' });
+        });
+        await settle('turn B');
+        await piPhase(h, 'C', () => h.emit('before_agent_start', { messageType: 'custom', message: { customType: 'subagent_result', details } }));
+        await settle('the continuation of A');
+        assert.ok(calls >= n, `the ${method} fault was injected (${calls} calls)`);
+        const traces = { A: new Set(), B: new Set(), C: new Set() };
+        for (const record of h.records) { const phase = phaseOf(record); if (phase) traces[phase].add(record.traceId); }
+        const borrowed = [...traces.B].filter(trace => traces.A.has(trace) || traces.C.has(trace));
+        assert.deepEqual(borrowed, [], 'a record of turn B shares a trace with turn A or its continuation');
+        const before = flushAttempts;
+        await h.emit('session_shutdown');
+        assert.ok(flushAttempts > before, 'shutdown attempted delivery');
+        assert.equal(h.controller.getRoots().size, 0, 'shutdown left no root behind');
+      });
+    }
   }
 }

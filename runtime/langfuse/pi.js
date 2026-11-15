@@ -233,6 +233,13 @@ function createController(pi, options = {}) {
   };
 
   function begin(ctx, event = {}) {
+    // A new turn or a continuation stops selecting the previous turn, and its
+    // pending request, before anything that can fail: if it is refused, its
+    // events are dropped rather than attributed to the previous turn. Only
+    // success selects a root again.
+    const previousState = current();
+    active = undefined;
+    requests.delete(nativeId(ctx));
     ensure(ctx);
     if (event.messageType === 'custom' || event.message?.customType === 'subagent_result') {
       const details = event.message?.details;
@@ -255,11 +262,6 @@ function createController(pi, options = {}) {
         return state;
       }
     }
-    const previousState = current();
-    // A new turn stops selecting the previous one before anything that can
-    // fail: if this turn's root is refused, its events are dropped rather
-    // than attributed to the previous turn.
-    active = undefined;
     if (previousState?.generation) closeGeneration(previousState, 'interrupted');
     const previous = flow.session(nativeId(ctx));
     let run = flow.begin({ nativeSessionId: nativeId(ctx), cwd: ctx.cwd,
@@ -355,6 +357,9 @@ function createController(pi, options = {}) {
     // Pi's agent loop serializes requests then message_end. There is no native
     // request ID: bind the pending request to its session AT this boundary,
     // never borrow an active root when a completion/tool arrives later.
+    // A new request never inherits an earlier request's owner, even when this
+    // boundary is refused or fails below.
+    requests.delete(nativeId(ctx));
     const state = current();
     if (!state || state.run.nativeSessionId !== nativeId(ctx)) return;
     if (state.generation) closeGeneration(state, 'interrupted');
