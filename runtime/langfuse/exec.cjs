@@ -100,8 +100,10 @@ function claudeSettings(sessionId, cwd) {
   // command string. Native user arguments never pass through a shell.
   const command = [process.execPath, __filename, '--claude-hook', sessionId, cwd].map(quote).join(' ');
   const hooks = {};
-  for (const event of require('./claude.cjs').HOOK_EVENTS) {
-    hooks[event] = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
+  const { HOOK_EVENTS, HOOK_MATCHERS } = require('./claude.cjs');
+  for (const event of HOOK_EVENTS) {
+    hooks[event] = [{ ...(HOOK_MATCHERS[event] ? { matcher: HOOK_MATCHERS[event] } : {}),
+      hooks: [{ type: 'command', command, timeout: 10 }] }];
   }
   return { hooks, enabledPlugins: { 'langfuse-observability@langfuse-observability': false } };
 }
@@ -155,11 +157,22 @@ function exitWithResult(result) {
   else process.exitCode = result.code ?? 1;
 }
 if (require.main === module) {
-  if (process.argv[2] === '--claude-hook') {
-    claudeHook(process.argv[3], process.argv[4]).then(output => {
-      if (output) process.stdout.write(JSON.stringify(output));
-      process.exit(0);
-    }, () => process.exit(0));
+  if (process.argv[2] === '--claude-hook' || process.argv[2] === '--claude-hook-child') {
+    const exit = () => process.exit(0);
+    setTimeout(exit, 7500).unref(); // Backstop under Claude's native hook timeout.
+    const write = output => { if (output) process.stdout.write(JSON.stringify(output), exit); else exit(); };
+    if (process.argv[2] === '--claude-hook-child') {
+      require('./bootstrap-claude.cjs').watchdog();
+      claudeHook(process.argv[3], process.argv[4]).then(write, exit);
+    }
+    else {
+      // Target checks touch the filesystem, so they run in a supervised child
+      // that is killed with its group past the cap (see bootstrap-claude.cjs).
+      const { readInput, supervise, superviseMs, ignorable } = require('./bootstrap-claude.cjs');
+      readInput().then(input => input === null || ignorable(input) ? null
+        : supervise([__filename, '--claude-hook-child', process.argv[3], process.argv[4]], input, superviseMs()))
+        .then(write, exit);
+    }
   } else {
     exec(process.argv.slice(2)).then(exitWithResult).catch(() => { console.error('Traced exec refused or unavailable; no context was guessed.'); process.exitCode = 1; });
   }

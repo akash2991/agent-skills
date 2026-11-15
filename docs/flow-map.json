@@ -953,6 +953,32 @@
           "O6 O7"
         ]
       ]
+    },
+    {
+      "id": "claude-tracing",
+      "name": "Trace a Claude Code session",
+      "area": "Infrastructure",
+      "summary": "Each hook event is processed in native order by a capped work process; tracing may drop data but never slows or blocks the session.",
+      "steps": [
+        [
+          "Hook entrypoint runs discovery in a child process group, kills it past the cap, and passes its deadline down",
+          "det",
+          "runtime/langfuse/bootstrap-claude.cjs",
+          null
+        ],
+        [
+          "Event work process applies the event and reads a budgeted transcript slice; it ends by the passed deadline with its process group",
+          "det",
+          "runtime/langfuse/claude.cjs",
+          null
+        ],
+        [
+          "One background uploader delivers captured records to Langfuse; its lifetime cap kills its process group",
+          "det",
+          "runtime/langfuse/claude.cjs",
+          null
+        ]
+      ]
     }
   ]
 }

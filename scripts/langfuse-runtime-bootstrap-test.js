@@ -54,7 +54,7 @@ test('actual Claude and Pi old-worktree bootstraps honor declarations from root 
     if (!globalThis[Symbol.for('agent-brain.observability.context-tool-proxy')]) pi.registerTool({name:'brain_context'});
     return { start: async () => { globalThis.runtimeStarts++; } };
   };`);
-  fs.writeFileSync(path.join(path.dirname(entry), 'claude.cjs'), 'exports.handleClaudeHook = async () => ({loaded:true});');
+  fs.writeFileSync(path.join(path.dirname(entry), 'claude.cjs'), 'exports.runClaudeHook = async () => ({loaded:true});');
   const subdir = path.join(child, 'nested/deeper'); fs.mkdirSync(subdir, { recursive: true });
   const marker = path.join(child, '.agent-brain/tracing.json'); fs.mkdirSync(path.dirname(marker));
   const piScript = `
@@ -211,10 +211,15 @@ test('Pi bootstrap never evaluates project code under either global kill switch 
 });
 
 test('Claude bootstrap is gated, bounded and honors common kill switch without invoking adapter', async () => {
-  let calls = 0;
-  const options = { findRuntime: () => '/synthetic/runtime/pi.js', adapter: { handleClaudeHook: async () => { calls++; return {}; } }, env: {} };
+  let calls = 0, legacy = 0;
+  const options = { findRuntime: () => '/synthetic/runtime/pi.js', adapter: { runClaudeHook: async (_payload, opts) => {
+    calls++; assert.equal(opts.acknowledgeSession, true); return {}; } }, env: {} };
   await claudeBootstrap(JSON.stringify({ cwd: '/synthetic', hook_event_name: 'Stop' }), options);
   assert.equal(calls, 1);
+  // An older runtime has no bound; its Claude tracing is dropped, never run.
+  assert.equal(await claudeBootstrap(JSON.stringify({ cwd: '/synthetic', hook_event_name: 'Stop' }),
+    { ...options, adapter: { handleClaudeHook: async () => { legacy++; return { loaded: true }; } } }), null);
+  assert.equal(legacy, 0);
   await claudeBootstrap(JSON.stringify({ cwd: '/synthetic' }), { ...options, env: { BRAIN_TRACING_ENABLED: 'false' } });
   await claudeBootstrap(JSON.stringify({ cwd: '/synthetic' }), { ...options, findRuntime: () => null });
   assert.equal(calls, 1);

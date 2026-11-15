@@ -233,6 +233,13 @@ function createController(pi, options = {}) {
   };
 
   function begin(ctx, event = {}) {
+    // A new turn or a continuation stops selecting the previous turn, and its
+    // pending request, before anything that can fail: if it is refused, its
+    // events are dropped rather than attributed to the previous turn. Only
+    // success selects a root again.
+    const previousState = current();
+    active = undefined;
+    requests.delete(nativeId(ctx));
     ensure(ctx);
     if (event.messageType === 'custom' || event.message?.customType === 'subagent_result') {
       const details = event.message?.details;
@@ -255,7 +262,6 @@ function createController(pi, options = {}) {
         return state;
       }
     }
-    const previousState = current();
     if (previousState?.generation) closeGeneration(previousState, 'interrupted');
     const previous = flow.session(nativeId(ctx));
     let run = flow.begin({ nativeSessionId: nativeId(ctx), cwd: ctx.cwd,
@@ -351,6 +357,9 @@ function createController(pi, options = {}) {
     // Pi's agent loop serializes requests then message_end. There is no native
     // request ID: bind the pending request to its session AT this boundary,
     // never borrow an active root when a completion/tool arrives later.
+    // A new request never inherits an earlier request's owner, even when this
+    // boundary is refused or fails below.
+    requests.delete(nativeId(ctx));
     const state = current();
     if (!state || state.run.nativeSessionId !== nativeId(ctx)) return;
     if (state.generation) closeGeneration(state, 'interrupted');
@@ -517,13 +526,22 @@ function createController(pi, options = {}) {
   observe('thinking_level_select', (event, ctx) => { const state = current(); if (state) state.run = flow.update(state.run, { requestedEffort: event.level || event.thinkingLevel || effort(ctx) }); });
   observe('agent_before_settle', event => { const state = current(); if (state && ['completed', 'aborted', 'error'].includes(event.outcome)) state.outcome = event.outcome; });
   observe('agent_settled', async event => {
-    const state = current(); if (!state) return;
+    const state = current();
+    // No root: capture was refused before one existed (for example at the
+    // adapter cap). Still deliver what is queued, so the state can drain.
+    if (!state) { if (flow) await flow.flush({ timeoutMs: 2500 }); return; }
     if (event.aborted) state.outcome = 'aborted';
-    closeGeneration(state, state.outcome === 'completed' ? 'interrupted' : state.outcome);
-    if (!state.pending.size && ['completed', 'aborted', 'error'].includes(state.outcome)) state.endedAt = clock();
-    submitRoot(state, state.pending.size && !event.aborted ? 'unknown' : state.outcome);
-    retryDispatches(state.run.nativeSessionId);
-    const delivery = await flow.flush({ timeoutMs: 2500 });
+    // Deliver even when capture fails: a full outbox or adapter cap refuses
+    // new records, and only delivery frees that space.
+    let captureError, delivery;
+    try {
+      closeGeneration(state, state.outcome === 'completed' ? 'interrupted' : state.outcome);
+      if (!state.pending.size && ['completed', 'aborted', 'error'].includes(state.outcome)) state.endedAt = clock();
+      submitRoot(state, state.pending.size && !event.aborted ? 'unknown' : state.outcome);
+      retryDispatches(state.run.nativeSessionId);
+    } catch (error) { captureError = error; }
+    finally { delivery = await flow.flush({ timeoutMs: 2500 }); }
+    if (captureError) throw captureError;
     setStatus(state.pending.size ? `brain tracing: ${mode()}; awaiting child`
       : delivery?.accepted > 0 ? `brain tracing: ${mode()}; transport accepted (not ingestion verified)`
         : ['state_unavailable', 'invalid_outbox', 'failure'].includes(delivery?.status) ? `brain tracing: ${mode()}; telemetry unavailable`
@@ -553,10 +571,13 @@ function createController(pi, options = {}) {
         closeGeneration(state, 'interrupted');
         submitRoot(state, state.pending.size || !['completed', 'error', 'aborted'].includes(state.outcome) ? 'interrupted' : state.outcome);
       }
-      if (flow) await flow.flush({ timeoutMs: 2500 });
     } catch {
       try { flow?.writeState('health', { ...(flow.readState('health') || {}), captureFailureObserved: true }); } catch {}
-    } finally { cleanup(); }
+    } finally {
+      // Deliver even when capture failed, as in agent_settled.
+      try { if (flow) await flow.flush({ timeoutMs: 2500 }); } catch {}
+      cleanup();
+    }
   });
 
   function cleanup() {

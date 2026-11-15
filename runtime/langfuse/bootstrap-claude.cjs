@@ -18,11 +18,11 @@ async function main(input, options = {}) {
   if (!entry) return null;
   const runtimeDir = path.dirname(entry);
   const adapter = options.adapter || require(path.join(runtimeDir, 'claude.cjs'));
-  if (payload.hook_event_name === 'SessionStart' && !options.adapter) {
-    const flow = require(path.join(runtimeDir, 'flow.cjs')).createFlow({ harness: 'claude', cwd: payload.cwd, env });
-    flow.acknowledgeSession(payload.session_id);
-  }
-  return adapter.handleClaudeHook(payload);
+  // Current adapters bound the hook and acknowledge inside that bound. An
+  // older project runtime has no bound and can block a session for minutes,
+  // so its Claude tracing is dropped until the project updates its runtime.
+  if (typeof adapter.runClaudeHook !== 'function') return null;
+  return adapter.runClaudeHook(payload, { acknowledgeSession: true });
 }
 
 function readInput(input = process.stdin, timeoutMs = 750) {
@@ -47,9 +47,90 @@ function readInput(input = process.stdin, timeoutMs = 750) {
     input.on('data', data); input.once('end', end); input.once('error', fail);
   });
 }
-if (require.main === module) {
-  readInput().then(input => input === null ? null : main(input))
-    .then(result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result)); })
-    .catch(() => { /* Telemetry failure is nonblocking; never echo payloads/errors. */ });
+// The installed hook entry is a thin supervisor: it reads stdin, runs
+// discovery and the hook in a child process in its own process group, waits at
+// most the inline cap plus one second, then kills that group. Discovery does
+// synchronous filesystem work, so it must not run in the process whose timer
+// enforces the deadline. exec.cjs reuses this for per-run hooks.
+const CHILD = '--agent-brain-hook-child';
+function superviseMs(env = process.env) {
+  const value = Number(env.BRAIN_TRACE_HOOK_INLINE_MS);
+  return (Number.isFinite(value) && value > 0 ? Math.min(5000, Math.max(100, value)) : 1500) + 1000;
 }
-module.exports = { main, readInput };
+function supervise(args, input, ms) {
+  return new Promise(resolve => {
+    let child, done = false;
+    const chunks = [];
+    const kill = () => { if (child?.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } };
+    // Claude may end the hook with a signal; the child must not outlive it.
+    const onSignal = () => { kill(); process.exit(0); };
+    const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+    for (const signal of signals) process.once(signal, onSignal);
+    const finish = () => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      for (const signal of signals) process.removeListener(signal, onSignal);
+      kill();
+      let output = null;
+      try { output = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* no answer */ }
+      resolve(output && typeof output === 'object' ? output : null);
+    };
+    const timer = setTimeout(finish, ms);
+    try {
+      // The event's own work process runs in another group, so pass the
+      // deadline down: no event work may outlive this supervisor.
+      const env = { ...process.env, BRAIN_TRACE_HOOK_DEADLINE: String(Date.now() + ms - 100),
+        BRAIN_TRACE_HOOK_PARENT: String(process.pid) };
+      child = require('node:child_process').spawn(process.execPath, args, { detached: true, env, stdio: ['pipe', 'pipe', 'ignore'] });
+      child.once('error', finish);
+      child.stdout.on('data', chunk => chunks.push(chunk));
+      child.once('close', finish);
+      child.stdin.once('error', () => {});
+      child.stdin.end(input);
+    } catch { finish(); }
+  });
+}
+// The supervised child's discovery can block its main thread in a synchronous
+// filesystem call, and a supervisor killed by SIGKILL cannot kill it. A small
+// watchdog thread keeps running while the main thread is blocked: it kills
+// this child's whole group once the supervisor is gone or the deadline passed.
+function watchdog(env = process.env) {
+  // The supervisor passes its pid: one killed before this child started must
+  // not be mistaken for its replacement (init or a subreaper).
+  const parent = Number(env.BRAIN_TRACE_HOOK_PARENT) || process.ppid;
+  if (process.ppid !== parent) { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.kill(process.pid, 'SIGKILL'); } }
+  const code = `const { parent, deadline } = require('node:worker_threads').workerData;
+    setInterval(() => {
+      if (process.ppid === parent && !(Date.now() >= deadline)) return;
+      try { process.kill(-process.pid, 'SIGKILL'); } catch { process.kill(process.pid, 'SIGKILL'); }
+    }, 50);`;
+  try {
+    new (require('node:worker_threads').Worker)(code, { eval: true,
+      workerData: { parent, deadline: Number(env.BRAIN_TRACE_HOOK_DEADLINE) } }).unref();
+  } catch { /* no watchdog: the supervisor's own kill still applies */ }
+}
+const disabled = env => ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']
+  .some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()));
+// Settings written before the PreToolUse matcher fire for every tool. Skip
+// those before spawning anything (same list as PRE_TOOLS in claude.cjs).
+function ignorable(input) {
+  try {
+    const payload = JSON.parse(input);
+    return payload?.hook_event_name === 'PreToolUse' && !['Agent', 'Task', 'Skill'].includes(payload.tool_name);
+  } catch { return false; }
+}
+
+if (require.main === module) {
+  // Exit explicitly once the answer is flushed: nothing may keep the hook alive.
+  const exit = () => process.exit(0);
+  setTimeout(exit, 7500).unref(); // Backstop under Claude's 8-second native timeout.
+  const write = result => { if (result && Object.keys(result).length) process.stdout.write(JSON.stringify(result), exit); else exit(); };
+  if (process.argv[2] === CHILD) {
+    watchdog();
+    readInput(process.stdin, 5000).then(input => input === null ? null : main(input)).then(write).catch(exit);
+  } else {
+    readInput().then(input => input === null || disabled(process.env) || ignorable(input) ? null
+      : supervise([__filename, CHILD], input, superviseMs())).then(write).catch(exit);
+  }
+}
+module.exports = { main, readInput, supervise, superviseMs, ignorable, watchdog };

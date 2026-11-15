@@ -51,7 +51,12 @@ test('metadata-only registration preserves unrelated settings and suppresses leg
   assert.deepEqual(claude.env, { KEEP_ME: 'unchanged' }); assert.equal(claude.enabledPlugins['other@example'], false);
   assert.equal(claude.enabledPlugins[LEGACY_CLAUDE_PLUGIN], false);
   assert.deepEqual(claude.hooks.Stop[0], otherHook);
-  for (const event of HOOK_EVENTS) assert.equal(claude.hooks[event].filter(entry => entry.hooks.some(hook => hook.command === CLAUDE_HOOK_COMMAND)).length, 1);
+  for (const event of HOOK_EVENTS) {
+    const ours = claude.hooks[event].filter(entry => entry.hooks.some(hook => hook.command === CLAUDE_HOOK_COMMAND));
+    assert.equal(ours.length, 1);
+    // Only dispatch and skill calls need PreToolUse; other events see every call.
+    assert.equal(ours[0].matcher, event === 'PreToolUse' ? '^(?:Agent|Task|Skill)$' : undefined, event);
+  }
   assert.equal(json(path.join(f.target, '.agent-brain/tracing.json')).captureMode, 'metadata-only');
   assert.equal(fs.readFileSync(path.join(f.target, '.env'), 'utf8'), 'DO_NOT_COPY=SYNTHETIC_NOT_A_REAL_SECRET\n');
   assert.deepEqual(json(path.join(f.target, '.claude/settings.local.json')), { env: { LOCAL_PRIVATE: 'SYNTHETIC_NOT_A_REAL_SECRET' } });

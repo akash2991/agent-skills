@@ -100,8 +100,11 @@ function agentRecord(run, now, terminal, actualModel) {
 // Read bounded chunks, retaining incomplete lines ONLY in process memory. The
 // cursor points just past the last newline, so an asynchronously appended tail
 // is re-read by the next hook. Per-message state is independent of this cursor.
-function scanTranscript(file, cursor, visit, diagnostic = () => {}) {
-  let fd;
+// deadlineAt bounds the scan: it stops after the first complete row at or past
+// the deadline (so every call makes progress) and returns that row boundary as
+// the cursor, letting the next hook resume instead of restarting.
+function scanTranscript(file, cursor, visit, diagnostic = () => {}, deadlineAt = Infinity) {
+  let fd, progress = null; // The last row boundary committed by this call.
   try {
     // Native transcripts need not use the private state-file modes or size
     // limit: scanning is incremental and bounded below. They must be regular
@@ -130,12 +133,14 @@ function scanTranscript(file, cursor, visit, diagnostic = () => {}) {
           const text = Buffer.concat([line, buffer.subarray(start, i)]).toString('utf8');
           let row;
           try { row = JSON.parse(text); } catch { diagnostic('transcript_invalid_row'); }
-          if (row && typeof row === 'object') visit(row, offset + i + 1);
+          if (row && typeof row === 'object') visit(row, offset + i + 1, stat.ino);
         } else diagnostic('transcript_line_refused_size');
         committed = offset + i + 1;
         line = Buffer.alloc(0);
         oversized = false;
         start = i + 1;
+        progress = { offset: committed, inode: stat.ino };
+        if (Date.now() >= deadlineAt) return progress;
       }
       if (line.length + n - start > MAX_LINE_BYTES) oversized = true;
       if (!oversized) line = Buffer.concat([line, buffer.subarray(start, n)]);
@@ -149,7 +154,9 @@ function scanTranscript(file, cursor, visit, diagnostic = () => {}) {
     // A publication/storage failure MUST propagate: advancing the content
     // cursor after a failed visit would permanently lose a native row.
     if (error?.claudePublicationFailure) throw error;
-    diagnostic('transcript_unavailable'); return cursor;
+    // Keep rows already committed (e.g. a busy lock on a later row): the
+    // failed row is not committed and is visited again by the next hook.
+    diagnostic('transcript_unavailable'); return progress || cursor;
   } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
@@ -374,7 +381,7 @@ function generationContent(flow, run, row, time, position, now) {
     flow.writeObservation(observationKey(flow, id), refused); flow.submitCaptured([refused]);
   }
 }
-function reconcileContent(flow, run, file, childId, now) {
+function reconcileContent(flow, run, file, childId, now, deadlineAt = Infinity) {
   if (!fullContent(flow) || !contentEpoch(flow, run, file, now)) return;
   if (typeof file !== 'string' || !path.isAbsolute(file)) return;
   const cursorKey = key(flow, 'full-cursor', run.nativeSessionId, run.rootSpanId);
@@ -433,7 +440,7 @@ function reconcileContent(flow, run, file, childId, now) {
         }
       }
     } catch (error) { error.claudePublicationFailure = true; throw error; }
-  }, reason => coverage(flow, run, reason, now));
+  }, reason => coverage(flow, run, reason, now), deadlineAt);
   if (next) flow.writeState(cursorKey, { ...next, device: snapshot.device });
 }
 
@@ -448,6 +455,20 @@ function reconcileToolMetadata(flow, run, row, time) {
         id: flow.id(`claude:tool:${run.nativeSessionId}:${block.id}`),
         toolName: toolName(block.name), startTime: time
       });
+      else if (previous.startUnknown && time <= previous.startTime) {
+        // A completed tool recorded with a placeholder start: correct it and
+        // publish a new revision of the same observation.
+        const { startUnknown, ...known } = previous;
+        const state = { ...known, startTime: time };
+        flow.writeState(stateKey, state);
+        if (state.outcome && !(['Agent', 'Task'].includes(state.toolName) && state.outcome === 'completed')) {
+          const caller = state.caller ? flow.resolve(state.caller) || state.caller : run;
+          submitRecords(flow, caller, [record(caller, { id: state.id,
+            type: fullContent(flow) && ['Agent', 'Task'].includes(state.toolName) ? 'SPAN' : 'TOOL',
+            name: state.toolName, toolName: state.toolName, startTime: state.startTime,
+            endTime: state.endTime, outcome: state.outcome })]);
+        }
+      }
     }
     if (block.type !== 'tool_result' || !identity(block.tool_use_id)) continue;
     const stateKey = key(flow, 'tool', run.nativeSessionId, block.tool_use_id);
@@ -471,12 +492,12 @@ function reconcileToolMetadata(flow, run, row, time) {
   }
 }
 
-function reconcileTranscript(flow, run, file, childId) {
+function reconcileTranscript(flow, run, file, childId, deadlineAt = Infinity) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) return;
   const cursorKey = key(flow, 'cursor', run.nativeSessionId, file);
   const cursor = flow.readState(cursorKey);
   const generations = new Map();
-  const next = scanTranscript(file, cursor, (row, position) => {
+  const next = scanTranscript(file, cursor, (row, position, inode) => {
     // Main transcripts can carry sidechain records. Never attribute these to
     // the root or infer a child from its name/path/most recent dispatch.
     if (row.agentId && row.agentId !== childId) return;
@@ -487,7 +508,8 @@ function reconcileTranscript(flow, run, file, childId) {
     if (row.type !== 'assistant' || !identity(row.message?.id)) return;
     if (!hasRuntimeModel(row.message.model)) return;
     const actualModel = model(row.message.model);
-    run = flow.update(run, { observedModel: actualModel || null });
+    // Each update is a context transaction; skip the ones that change nothing.
+    if (run.observedModel !== (actualModel || null)) run = flow.update(run, { observedModel: actualModel || null });
     const id = flow.id(`claude:generation:${run.nativeSessionId}:${row.message.id}`);
     const stateKey = key(flow, 'generation', run.nativeSessionId, id);
     const previous = flow.readState(stateKey);
@@ -507,7 +529,14 @@ function reconcileTranscript(flow, run, file, childId) {
       startTime: state.startTime, endTime: state.endTime,
       ...(state.model ? { model: state.model, provider: 'anthropic' } : {}),
       usage: state.usage, outcome: 'completed' }));
-  });
+    // Publish in small batches and save the cursor with each, including the
+    // batch that reaches the deadline: the budget then pays for publishing,
+    // and a hook killed at its cap still keeps the progress it made.
+    if (generations.size >= 5 || Date.now() >= deadlineAt) {
+      submitRecords(flow, run, [...generations.values()]); generations.clear();
+      flow.writeState(cursorKey, { offset: position, inode });
+    }
+  }, undefined, deadlineAt);
   if (generations.size) submitRecords(flow, run, [...generations.values()]);
   if (next) flow.writeState(cursorKey, next);
 }
@@ -522,12 +551,18 @@ async function boundedFlush(flow, timeoutMs = 2500) {
   } finally { clearTimeout(timer); }
 }
 
-/** Handle one native hook. Returns supported actor additionalContext, or null.
- * Never rewrites tool input or participates in native permission decisions.
- * A supplied flow makes this module usable without loading the transport. */
-async function handleClaudeHook(payload, options = {}) {
+const killed = env => ['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED']
+  .some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()));
+
+/** Process one native hook in this process. Returns supported actor
+ * additionalContext, or null. Never rewrites tool input or participates in
+ * native permission decisions. A supplied flow makes this module usable
+ * without loading the transport. Options: reconcile:false skips transcript
+ * reconciliation, reconcileBudgetMs bounds it, flush:false skips delivery,
+ * acknowledgeSession acknowledges a brain launch on SessionStart. */
+async function processClaudeHook(payload, options = {}) {
   const env = options.env || process.env;
-  if (['BRAIN_TRACING_ENABLED', 'LANGFUSE_TRACING_ENABLED'].some(key => ['false', '0'].includes(String(env[key] || '').toLowerCase()))) return null;
+  if (killed(env)) return null;
   if (!payload || !HOOK_EVENTS.includes(payload.hook_event_name)) return null;
   const sessionId = identity(payload.session_id);
   if (!sessionId) return null;
@@ -538,7 +573,10 @@ async function handleClaudeHook(payload, options = {}) {
   if ((event === 'SubagentStart' || event === 'SubagentStop') && !childId) return null;
   const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
   const flow = options.flow || require('./flow.cjs').createFlow({ harness: 'claude', cwd, env });
+  if (options.acknowledgeSession === true && event === 'SessionStart' && !childId) flow.acknowledgeSession?.(sessionId);
   const now = options.clock ? options.clock() : Date.now();
+  const reconcileDeadline = options.reconcile === false ? null
+    : Date.now() + (Number.isFinite(options.reconcileBudgetMs) ? options.reconcileBudgetMs : Infinity);
   const nativeSessionId = childId ? childSession(flow, sessionId, childId) : sessionId;
   const pendingIdentity = childId ? namespace(sessionId, childId) : undefined;
   const knownPersona = flow.knownPersona?.(cwd, payload.agent_type) === true;
@@ -567,7 +605,6 @@ async function handleClaudeHook(payload, options = {}) {
   contentEpoch(flow, run, transcript, now);
   const effort = EFFORTS.has(payload.effort?.level) ? payload.effort.level : undefined;
   if (effort) run = flow.update(run, { requestedEffort: effort });
-
   if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
     const promptId = identity(payload.prompt_id);
     // Identified prompts can be deduplicated. Native versions that omit the
@@ -642,9 +679,12 @@ async function handleClaudeHook(payload, options = {}) {
       const duration = Number.isFinite(payload.duration_ms) && payload.duration_ms >= 0
         ? Math.min(payload.duration_ms, now) : 0;
       const startTime = prior?.startTime || now - duration;
+      // Without PreToolUse or duration_ms the start is a placeholder; the
+      // transcript's tool_use row backfills it (reconcileToolMetadata).
+      const startUnknown = !prior?.startTime && !(duration > 0);
       const caller = prior?.caller ? flow.resolve(prior.caller) || prior.caller : run;
       flow.writeState(stateKey, { ...prior, id, toolName: name, startTime, endTime, outcome,
-        ...(prior?.caller ? { caller: prior.caller } : {}) });
+        ...(prior?.caller ? { caller: prior.caller } : {}), ...(startUnknown ? { startUnknown: true } : {}) });
       const responseChild = dispatch && event === 'PostToolUse' ? identity(payload.tool_response?.agentId) : null;
       const bindingConflict = responseChild && prior?.childNativeSessionId &&
         childSession(flow, sessionId, responseChild) !== prior.childNativeSessionId;
@@ -705,15 +745,17 @@ async function handleClaudeHook(payload, options = {}) {
 
   // transcript_path on SubagentStop is the MAIN transcript. Child attribution
   // requires the explicit child path, never a filename/newest-agent heuristic.
-  reconcileTranscript(flow, run, transcript, childId);
-  reconcileContent(flow, run, transcript, childId, now);
-  if (typeof transcript === 'string' && ['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd'].includes(event)) {
-    // Claude writes JSONL asynchronously. A single bounded retry catches short
-    // write lag; a later hook can reconcile anything still outstanding. There
-    // is no promise of capture after SIGKILL or an indefinitely delayed write.
-    await new Promise(resolve => setTimeout(resolve, 20));
-    reconcileTranscript(flow, run, transcript, childId);
-    reconcileContent(flow, run, transcript, childId, now);
+  if (reconcileDeadline !== null) {
+    reconcileTranscript(flow, run, transcript, childId, reconcileDeadline);
+    reconcileContent(flow, run, transcript, childId, now, reconcileDeadline);
+    if (typeof transcript === 'string' && ['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd'].includes(event)) {
+      // Claude writes JSONL asynchronously. A single bounded retry catches short
+      // write lag; a later hook can reconcile anything still outstanding. There
+      // is no promise of capture after SIGKILL or an indefinitely delayed write.
+      await new Promise(resolve => setTimeout(resolve, 20));
+      reconcileTranscript(flow, run, transcript, childId, reconcileDeadline);
+      reconcileContent(flow, run, transcript, childId, now, reconcileDeadline);
+    }
   }
   // Reconciliation can discover historical known-model rows after a switch.
   // Keep their generation evidence, but do not re-label the unknown current
@@ -726,7 +768,15 @@ async function handleClaudeHook(payload, options = {}) {
   const activity = flow.readState(key(flow, 'activity', nativeSessionId));
   const eventPrompt = identity(payload.prompt_id);
   const stalePrompt = eventPrompt && activity?.promptId && flow.id(eventPrompt) !== activity.promptId;
-  if (!stalePrompt && ['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd'].includes(event)) {
+  // A terminal event received before the current turn began, or before the
+  // last recorded terminal, belongs to an older turn (detached events can be
+  // processed late). Drop it rather than attach its outcome or answer here.
+  const terminalEvent = TERMINAL_EVENTS.includes(event);
+  if (terminalEvent && ((activity && activity.startedAt > now) || (terminal && terminal.endTime > now))) {
+    if (options.flush !== false) await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
+    return output;
+  }
+  if (!stalePrompt && terminalEvent) {
     const active = activity && (!terminal || activity.startedAt > terminal.endTime);
     let outcome = event === 'StopFailure' ? 'error' : event === 'SessionEnd'
       ? active || !terminal ? 'interrupted' : terminal.outcome : 'completed';
@@ -752,8 +802,247 @@ async function handleClaudeHook(payload, options = {}) {
       }
     }
   } else submitRecords(flow, run, [agentRecord(run, now, currentTerminal, actualModel)]);
-  await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
+  if (options.flush !== false) await boundedFlush(flow, options.flushTimeoutMs ?? 2500);
   return output;
 }
 
-module.exports = { HOOK_EVENTS, handleClaudeHook, reconcileTranscript };
+// Observability must never slow the session down; dropping data is acceptable.
+// Every hook event is processed in Claude's native hook order, by a work
+// process the hook waits for up to a hard cap. The work process runs in its own
+// process group, with the work in a worker thread and a supervising main
+// thread; at the cap the hook kills the whole group, subprocesses included (a
+// thread alone is not enough: process exit waits for a worker blocked in a
+// native call). The event is then dropped. Reading the transcript is bounded by
+// a small budget per hook and resumes at the saved cursor. Only delivery to
+// Langfuse runs in the background, by one uploader at a time; it publishes
+// records already captured and never touches turn state.
+const TERMINAL_EVENTS = Object.freeze(['Stop', 'SubagentStop', 'StopFailure', 'SessionEnd']);
+// PreToolUse binds a dispatch to its caller; it is registered only for these.
+const PRE_TOOLS = Object.freeze(['Agent', 'Task', 'Skill']);
+// Anchored: an unanchored pattern also matches TaskCreate, TaskUpdate and the like.
+const HOOK_MATCHERS = Object.freeze({ PreToolUse: `^(?:${PRE_TOOLS.join('|')})$` });
+const LIMITS = Object.freeze({ inlineMs: 1500, inlineMaxMs: 5000, handoffMs: 1000,
+  reconcileMs: 300, flushPassMs: 2000, lifetimeMs: 60000 });
+const DETACHED = '--agent-brain-detached';
+// Overrides for slow machines and tests, clamped so the hook still fits under
+// Claude's 8-second native timeout and the uploader stays short-lived.
+function limit(name, fallback, min, max, env = process.env) {
+  const value = Number(env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.min(max, Math.max(min, value)) : fallback;
+}
+const killGroup = pid => { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } };
+
+// The lifetime travels as an absolute end time, so the work process's own
+// backstop does not drift by its boot time.
+function spawnWorkProcess(mode, receivedAt, lifetimeMs, extra = [], env = process.env) {
+  return require('node:child_process').spawn(process.execPath,
+    [__filename, DETACHED, mode, String(receivedAt), String(Date.now() + lifetimeMs), ...extra],
+    { detached: true, env: { ...env, BRAIN_TRACE_HOOK_PARENT: String(process.pid) },
+      stdio: ['pipe', mode === 'event' ? 'pipe' : 'ignore', 'ignore'] });
+}
+
+// The hook only spawns, pipes and waits: it performs no synchronous state I/O,
+// so a stalled filesystem or lock cannot hold it past the cap.
+function runEvent(payload, receivedAt, options) {
+  return new Promise(resolve => {
+    let child, done = false;
+    const chunks = [];
+    const finish = value => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      // Always: the leader may have exited while descendants live on.
+      if (child?.pid) killGroup(child.pid);
+      resolve(value || null);
+    };
+    let cap = options.inlineMs ?? limit('BRAIN_TRACE_HOOK_INLINE_MS', LIMITS.inlineMs, 100, LIMITS.inlineMaxMs, options.env);
+    // A supervising entrypoint passes its absolute deadline: the work process
+    // must be gone by then, so both the wait and its lifetime end there.
+    const deadline = Number(options.env.BRAIN_TRACE_HOOK_DEADLINE);
+    const remaining = Number.isFinite(deadline) ? deadline - Date.now() : Infinity;
+    if (remaining < 50) { resolve(null); return; }
+    cap = Math.min(cap, remaining);
+    const timer = setTimeout(() => finish(null), cap);
+    try {
+      // The child's own lifetime is a backstop if this hook process is killed.
+      child = spawnWorkProcess('event', receivedAt, Math.max(1, Math.min(cap + 500, remaining)),
+        options.acknowledgeSession === true ? ['ack'] : [], options.env);
+      child.once('error', () => finish(null));
+      child.stdout.on('data', chunk => chunks.push(chunk));
+      child.once('close', () => {
+        let value = null;
+        try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* no output */ }
+        finish(value);
+      });
+      child.stdin.once('error', () => {});
+      child.stdin.end(JSON.stringify(payload));
+    } catch { finish(null); }
+  });
+}
+
+/** Production entry for a native hook: bounded, fails open, returns actor
+ * additionalContext or null. Options: acknowledgeSession, env, inlineMs (tests). */
+async function runClaudeHook(payload, options = {}) {
+  options = { ...options, env: options.env || process.env };
+  try {
+    if (killed(options.env) || !payload || !HOOK_EVENTS.includes(payload.hook_event_name)
+      || !identity(payload.session_id)) return null;
+    // Older settings register PreToolUse for every tool; never pay for those.
+    if (payload.hook_event_name === 'PreToolUse' && !PRE_TOOLS.includes(payload.tool_name)) return null;
+    const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
+    return await runEvent({ ...payload, cwd }, Date.now(), options);
+  } catch { return null; } // Observability failures never block a tool or session.
+}
+
+/** Tests inject a flow and run in-process; native callers get the bounded path. */
+function handleClaudeHook(payload, options = {}) {
+  return options.flow ? processClaudeHook(payload, options) : runClaudeHook(payload, options);
+}
+
+function readStdin(timeoutMs) {
+  return new Promise(resolve => {
+    const chunks = [];
+    let bytes = 0;
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    process.stdin.on('data', chunk => {
+      bytes += chunk.length;
+      if (bytes > 8 * 1024 * 1024) { clearTimeout(timer); resolve(null); process.stdin.destroy(); return; }
+      chunks.push(chunk);
+    });
+    process.stdin.once('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks).toString('utf8')); });
+    process.stdin.once('error', () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function underLock(stateDir, kind, waitMs, fn) {
+  const { claimLock } = require('./locks.cjs');
+  const deadlineAt = Date.now() + waitMs;
+  let lock;
+  try { lock = claimLock(stateDir, kind, { deadlineAt: Math.max(deadlineAt, Date.now() + 1000) }); }
+  catch { return { acquired: false }; }
+  let polls = 0;
+  try {
+    for (;;) {
+      let blocked;
+      try { blocked = lock.blocked(); } catch { return { acquired: false }; }
+      if (!blocked) break;
+      if (Date.now() >= deadlineAt) return { acquired: false };
+      // Back off with jitter: each poll rereads every claim.
+      await sleep(Math.min(200, 10 * 2 ** Math.min(polls++, 4)) * (0.5 + Math.random()));
+    }
+    return { acquired: true, value: await fn() };
+  } finally { lock.release(); }
+}
+
+// One deliverer at a time. A process that finds the flusher busy leaves a
+// request timestamp; the flusher repeats while requests arrive after its pass.
+// The short wait covers a peer still choosing its ticket, so two finishing
+// processes cannot both back off.
+async function flushSingleFlight(flow, endAt) {
+  const request = path.join(flow.stateDir, 'claude-flush-request');
+  const requestedAt = () => { try { return Number(fs.readFileSync(request, 'utf8')) || 0; } catch { return 0; } };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let passStart = 0;
+    const result = await underLock(flow.stateDir, 'flusher', 250, async () => {
+      do {
+        passStart = Date.now();
+        await flow.flush({ timeoutMs: Math.min(LIMITS.flushPassMs, Math.max(0, endAt - Date.now())) });
+      } while (requestedAt() >= passStart && Date.now() < endAt - 1000);
+    });
+    // Busy: the holder sees the request. Done: retry once only for a request
+    // that landed between the last pass and the release.
+    if (!result.acquired || requestedAt() < passStart || Date.now() >= endAt - 1000) return;
+  }
+}
+
+// After an event: ask for delivery, and start the uploader unless one runs.
+// A rare duplicate uploader finds the lock busy and exits.
+function requestDelivery(flow, cwd, receivedAt) {
+  try { fs.writeFileSync(path.join(flow.stateDir, 'claude-flush-request'), String(Date.now()), { mode: 0o600 }); } catch { return Promise.resolve(); }
+  // An uploader is running only if a claim names a live PID and is younger
+  // than an uploader can live. A dead uploader's claim is left for the next
+  // uploader's claimLock to recover, so it never stops delivery.
+  let running = false;
+  try {
+    const dir = path.join(flow.stateDir, 'flusher-claims');
+    running = fs.readdirSync(dir).some(name => {
+      const pid = Number(/^(\d+)-[a-f0-9]{32}\.json$/.exec(name)?.[1]);
+      if (!pid) return false;
+      try {
+        if (Date.now() - fs.statSync(path.join(dir, name)).mtimeMs > LIMITS.lifetimeMs + 5000) return false;
+        process.kill(pid, 0); return true;
+      } catch { return false; }
+    });
+  } catch { /* none yet */ }
+  if (running) return Promise.resolve();
+  return new Promise(resolve => {
+    // Short: the event's answer waits for this handoff.
+    const timer = setTimeout(resolve, 200);
+    try {
+      const child = spawnWorkProcess('flush', receivedAt, limit('BRAIN_TRACE_HOOK_LIFETIME_MS', LIMITS.lifetimeMs, 1000, LIMITS.lifetimeMs));
+      child.once('error', () => { clearTimeout(timer); resolve(); });
+      child.stdin.once('error', () => {});
+      child.unref();
+      child.stdin.end(JSON.stringify({ cwd }), () => { clearTimeout(timer); resolve(); });
+    } catch { clearTimeout(timer); resolve(); }
+  });
+}
+
+// Runs in a work process's worker thread.
+async function work(mode, input, receivedAt, endAt, acknowledgeSession) {
+  if (!input || typeof input.cwd !== 'string' || killed(process.env)) return null;
+  const env = process.env;
+  const flow = require('./flow.cjs').createFlow({ harness: 'claude', cwd: input.cwd, env });
+  if (mode === 'flush') { await flushSingleFlight(flow, endAt); return null; }
+  // Delivery is requested even when capture fails: a full outbox or adapter
+  // cap refuses new records, and only delivery frees that space.
+  try {
+    return await processClaudeHook(input, { flow, env, acknowledgeSession, clock: () => receivedAt,
+      reconcileBudgetMs: LIMITS.reconcileMs, flush: false });
+  } finally { await requestDelivery(flow, input.cwd, receivedAt); }
+}
+
+// A work process's main thread only supervises: synchronous work in the worker
+// cannot delay the lifetime cap. Every exit path kills the whole group, so a
+// subprocess's background child cannot outlive this process.
+function endGroup() { killGroup(process.pid); process.exit(0); }
+async function workMain(mode, receivedAt, endAt, acknowledgeSession) {
+  const lifetimeMs = Math.max(0, endAt - Date.now());
+  setTimeout(endGroup, lifetimeMs);
+  // Event work belongs to the hook that spawned it. If that hook is killed
+  // (a supervisor's signal or cap), its cleanup never runs: end with it. The
+  // uploader is meant to outlive its parent, so only event work watches.
+  // The spawner passes its pid: a parent killed before this process started
+  // must not be mistaken for its replacement (init or a subreaper).
+  if (mode === 'event') {
+    const parent = Number(process.env.BRAIN_TRACE_HOOK_PARENT) || process.ppid;
+    if (process.ppid !== parent) endGroup();
+    setInterval(() => { if (process.ppid !== parent) endGroup(); }, 50).unref();
+  }
+  let input;
+  try { input = JSON.parse(await readStdin(Math.min(5000, lifetimeMs))); } catch { endGroup(); }
+  const { Worker } = require('node:worker_threads');
+  const worker = new Worker(__filename, { stdout: true, stderr: true,
+    workerData: { agentBrainClaudeWork: true, mode, input, receivedAt, endAt, acknowledgeSession } });
+  worker.once('message', output => {
+    if (mode === 'event' && output) process.stdout.write(JSON.stringify(output), endGroup);
+    else endGroup();
+  });
+  worker.once('error', endGroup);
+  worker.once('exit', endGroup);
+}
+
+const threads = require('node:worker_threads');
+if (!threads.isMainThread && threads.workerData?.agentBrainClaudeWork === true) {
+  const { mode, input, receivedAt, endAt, acknowledgeSession } = threads.workerData;
+  work(mode, input, receivedAt, endAt, acknowledgeSession)
+    .then(output => threads.parentPort.postMessage(output || null), () => threads.parentPort.postMessage(null));
+} else if (require.main === module && process.argv[2] === DETACHED) {
+  const [mode, received, end, ack] = process.argv.slice(3);
+  const receivedAt = Number(received), endAt = Number(end);
+  workMain(mode, Number.isFinite(receivedAt) ? receivedAt : Date.now(),
+    Math.min(Number.isFinite(endAt) ? endAt : 0, Date.now() + LIMITS.lifetimeMs), ack === 'ack').catch(endGroup);
+}
+
+module.exports = { HOOK_EVENTS, HOOK_MATCHERS, TERMINAL_EVENTS, LIMITS, handleClaudeHook, processClaudeHook, runClaudeHook, reconcileTranscript };

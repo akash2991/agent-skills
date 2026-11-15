@@ -18,7 +18,16 @@ const { testDependencyRoot } = require('./lib/langfuse-test-dependencies.js');
 
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'brain-exec-')));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(async () => {
+    // The Claude hook hands work to detached processes. Let them release the
+    // state directory before removing it.
+    const state = path.join(root, 'state'), end = Date.now() + 20000;
+    // The background uploader holds a 'flusher' claim while it runs.
+    const busy = () => { try { return fs.readdirSync(path.join(state, 'flusher-claims')).length > 0; } catch { return false; } };
+    await new Promise(resolve => setTimeout(resolve, 300));
+    while (busy() && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 100));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
   const cwd = path.join(root, 'caller'), target = path.join(root, "target ' $ spaces");
   for (const dir of [cwd, target]) { fs.mkdirSync(dir); fs.mkdirSync(path.join(dir, '.git')); }
   const runtime = path.join(cwd, '.agent-brain/observability'); fs.mkdirSync(runtime, { recursive: true });
@@ -29,7 +38,7 @@ function fixture(t) {
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
   const stateDir = path.join(root, 'state');
   const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: root, BRAIN_TRACE_STATE_DIR: stateDir,
-    LANGFUSE_PUBLIC_KEY: '', TEST_RUNTIME: runtime };
+    LANGFUSE_PUBLIC_KEY: '', TEST_RUNTIME: runtime, BRAIN_TRACE_HOOK_INLINE_MS: '5000' };
   const flow = createFlow({ cwd, stateDir, env, flushOutbox: async () => ({ accepted: 0, verified: false }) });
   const parent = flow.begin({ cwd, nativeSessionId: crypto.randomUUID(), ticketId: 'TEST-17' });
   const actor = flow.createToolLaunch(parent).nonce;
