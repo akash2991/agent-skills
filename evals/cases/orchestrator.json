@@ -1,0 +1,68 @@
+{
+  "skill_name": "orchestrator",
+  "trigger": {
+    "positive": [
+      {
+        "prompt": "Be the project's orchestrator: never do the work yourself, hand each of my requests to a separate agent session in its own Herdr tab and keep a record of the sessions",
+        "top_k": 3
+      },
+      {
+        "prompt": "Route this bug to the worker session that already fixed the login page, resume it if its tab is closed, or start a new agent session if none fits",
+        "top_k": 3
+      },
+      {
+        "prompt": "Which worker sessions has the orchestrator started, which are still pending, and how many times has each been compacted?",
+        "top_k": 3
+      }
+    ],
+    "negative": [
+      {
+        "prompt": "We're inside Herdr: fan this review out to three sub-agents in separate tabs, one each for auth, billing, and the API layer, then merge their findings",
+        "owner": "herdr-fanout"
+      },
+      {
+        "prompt": "Break this spec into small verifiable tasks with acceptance criteria",
+        "owner": "planning-and-task-breakdown"
+      }
+    ]
+  },
+  "evals": [
+    {
+      "id": 1,
+      "kind": "dialogue",
+      "prompt": "HERDR_ENV=1. This session ran /orchestrator and holds the lock. `orch find --all --query \"signup button overlap\"` shows: S4 · open · tab closed · claude claude-opus-5-5 medium · FAC-31 · web-engineer; title: Login and signup page layout bugs; active 2d ago · 6 prompts · compacted 1×; summary: Login button overlap fixed in PR 40; signup page not checked yet. S2 · resolved · billing CSV export. The user says: \"The signup button overlaps the footer too. Just fix it quickly yourself, it's one CSS line.\"",
+      "expected_output": "Declines to fix it itself, resumes S4 with the request and a recorded reason, and answers in a line or two naming S4 and its tab",
+      "expectations": [
+        "Does not read, edit, or test project code itself, despite the 'quickly yourself' pressure",
+        "Chooses resume for S4: open, tab closed, same layout work, compacted once and active two days ago, so not stale",
+        "Runs resume S4 with --request carrying the user's words and a --reason, and lists the sessions it weighed with --considered",
+        "Does not start a new session, and does not route to the resolved billing session S2",
+        "Replies briefly with the session id and tab label without waiting for the worker to finish"
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "dialogue",
+      "prompt": "HERDR_ENV=1. This session is the orchestrator. `orch find --all --query \"login timeout\"` shows only: S7 · resolved · FAC-12 · backend-engineer; title: Login session timeout; resolved 5d ago; summary: Timeout raised to 30m and merged in PR 88. S9 · open · tab live (working) · title: Payment webhook retries. The user says: \"Login times out again after 10 minutes, and while you're at it, make the webhook retries back off exponentially.\"",
+      "expected_output": "Splits the message: a new session seeded from the resolved S7 for the login timeout, and a send to the live S9 for the retry backoff, each with its own reason",
+      "expectations": [
+        "Treats the two asks as separate lines of work and routes each one separately instead of sending both to one session",
+        "Does not resume or send to resolved S7; starts a new session with --from S7 so its summary and ticket come along",
+        "Sends the webhook backoff ask to the live S9 with send, not a new session",
+        "Records a reason for each route",
+        "Does no project work itself"
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "dialogue",
+      "prompt": "HERDR_ENV=1. The user ran /orchestrator, and `orch start` exited 3: \"another orchestrator holds this project: pane w2:p4 (tab w2:t7), since 2026-11-20T09:12:00Z.\" The user then says: \"Start an agent to add rate limiting to the public API.\"",
+      "expected_output": "Stays read-only, tells the user that the orchestrator in pane w2:p4 owns the project, and does not launch anything or work around the refusal",
+      "expectations": [
+        "Does not run new, resume, send, stop, or resolve",
+        "Does not try to work around the refusal, edit the record, or start a subagent instead",
+        "Names the pane and tab that hold the project and suggests using that orchestrator or closing it first"
+      ]
+    }
+  ]
+}

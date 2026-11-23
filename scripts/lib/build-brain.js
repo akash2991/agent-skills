@@ -71,7 +71,7 @@ function validateSourceTree(root, relRoot) {
 
 function brainCommandFiles(root, dir) {
   const ext = dir.endsWith('commands') && !dir.startsWith('.claude') ? 'toml' : 'md';
-  return fs.readdirSync(path.join(root, dir)).filter(f => new RegExp(`^brain(-status)?\\.${ext}$`).test(f));
+  return fs.readdirSync(path.join(root, dir)).filter(f => new RegExp(`^(brain|brain-status|orchestrator)\\.${ext}$`).test(f));
 }
 
 function splitFrontmatter(text) {

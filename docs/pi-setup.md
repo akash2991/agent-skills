@@ -17,6 +17,7 @@ Review the installed resources before granting project trust. Start a new pi ses
 ```
 /brain backend-engineer fix the login timeout
 /brain-status
+/orchestrator
 ```
 
 ## Subagent names

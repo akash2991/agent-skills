@@ -36,7 +36,7 @@ Slash commands in `.claude/commands/` and personas in `agents/` stay Claude Code
 
 ## Install the brain into a project
 
-Codex reads `AGENTS.md` from the project root, skills from `.agents/skills/`, and custom prompts from `~/.codex/prompts/` only (prompts are not read from the repository). The brain's `/brain` and `/brain-status` prompts ship in `.codex/prompts/` in the same format Codex expects (`description` and `argument-hint` front matter, `$ARGUMENTS` for the arguments); copy them into the home directory.
+Codex reads `AGENTS.md` from the project root, skills from `.agents/skills/`, and custom prompts from `~/.codex/prompts/` only (prompts are not read from the repository). The brain's `/brain`, `/brain-status`, and `/orchestrator` prompts ship in `.codex/prompts/` in the same format Codex expects (`description` and `argument-hint` front matter, `$ARGUMENTS` for the arguments); copy them into the home directory.
 
 From the consuming project's root:
 
@@ -50,7 +50,7 @@ The installer never writes outside the project. To enable Codex's global custom 
 
 ```bash
 mkdir -p ~/.codex/prompts
-cp -n .codex/prompts/brain*.md ~/.codex/prompts/
+cp -n .codex/prompts/brain*.md .codex/prompts/orchestrator.md ~/.codex/prompts/
 ```
 
 `cp -n` preserves existing global prompts. Compare and update them manually if you already have older versions. Restart Codex after installation.
