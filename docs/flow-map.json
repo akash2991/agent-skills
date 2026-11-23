@@ -759,9 +759,15 @@
           ""
         ],
         [
-          "Hold the first prompt while the tab waits, then deliver it",
+          "Hold prompts until each is accepted, then deliver the rest",
           "det",
           "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Settle a prompt of unknown delivery after checking the worker (resend or drop)",
+          "judgment",
+          null,
           ""
         ],
         [

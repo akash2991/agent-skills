@@ -54,6 +54,8 @@ CREATE TABLE sessions (
   compactions INTEGER NOT NULL DEFAULT 0,
   last_compacted_at TEXT,
   launches INTEGER NOT NULL DEFAULT 0,
+  identity_seq INTEGER NOT NULL DEFAULT 0,
+  summary_at TEXT,
   pending TEXT
 );
 CREATE TABLE prompts (
@@ -94,7 +96,7 @@ CREATE INDEX events_by_session ON events(session_id, id);
 const UPDATABLE = new Set([
   'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
   'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
-  'last_compacted_at', 'launches', 'pending',
+  'last_compacted_at', 'launches', 'identity_seq', 'summary_at', 'pending',
 ]);
 
 const now = () => new Date().toISOString();
@@ -213,13 +215,17 @@ function recentEvents(db, sessionId, limit = 10) {
 }
 
 // ─── Held prompts ───────────────────────────────────────────────────────────
-// A worker's prompts are written here before they are sent. Each entry is
-// `pending` (not sent) or `sending` (submitted, acceptance not yet confirmed).
-// An accepted prompt is removed, so nothing is lost or sent twice when the CLI
-// is interrupted mid-delivery.
+// A worker's prompts are written here before they are sent, and each is
+// removed once the agent accepted it. An entry is `pending` (known not sent)
+// or `unknown` (its submission was interrupted, so it may or may not have
+// reached the worker). An unknown entry is never resent or dropped on its
+// own; the orchestrator settles it. `sending` is written just before a
+// submission, so one found later is unknown.
 
 function pendingOf(row) {
-  try { return row && row.pending ? JSON.parse(row.pending) : []; } catch { return []; }
+  let entries;
+  try { entries = row && row.pending ? JSON.parse(row.pending) : []; } catch { entries = []; }
+  return entries.map(e => (e.state === 'pending' ? e : { ...e, state: 'unknown' }));
 }
 
 function setPending(db, id, entries) {
@@ -232,13 +238,19 @@ function getOwner(db) {
   return db.prepare('SELECT * FROM owner WHERE id = 1').get() || null;
 }
 
-// Read, judge, and replace ownership inside one write transaction, so two
-// contenders are serialized and exactly one wins. `holderAlive` decides whether
-// a different holder still runs.
+const sameOwner = (a, b) => (!a && !b) || (!!a && !!b && a.pane_id === b.pane_id && a.at === b.at);
+
+// Judge the current holder outside the write transaction (that takes Herdr
+// calls), then replace it inside one only if the holder is still the one that
+// was judged. Contenders are serialized, and exactly one wins; `changed` asks
+// the caller to judge again.
 function claimOwner(db, me, holderAlive) {
+  const seen = getOwner(db);
+  const alive = !!seen && seen.pane_id !== me.pane_id && holderAlive(seen);
   return transaction(db, () => {
     const held = getOwner(db);
-    if (held && held.pane_id !== me.pane_id && holderAlive(held)) return { claimed: false, held };
+    if (!sameOwner(held, seen)) return { claimed: false, held, changed: true };
+    if (alive) return { claimed: false, held };
     db.prepare(`INSERT INTO owner (id, pane_id, tab_id, workspace_id, agent_session, at) VALUES (1, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, tab_id = excluded.tab_id,
       workspace_id = excluded.workspace_id, agent_session = excluded.agent_session, at = excluded.at`)
@@ -256,24 +268,38 @@ function releaseOwner(db, paneId) {
 // One harness event from a worker the orchestrator launched. `kind` is one of
 // start, prompt, compact, stop, end; the Claude hook and the Pi extension map
 // their native events onto these.
+//
+// Identity and compactions are fenced: an event from another launch than the
+// session's current one (`launch`), or a start older than the last one applied
+// (`seq`, from Pi's independent writers), does not change them. Prompts are
+// always kept; they are what the user said.
 function recordHookEvent(db, sessionId, event) {
   return transaction(db, () => {
     const row = getSession(db, sessionId);
     if (!row) return false;
     const at = now();
+    const current = event.launch == null || Number(event.launch) === row.launches;
     switch (event.kind) {
-      case 'start':
+      case 'start': {
+        const seq = event.seq == null ? null : Number(event.seq);
+        if (!current || (seq !== null && seq <= row.identity_seq)) {
+          addEvent(db, row.id, 'stale-start-ignored', `launch ${event.launch ?? '?'} seq ${seq ?? '-'}`);
+          break;
+        }
         if (event.nativeSessionId && event.nativeSessionId !== row.native_session_id) {
           if (row.native_session_id) addEvent(db, row.id, 'native-session-changed', `${row.native_session_id} -> ${event.nativeSessionId}`);
           updateSession(db, row.id, { native_session_id: event.nativeSessionId });
         }
         if (event.transcriptPath) updateSession(db, row.id, { transcript_path: event.transcriptPath });
+        if (seq !== null) updateSession(db, row.id, { identity_seq: seq });
         addEvent(db, row.id, 'start', event.detail);
         break;
+      }
       case 'prompt':
         if (event.text) addPrompt(db, row.id, event.text);
         break;
       case 'compact':
+        if (!current) break;
         db.prepare('UPDATE sessions SET compactions = compactions + 1, last_compacted_at = ? WHERE id = ?').run(at, row.id);
         addEvent(db, row.id, 'compact', event.detail);
         break;

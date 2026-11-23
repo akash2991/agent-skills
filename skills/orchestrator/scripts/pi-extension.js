@@ -18,8 +18,13 @@ module.exports = function orchestratorRecorder(pi) {
   if (!env.ORCHESTRATOR_DB || !env.ORCHESTRATOR_SESSION) return;
   const cli = env.ORCHESTRATOR_CLI || path.join(__dirname, 'orchestrator.js');
   const node = env.ORCHESTRATOR_NODE || 'node';
+  // The writers race, so each event carries this launch and its order; the
+  // record ignores a session start older than one it already applied.
+  const launch = env.ORCHESTRATOR_LAUNCH;
+  let seq = 0;
 
-  const record = (event) => {
+  const record = (fields) => {
+    const event = { ...fields, launch, seq: ++seq };
     try {
       const child = spawn(node, [cli, 'hook', 'pi'], { stdio: ['pipe', 'ignore', 'ignore'], detached: true, env });
       child.on('error', () => {});

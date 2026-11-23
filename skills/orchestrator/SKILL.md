@@ -38,7 +38,7 @@ If `start` is refused (exit 3), another orchestrator is running in this project.
 | The user… | You |
 |---|---|
 | asks for work: a fix, a feature, an investigation, a review | route it (step 3) |
-| asks where something stands | `orch status S<id>`; add `--ask` for a fresh answer from a live worker (step 5) |
+| asks where something stands | `orch status S<id>`; add `--ask` to ask a live, idle worker to update it first (step 5) |
 | says something is done, or no longer wanted | `orch resolve S<id>`, then `orch stop S<id>` once it is settled |
 | wants an old session reconsidered | `orch reopen S<id>` |
 | asks what is running or what was done | `orch find --all` |
@@ -53,7 +53,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 |---|---|---|
 | An open session with a live tab covers this work | send | `orch send S<id> --request … --reason …` |
 | An open session covers it, its tab is closed, and it is not stale | resume | `orch resume S<id> --request … --reason …` |
-| `resume` failed, and retrying is not worth it | a new conversation for the same session | `orch relaunch S<id> --request … --reason …` |
+| `resume` failed, or the old conversation is not worth its context | a new conversation for the same session | `orch relaunch S<id> --request … --reason …` |
 | An open session covers it but is stale | new, seeded from it | `orch new --from S<id> …` (the old one becomes superseded) |
 | Only a resolved session covers it | new, seeded from it | `orch new --from S<id> …` (a resolved session is never resumed) |
 | Nothing covers it | new | `orch new …` |
@@ -80,23 +80,26 @@ orch new --title "<short, distinct name>" --intent "<one sentence: what this ses
 If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why some prompts are still held:
 
 - The tab is asking the user something before the agent can start, such as whether to trust a folder or to log in. Never answer it for them. Tell the user which tab is waiting, and once they have answered, run `orch deliver S<id>`.
-- The worker did not settle in time, for example while adopting its persona. Run `orch deliver S<id>` once it is idle. A prompt it already received is never sent twice.
+- The worker did not settle in time, for example while adopting its persona. Run `orch deliver S<id>` once it is idle.
+- A prompt may or may not have reached the worker: its send was interrupted. Nothing resends or drops it on its own, and `send`, `deliver`, `resume`, and `relaunch` refuse until you settle it. Look at the worker's tab or `orch status S<id>`, then run `orch settle S<id> --resend` if it never arrived or `--drop` if it did.
 
 ### 5. Answer the user
 
 Reply in one or two lines: what you did, the session, and the tab label (`S12 login-page-layout (web-engineer)`). Do not wait for the worker; the user can keep giving you work.
 
-For an update, `orch status S<id>` shows the record: its summary, recent prompts, and compactions. `--ask` asks an idle worker to refresh its summary and waits for that turn to finish. The first line says whether the record was refreshed: a busy worker is not asked, and a worker that did not answer in time leaves the old summary, so say so instead of passing it off as current. Relay it in two or three lines. The user may also ask the worker directly in its tab; the hooks record that conversation too.
+For an update, `orch status S<id>` shows the record: its summary and how long ago it was reported, recent prompts, and compactions. `--ask` asks an idle worker to update its summary and waits for that turn; it is a request, not a guarantee. Relay the summary with its age ("as of 3h ago"), and say so when the worker did not update it. The user may also ask the worker directly in its tab; the hooks record that conversation too.
 
 ### 6. Close what is finished
 
-A worker marks its session resolved when its ticket is Done or its PR is merged (`report --resolved`). When the user confirms that work is finished, or a resolved worker sits idle, run `orch stop S<id>`. It closes the tab only when the worker is idle, and the record stays. Stopping a session that is still open keeps it resumable. A worker that is working, or blocked on a permission prompt mid-turn, closes only with `--force`, and only on the user's word.
+A worker marks its session resolved when its ticket is Done or its PR is merged (`report --resolved`). When the user confirms that work is finished, or a resolved worker sits idle, run `orch stop S<id>`. It closes the tab only when the worker is idle, and the record stays. Stopping a session that is still open keeps it resumable. A worker that is working, or blocked on a permission prompt mid-turn, closes only with `--force`, and only on the user's word. A tab that now runs another conversation, such as one the user started there, is never closed: the session is detached from it.
 
 ## What the workers do
 
 Every worker's tab carries `ORCHESTRATOR_DB`, `ORCHESTRATOR_SESSION`, and `ORCHESTRATOR_CLI`. Its first prompt tells it to keep its record current with `node "$ORCHESTRATOR_CLI" report --summary …`, adding `--ticket <id>` and finally `--resolved`. Hooks loaded only into these workers (Claude through `--settings`, Pi through `-e`) record every prompt, whether you sent it or the user typed it in the tab, along with each compaction and a `/clear`. A session the user starts by hand has none of this and is never touched.
 
-A session keeps its conversation id for life: the worker was launched with an id the record holds, and the hooks record where its transcript is. `resume` reopens that conversation when the transcript exists. When it was never written, or is gone, `resume` starts the same id fresh with the brief, the summary, the ticket, the last prompts, and any prompts still held. A failed resume changes nothing and says so; retry it, or choose `relaunch`, which gives the session a new conversation seeded the same way and records the old one.
+A session keeps its conversation id for life; only `relaunch` replaces it, recording the old one. `resume` reopens the conversation by what is certain: Pi by its recorded session file, Claude by its id. It starts the same id fresh, with the brief, the summary, the ticket, the last prompts, and any held prompts, only when the recorded transcript is known to be gone. A session that never had a worker (its first launch failed) starts with its held brief: `orch resume S<id>` without `--request`.
+
+When a launch fails and no worker started, the session is left exactly as it was, so retrying the same command sends the request once. When it is uncertain whether a worker started, its tab stays recorded and another launch is refused until that tab is gone or adopted. A resume, relaunch, or reconcile also refuses when Herdr cannot list the running agents, rather than risk a second worker on the same conversation.
 
 ## Common Rationalizations
 

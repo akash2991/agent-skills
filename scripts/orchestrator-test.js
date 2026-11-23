@@ -31,8 +31,11 @@ if (group === 'pane' && verb === 'get') {
   const pane = s.panes[args[2]];
   pane ? okRead({ pane }) : (process.stdout.write(JSON.stringify({ id: 'fake', error: { code: 'pane_not_found', message: 'pane ' + args[2] + ' not found' } })), process.exit(1));
 } else if (group === 'agent' && verb === 'list') {
+  if (s.failAgentList) { process.stdout.write(JSON.stringify({ id: 'fake', error: { code: 'failed', message: 'socket error' } })); process.exit(1); }
   okRead({ agents: agents() });
 } else if (group === 'tab' && verb === 'create') {
+  if (s.failTabCreate) fail('failed', 'server unavailable');
+  if (s.badTabCreate) ok({});
   const n = ++s.seq;
   const pane = { pane_id: 'w1:p' + n, tab_id: 'w1:t' + n, agent: null, env: [] };
   for (let i = 0; i < args.length; i++) {
@@ -140,8 +143,9 @@ test('workers get a resumable session id and the recording hooks; other kinds ge
   assert.deepStrictEqual(Object.keys(claudeSettings().hooks).sort(), ['PreCompact', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit']);
   assert.deepStrictEqual(harnessArgs(row, true, { settingsFile: 'f' }).slice(0, 2), ['--resume', 'u-1']);
   assert.throws(() => harnessArgs(row, false), /hook settings file/);
-  const pi = harnessArgs({ ...row, harness: 'pi', model: null }, true);
-  assert.deepStrictEqual(pi.slice(0, 2), ['--session-id', 'u-1']);
+  const pi = harnessArgs({ ...row, harness: 'pi', model: null, transcript_path: '/s/x_u-1.jsonl' }, true);
+  assert.deepStrictEqual(pi.slice(0, 2), ['--session', '/s/x_u-1.jsonl'], 'a Pi resume names its exact file');
+  assert.deepStrictEqual(harnessArgs({ ...row, harness: 'pi' }, false).slice(0, 2), ['--session-id', 'u-1']);
   assert.ok(pi.includes('-e') && pi.includes('--thinking'));
   assert.deepStrictEqual(harnessArgs({ ...row, harness: 'codex' }, false), []);
 });
@@ -170,7 +174,7 @@ for (const [name, prepare] of [
   test(`orchestrators starting together against ${name}: exactly one wins`, async () => {
     const t = setup();
     try {
-      ok(t.run(['reconcile'])); // create the record first, so the race is over ownership
+      ok(t.run(['find'])); // create the record first, so the race is over ownership
       prepare(t);
       const panes = [1, 2, 3, 4, 5, 6].map(n => `w1:p${100 + n}`);
       t.patchHerdr(s => { for (const p of panes) s.panes[p] = { pane_id: p, tab_id: `t-${p}`, agent: 'claude', agent_session: { value: `own-${p}` } }; });
@@ -225,7 +229,7 @@ test('new launches a tracked worker in its own tab, adopts the persona with its 
   } finally { t.cleanup(); }
 });
 
-test('resume opens an existing conversation; a never-written one restarts under the same id with the full brief', () => {
+test('resume reopens the conversation by id or recorded file; a known-gone transcript restarts the same id with the full brief', () => {
   const t = setup();
   try {
     ok(t.run(['start']));
@@ -237,27 +241,58 @@ test('resume opens an existing conversation; a never-written one restarts under 
 
     t.patchHerdr(s => { delete s.panes[first.pane_id]; });
     assert.match(t.run(['send', 'S1', '--request', 'x', '--reason', 'r']).stderr, /no live tab; use resume/);
-    const restarted = json(t.run(['resume', 'S1', '--json', '--request', 'signup too', '--reason', 'r']));
-    assert.strictEqual(restarted.action, 'restarted');
-    assert.match(restarted.why, /never written/);
-    let pane = t.herdrState().panes[restarted.pane_id];
-    assert.deepStrictEqual(pane.args.slice(0, 2), ['--session-id', id], 'the same conversation id, started fresh');
-    assert.match(t.herdrState().prompts.at(-1).text, /signup too[\s\S]*This continues the work of session S1/);
+    const byId = json(t.run(['resume', 'S1', '--json', '--request', 'signup too', '--reason', 'r']));
+    assert.strictEqual(byId.action, 'resumed', 'an unrecorded Claude transcript is resumed by id, never assumed absent');
+    assert.deepStrictEqual(t.herdrState().panes[byId.pane_id].args.slice(0, 2), ['--resume', id]);
+    assert.strictEqual(t.herdrState().prompts.at(-1).text, '[orchestrator S1] signup too');
 
     const transcript = path.join(t.dir, `${id}.jsonl`);
+    t.patchRow(1, { transcript_path: transcript }); // recorded, then deleted
+    t.patchHerdr(s => { delete s.panes[byId.pane_id]; });
+    const restarted = json(t.run(['resume', 'S1', '--json', '--request', 'and the reset page', '--reason', 'r']));
+    assert.strictEqual(restarted.action, 'restarted');
+    assert.match(restarted.why, /is gone/);
+    assert.deepStrictEqual(t.herdrState().panes[restarted.pane_id].args.slice(0, 2), ['--session-id', id]);
+    assert.match(t.herdrState().prompts.at(-1).text, /and the reset page[\s\S]*This continues the work of session S1/);
+
     fs.writeFileSync(transcript, '{}\n');
-    t.patchRow(1, { transcript_path: transcript });
     t.patchHerdr(s => { delete s.panes[restarted.pane_id]; });
-    const resumed = json(t.run(['resume', 'S1', '--json', '--request', 'and the reset page', '--reason', 'same area, open']));
+    const resumed = json(t.run(['resume', 'S1', '--json', '--request', 'and the 404 page', '--reason', 'r']));
     assert.strictEqual(resumed.action, 'resumed');
-    pane = t.herdrState().panes[resumed.pane_id];
-    assert.deepStrictEqual(pane.args.slice(0, 2), ['--resume', id]);
-    assert.strictEqual(t.herdrState().prompts.at(-1).text, '[orchestrator S1] and the reset page');
-    assert.strictEqual(t.row(1).launches, 3);
+    assert.deepStrictEqual(t.herdrState().panes[resumed.pane_id].args.slice(0, 2), ['--resume', id]);
+    assert.strictEqual(t.row(1).launches, 4);
   } finally { t.cleanup(); }
 });
 
-test('a transient failure on resume keeps the conversation; only relaunch replaces it, and a failed relaunch restores it', () => {
+test('a failed resume changes nothing, so a retry sends the request once; held work survives', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix it', '--reason', 'r']));
+    const id = t.row(1).native_session_id;
+    const transcript = path.join(t.dir, `${id}.jsonl`);
+    fs.writeFileSync(transcript, '{}\n');
+    t.patchRow(1, { transcript_path: transcript, pending: JSON.stringify([{ text: '[orchestrator S1] earlier held ask', state: 'pending' }]) });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'timeout'; });
+    const before = t.row(1);
+
+    const failed = t.run(['resume', 'S1', '--request', 'now the footer', '--reason', 'continuing']);
+    assert.strictEqual(failed.status, 1);
+    assert.match(failed.stderr, /Nothing changed[\s\S]*relaunch S1/);
+    const after = t.row(1);
+    for (const k of ['native_session_id', 'transcript_path', 'launches', 'pending']) assert.strictEqual(after[k], before[k], k);
+    assert.strictEqual(after.pane_id, null, 'only the closed tab is cleared');
+    assert.strictEqual(Object.keys(t.herdrState().panes).length, 1, 'the failed tab is closed');
+
+    t.patchHerdr(s => { s.failStart = null; });
+    const prompts = t.herdrState().prompts.length;
+    ok(t.run(['resume', 'S1', '--request', 'now the footer', '--reason', 'continuing']));
+    assert.deepStrictEqual(t.herdrState().prompts.slice(prompts).map(p => p.text),
+      ['[orchestrator S1] earlier held ask', '[orchestrator S1] now the footer']);
+  } finally { t.cleanup(); }
+});
+
+test('relaunch replaces the conversation only when a worker may have started, and records the old one', () => {
   const t = setup();
   try {
     ok(t.run(['start']));
@@ -267,34 +302,32 @@ test('a transient failure on resume keeps the conversation; only relaunch replac
     fs.writeFileSync(transcript, '{}\n');
     t.patchRow(1, { transcript_path: transcript });
     ok(t.run(['report', '--summary', 'Button fixed; footer remains'], { ORCHESTRATOR_SESSION: '1' }));
-    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'timeout'; });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; });
 
-    const failed = t.run(['resume', 'S1', '--request', 'now the footer', '--reason', 'continuing']);
-    assert.strictEqual(failed.status, 1);
-    assert.match(failed.stderr, /conversation is intact[\s\S]*relaunch S1/);
-    assert.strictEqual(t.row(1).native_session_id, id, 'a timeout is not a lost conversation');
-    assert.strictEqual(t.row(1).pane_id, null);
-    assert.strictEqual(Object.keys(t.herdrState().panes).length, 1, 'the failed tab is closed');
+    for (const [failure, patch] of [['agent start', s => { s.failStart = 'failed'; }], ['tab create', s => { s.failTabCreate = true; }],
+      ['a malformed tab create', s => { s.badTabCreate = true; }]]) {
+      t.patchHerdr(patch);
+      const r = t.run(['relaunch', 'S1', '--request', 'now the footer', '--reason', 'resume keeps failing']);
+      assert.strictEqual(r.status, 1, failure);
+      assert.match(r.stderr, /previous conversation is still the recorded one/, failure);
+      assert.strictEqual(t.row(1).native_session_id, id, failure);
+      assert.strictEqual(t.row(1).transcript_path, transcript, failure);
+      t.patchHerdr(s => { s.failStart = null; s.failTabCreate = false; s.badTabCreate = false; });
+    }
 
-    const refused = t.run(['relaunch', 'S1', '--request', 'now the footer', '--reason', 'resume keeps failing']);
-    assert.strictEqual(refused.status, 1);
-    assert.strictEqual(t.row(1).native_session_id, id, 'a failed relaunch restores the recorded conversation');
-    assert.ok(t.events(1).includes('relaunch-failed'));
-
-    t.patchHerdr(s => { s.failStart = null; });
     const out = json(t.run(['relaunch', 'S1', '--json', '--request', 'now the footer', '--reason', 'resume keeps failing']));
     assert.strictEqual(out.action, 'relaunched');
     assert.strictEqual(out.previous, id);
     assert.notStrictEqual(t.row(1).native_session_id, id);
-    const prompt = t.herdrState().prompts.at(-1).text;
-    assert.match(prompt, /now the footer[\s\S]*Button fixed; footer remains[\s\S]*ticket FAC-31/);
+    assert.strictEqual(t.row(1).transcript_path, null);
+    assert.match(t.herdrState().prompts.at(-1).text, /now the footer[\s\S]*ticket FAC-31[\s\S]*Button fixed; footer remains/);
     const d = t.open();
     assert.match(store.recentEvents(d, 1, 50).find(e => e.kind === 'relaunched').detail, new RegExp(`previous conversation ${id} at `));
     d.close();
   } finally { t.cleanup(); }
 });
 
-test('a Pi resume opens the session file when it exists and restarts with the full brief when it is gone', () => {
+test('a Pi resume opens its exact recorded file, and restarts with the full brief when that file is gone', () => {
   const t = setup();
   try {
     const sessions = path.join(t.dir, 'pi-sessions');
@@ -307,21 +340,23 @@ test('a Pi resume opens the session file when it exists and restarts with the fu
     assert.match(t.run(['resume', 'S1', '--request', 'x', '--reason', 'r']).stderr, /already running/, 'a path-form session is live');
     fs.writeFileSync(row.transcript_path, '{}\n');
 
-    t.patchHerdr(s => { delete s.panes[first.pane_id]; });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.piSessionDir = path.join(t.dir, 'moved'); });
     const resumed = json(t.run(['resume', 'S1', '--json', '--request', 'add retries', '--reason', 'r']));
     assert.strictEqual(resumed.action, 'resumed');
+    assert.deepStrictEqual(t.herdrState().panes[resumed.pane_id].args.slice(0, 2), ['--session', row.transcript_path],
+      'the exact file, wherever Pi now keeps new sessions');
     assert.strictEqual(t.herdrState().prompts.at(-1).text, '[orchestrator S1] add retries');
 
     fs.rmSync(row.transcript_path);
+    t.patchRow(1, { transcript_path: row.transcript_path });
     t.patchHerdr(s => { delete s.panes[resumed.pane_id]; });
     const restarted = json(t.run(['resume', 'S1', '--json', '--request', 'add backoff', '--reason', 'r']));
     assert.strictEqual(restarted.action, 'restarted');
-    assert.match(restarted.why, /is gone/);
     assert.match(t.herdrState().prompts.at(-1).text, /add backoff[\s\S]*report --summary[\s\S]*This continues the work of session S1/);
   } finally { t.cleanup(); }
 });
 
-test('a tab waiting on the user keeps its brief held; a closed waiting tab hands the brief to the next start', () => {
+test('a tab waiting on the user keeps its brief held; a failed start keeps it for the retry', () => {
   const t = setup();
   try {
     ok(t.run(['start']));
@@ -334,29 +369,64 @@ test('a tab waiting on the user keeps its brief held; a closed waiting tab hands
     assert.match(t.run(['send', 'S1', '--request', 'x', '--reason', 'r']).stderr, /still holds prompts/);
     assert.match(t.run(['deliver', 'S1']).stderr, /is blocked/);
 
-    t.patchHerdr(s => { delete s.panes[out.pane_id]; s.blockStart = false; });
-    json(t.run(['resume', 'S1', '--json', '--request', 'continue', '--reason', 'r']));
-    const prompt = t.herdrState().prompts.at(-1).text;
-    assert.match(prompt, /continue[\s\S]*never reached a worker[\s\S]*build the importer/);
+    // The user closed the waiting tab: its conversation was never written.
+    t.patchHerdr(s => { delete s.panes[out.pane_id]; s.blockStart = false; s.failStart = 'failed'; });
+    assert.match(t.run(['resume', 'S1', '--request', 'continue', '--reason', 'r']).stderr, /never recorded[\s\S]*relaunch/);
+    t.patchHerdr(s => { s.failStart = null; });
+    json(t.run(['relaunch', 'S1', '--json', '--request', 'continue', '--reason', 'its conversation was never written']));
+    assert.match(t.herdrState().prompts.at(-1).text, /continue[\s\S]*never reached a worker[\s\S]*build the importer/);
     assert.strictEqual(t.row(1).pending, null);
+
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    const failed = t.run(['new', '--title', 'Another', '--request', 'write the exporter', '--reason', 'r']);
+    assert.match(failed.stderr, /brief held, but no agent started[\s\S]*resume S2, without --request/);
+    t.patchHerdr(s => { s.failStart = null; });
+    const started = json(t.run(['resume', 'S2', '--json', '--reason', 'retry the failed start']));
+    assert.strictEqual(started.action, 'started');
+    assert.match(t.herdrState().prompts.at(-1).text, /^\[orchestrator S2\] write the exporter/);
+    assert.strictEqual(t.herdrState().prompts.filter(p => /write the exporter/.test(p.text)).length, 1);
   } finally { t.cleanup(); }
 });
 
-test('an interrupted persona wait leaves the brief deliverable and never sends /brain twice', () => {
+test('an interrupted send is unknown: nothing resends or drops it until it is settled', () => {
   const t = setup();
   try {
     ok(t.run(['start']));
     t.patchHerdr(s => { s.promptPlan = ['hang:4000']; });
     const killed = t.run(['new', '--title', 'Slow', '--request', 'audit the API', '--reason', 'r', '--persona', 'scout'], {}, undefined, { timeout: 1500 });
     assert.notStrictEqual(killed.status, 0, 'the CLI was killed mid-wait');
-    const held = store.pendingOf(t.row(1));
-    assert.deepStrictEqual(held.map(e => e.state), ['sending', 'pending']);
+    assert.deepStrictEqual(store.pendingOf(t.row(1)).map(e => e.state), ['unknown', 'pending']);
     sleep(3000); // let the fake's hung prompt finish
-    const out = json(t.run(['deliver', 'S1', '--json']));
-    assert.match(out.skipped, /1 prompt/);
+    assert.match(t.run(['deliver', 'S1']).stderr, /delivery is unknown[\s\S]*settle S1/);
+    const tab = t.row(1);
+    t.patchHerdr(s => { delete s.panes[tab.pane_id]; });
+    assert.match(t.run(['resume', 'S1', '--request', 'x', '--reason', 'r']).stderr, /delivery is unknown/, 'resume does not replay it');
+    assert.match(t.run(['relaunch', 'S1', '--request', 'x', '--reason', 'r']).stderr, /delivery is unknown/, 'nor relaunch');
+    assert.strictEqual(t.herdrState().prompts.filter(p => p.text.startsWith('/brain')).length, 1);
+
+    ok(t.run(['settle', 'S1', '--drop']));
+    json(t.run(['resume', 'S1', '--json', '--reason', 'deliver the held brief']));
     const texts = t.herdrState().prompts.map(p => p.text);
     assert.strictEqual(texts.filter(x => x.startsWith('/brain')).length, 1);
     assert.match(texts.at(-1), /^\[orchestrator S1\] audit the API/);
+  } finally { t.cleanup(); }
+});
+
+test('a local herdr timeout leaves the prompt unknown, and settle --resend sends it again', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    t.patchHerdr(s => { s.promptPlan = ['hang:2500']; });
+    const out = json(t.run(['new', '--json', '--title', 'Slow', '--request', 'audit the API', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' }));
+    assert.strictEqual(out.action, 'waiting');
+    assert.match(out.note, /may or may not have reached the worker/);
+    sleep(2000);
+    assert.deepStrictEqual(store.pendingOf(t.row(1)).map(e => e.state), ['unknown']);
+    assert.match(t.run(['settle', 'S1']).stderr, /exactly one of --resend or --drop/);
+    ok(t.run(['settle', 'S1', '--resend']));
+    ok(t.run(['deliver', 'S1']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /audit the API/.test(p.text)).length, 2);
+    assert.strictEqual(t.row(1).pending, null);
   } finally { t.cleanup(); }
 });
 
@@ -384,16 +454,41 @@ test('a start failure whose cleanup fails keeps the tab recorded and blocks a du
     t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
     const r = t.run(['new', '--title', 'Flaky', '--request', 'go', '--reason', 'r']);
     assert.strictEqual(r.status, 1);
-    assert.match(r.stderr, /could not be closed and stays recorded/);
+    assert.match(r.stderr, /uncertain[\s\S]*could not be closed and stays recorded/);
     const kept = t.row(1);
     assert.ok(kept.pane_id && t.herdrState().panes[kept.pane_id], 'the orphan is recorded, not forgotten');
     t.patchHerdr(s => { s.failStart = null; });
-    assert.match(t.run(['resume', 'S1', '--request', 'go', '--reason', 'r']).stderr, /still open and could not be closed/);
+    assert.match(t.run(['resume', 'S1', '--reason', 'r']).stderr, /still open and could not be closed/);
     assert.strictEqual(Object.keys(t.herdrState().panes).length, 2, 'no second worker');
     t.patchHerdr(s => { s.failClose = false; });
-    const out = json(t.run(['resume', 'S1', '--json', '--request', 'go', '--reason', 'r']));
-    assert.strictEqual(out.action, 'restarted');
-    assert.strictEqual(t.herdrState().panes[kept.pane_id], undefined, 'the leftover tab is closed first');
+    ok(t.run(['resume', 'S1', '--reason', 'r']));
+    assert.strictEqual(t.herdrState().panes[kept.pane_id], undefined, 'the agentless leftover tab is closed first');
+    assert.strictEqual(t.herdrState().prompts.filter(p => /^\[orchestrator S1\] go/.test(p.text)).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a tab that now runs another conversation is never closed: stop, resume, relaunch, and reconcile detach from it', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const reuse = () => {
+      const pane = t.row(1).pane_id;
+      t.patchHerdr(s => { Object.assign(s.panes[pane], { agent_status: 'working', agent_session: { kind: 'id', value: 'someone-else' } }); });
+      return pane;
+    };
+    json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix', '--reason', 'r']));
+    let pane = reuse();
+    assert.strictEqual(json(t.run(['stop', 'S1', '--json'])).action, 'detached');
+    assert.ok(t.herdrState().panes[pane], 'stop left it open');
+    for (const verb of ['resume', 'relaunch']) {
+      const launched = json(t.run([verb, 'S1', '--json', '--request', 'more', '--reason', 'r']));
+      assert.ok(t.herdrState().panes[pane], `${verb} left the other conversation's tab open`);
+      assert.notStrictEqual(launched.pane_id, pane);
+      pane = reuse();
+    }
+    assert.deepStrictEqual(json(t.run(['reconcile', '--json'])), { closed: ['S1'], adopted: [] });
+    assert.ok(t.herdrState().panes[pane]);
+    assert.strictEqual(t.row(1).pane_id, null);
   } finally { t.cleanup(); }
 });
 
@@ -410,15 +505,23 @@ test('reconcile adopts a conversation resumed in another tab in the same pass; r
     handResume('w1:p50');
     assert.deepStrictEqual(json(t.run(['reconcile', '--json'])), { closed: ['S1'], adopted: ['S1'] });
     assert.strictEqual(t.row(1).pane_id, 'w1:p50');
+    assert.strictEqual(t.run(['reconcile'], { HERDR_PANE_ID: 'w1:p50' }).status, 3, 'only the orchestrator reconciles');
 
     t.patchHerdr(s => { delete s.panes['w1:p50']; });
     ok(t.run(['reconcile']));
     handResume('w1:p51');
-    const r = t.run(['resume', 'S1', '--request', 'more', '--reason', 'r']);
-    assert.match(r.stderr, /already running in pane w1:p51.*adopted/);
+    const tabsBefore = t.herdrState().seq;
+    assert.match(t.run(['resume', 'S1', '--request', 'more', '--reason', 'r']).stderr, /already running in pane w1:p51.*adopted/);
     assert.strictEqual(t.row(1).pane_id, 'w1:p51');
-    assert.ok(!t.herdrState().calls.some(c => c[0] === 'tab' && c[1] === 'create' && t.herdrState().seq > 1), 'no second worker');
-    ok(t.run(['send', 'S1', '--request', 'more', '--reason', 'r']));
+
+    t.patchHerdr(s => { delete s.panes['w1:p51']; });
+    ok(t.run(['reconcile']));
+    handResume('w1:p52');
+    t.patchHerdr(s => { s.failAgentList = true; });
+    assert.match(t.run(['resume', 'S1', '--request', 'more', '--reason', 'r']).stderr, /cannot check whether S1 is already running/);
+    assert.match(t.run(['relaunch', 'S1', '--request', 'more', '--reason', 'r']).stderr, /cannot check whether S1 is already running/);
+    assert.strictEqual(t.herdrState().seq, tabsBefore, 'no second worker, and no replacement identity');
+    assert.strictEqual(t.row(1).native_session_id, id);
   } finally { t.cleanup(); }
 });
 
@@ -555,6 +658,54 @@ test('the Pi extension does nothing outside a worker', () => {
   } finally { if (saved !== undefined) process.env.ORCHESTRATOR_DB = saved; }
 });
 
+test('a start event from another launch, or older than one applied, never changes the identity', () => {
+  const t = setup();
+  try {
+    const d = t.open();
+    const id = store.createSession(d, { title: 'pi', intent: 'i', harness: 'pi', native_session_id: 'A', cwd: t.dir });
+    store.updateSession(d, id, { launches: 2 });
+    store.recordHookEvent(d, id, { kind: 'start', launch: 2, seq: 2, nativeSessionId: 'B', transcriptPath: '/s/B.jsonl' });
+    store.recordHookEvent(d, id, { kind: 'start', launch: 2, seq: 1, nativeSessionId: 'A', transcriptPath: '/s/A.jsonl' });
+    store.recordHookEvent(d, id, { kind: 'start', launch: 3, seq: 9, nativeSessionId: 'C', transcriptPath: '/s/C.jsonl' });
+    store.recordHookEvent(d, id, { kind: 'compact', launch: 1 });
+    store.recordHookEvent(d, id, { kind: 'prompt', launch: 1, text: 'kept: the user said it' });
+    const row = store.getSession(d, id);
+    assert.deepStrictEqual([row.native_session_id, row.transcript_path, row.compactions], ['B', '/s/B.jsonl', 0]);
+    assert.strictEqual(store.promptCount(d, id), 1);
+    d.close();
+  } finally { t.cleanup(); }
+});
+
+test('Pi session starts that reach the record out of order leave the latest identity', async () => {
+  const t = setup();
+  const saved = { ...process.env };
+  try {
+    const d = t.open();
+    const id = store.createSession(d, { title: 'pi', intent: 'i', harness: 'pi', native_session_id: 'A', cwd: t.dir });
+    store.updateSession(d, id, { launches: 1 });
+    Object.assign(process.env, { ORCHESTRATOR_DB: t.db, ORCHESTRATOR_SESSION: String(id), ORCHESTRATOR_LAUNCH: '1', ORCHESTRATOR_CLI: CLI, ORCHESTRATOR_NODE: process.execPath });
+    const handlers = {};
+    require(path.join(SCRIPTS, 'pi-extension.js'))({ on: (name, fn) => { handlers[name] = fn; } });
+    d.exec('BEGIN IMMEDIATE'); // both writers queue on the record
+    for (const native of ['A', 'B', 'C', 'D']) {
+      handlers.session_start({}, { sessionManager: { getSessionId: () => native, getSessionFile: () => `/s/${native}.jsonl` } });
+    }
+    await new Promise(r => setTimeout(r, 800));
+    d.exec('COMMIT');
+    d.close();
+    const settled = () => { const c = t.open(); try { return store.recentEvents(c, id, 50).filter(e => /start/.test(e.kind)).length === 4; } finally { c.close(); } };
+    for (let i = 0; i < 100 && !settled(); i++) await new Promise(r => setTimeout(r, 50));
+    assert.ok(settled());
+    assert.strictEqual(t.row(id).native_session_id, 'D');
+    assert.strictEqual(t.row(id).transcript_path, '/s/D.jsonl');
+  } finally {
+    for (const k of ['ORCHESTRATOR_DB', 'ORCHESTRATOR_SESSION', 'ORCHESTRATOR_LAUNCH', 'ORCHESTRATOR_CLI', 'ORCHESTRATOR_NODE']) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+    t.cleanup();
+  }
+});
+
 test('concurrent compactions are all counted', async () => {
   const t = setup();
   try {
@@ -581,25 +732,31 @@ test('records opened at the same moment for the first time all succeed', async (
 
 // ─── Status, stop, report ────────────────────────────────────────────────────
 
-test('status --ask returns the refreshed record only when the worker answered', () => {
+test('status --ask is a best-effort request that never claims the summary is fresh', () => {
   const t = setup();
   try {
     ok(t.run(['start']));
     const first = json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix', '--reason', 'r']));
+    assert.match(ok(t.run(['status', 'S1'])).stdout, /summary last reported: never/);
     ok(t.run(['report', '--summary', 'old summary'], { ORCHESTRATOR_SESSION: '1' }));
-    const report = `ORCHESTRATOR_SESSION=1 ORCHESTRATOR_DB='${t.db}' '${process.execPath}' '${CLI}' report --summary 'fresh: footer done'`;
+    t.patchRow(1, { summary_at: new Date(Date.now() - 3 * 3600e3).toISOString() });
+
+    let out = ok(t.run(['status', 'S1', '--ask'])).stdout;
+    assert.match(out, /^asked: yes, and its turn ended\nsummary last reported: 3h ago/, 'a turn that did not report leaves the old age');
+    assert.doesNotMatch(out, /refreshed/);
+    assert.ok(t.herdrState().prompts.at(-1).wait);
+
+    const report = `ORCHESTRATOR_SESSION=1 ORCHESTRATOR_DB='${t.db}' '${process.execPath}' '${CLI}' report --summary 'footer done'`;
     t.patchHerdr(s => { s.onPromptWait = report; });
-    const asked = ok(t.run(['status', 'S1', '--ask'])).stdout;
-    assert.match(asked, /^refreshed: yes/);
-    assert.match(asked, /summary: fresh: footer done/);
-    assert.ok(t.herdrState().prompts.at(-1).wait, 'the ask waits for the worker to take and finish its turn');
+    out = ok(t.run(['status', 'S1', '--ask'])).stdout;
+    assert.match(out, /summary last reported: just now[\s\S]*summary: footer done/);
 
     t.patchHerdr(s => { s.onPromptWait = null; s.promptPlan = ['timeout']; });
-    assert.match(ok(t.run(['status', 'S1', '--ask'])).stdout, /^refreshed: no: .*timed out/);
+    assert.match(ok(t.run(['status', 'S1', '--ask'])).stdout, /^asked: yes, but .*timed out/);
 
     t.patchHerdr(s => { s.panes[first.pane_id].agent_status = 'working'; });
     const prompts = t.herdrState().prompts.length;
-    assert.match(ok(t.run(['status', 'S1', '--ask'])).stdout, /^refreshed: no: the worker is working, so it was not asked/);
+    assert.match(ok(t.run(['status', 'S1', '--ask'])).stdout, /^asked: no: the worker is working/);
     assert.strictEqual(t.herdrState().prompts.length, prompts);
   } finally { t.cleanup(); }
 });
