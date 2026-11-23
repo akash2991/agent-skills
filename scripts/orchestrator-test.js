@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { spawn, spawnSync, execFileSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -873,44 +874,76 @@ test('records opened at the same moment for the first time all succeed', async (
 
 // ─── Forced interleavings ────────────────────────────────────────────────────
 // Another writer takes the record's write lock, makes its change, and holds it
-// uncommitted; the code under test then reads the old state, waits on the lock,
-// and must see the change once the writer commits. The order is forced by the
-// lock: the writer holds it before the code under test starts.
+// uncommitted. The code under test reads the old state and reaches a probe in
+// store.js, which signals the writer; only then does the writer commit, while
+// the code under test waits on the lock. A watchdog commits after 10 s so
+// nothing hangs, and a test whose probe never signalled fails.
 
 const LOCK_HOLDER = `
+const crypto = require('node:crypto');
+const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
-const [file, sql, holdMs] = process.argv.slice(1);
+const [file, sql, signal] = process.argv.slice(1);
 const db = new DatabaseSync(file);
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('BEGIN IMMEDIATE');
 db.exec(sql);
 process.stdout.write('locked\\n');
-setTimeout(() => { db.exec('COMMIT'); db.close(); }, Number(holdMs));
+const started = Date.now();
+const poll = setInterval(() => {
+  const signalled = fs.existsSync(signal);
+  if (!signalled && Date.now() - started < 10000) return;
+  clearInterval(poll);
+  db.exec('COMMIT');
+  db.close();
+  process.stdout.write(signalled ? 'committed after the signal\\n' : 'committed by the watchdog\\n');
+}, 5);
 `;
 
-function holdLock(file, sql, holdMs = 1500) {
-  const child = spawn(process.execPath, ['-e', LOCK_HOLDER, file, sql, String(holdMs)], { stdio: ['ignore', 'pipe', 'pipe'] });
+function holdLock(t, sql) {
+  const signal = path.join(t.dir, `signal-${crypto.randomUUID()}`);
+  const child = spawn(process.execPath, ['-e', LOCK_HOLDER, t.db, sql, signal], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
   let stderr = '';
   child.stderr.on('data', d => { stderr += d; });
-  const done = new Promise(resolve => child.on('close', status => resolve({ status, stderr })));
-  const locked = new Promise((resolve, reject) => {
-    child.stdout.on('data', d => { if (String(d).includes('locked')) resolve(); });
-    child.on('close', () => reject(new Error(`the lock holder exited before locking: ${stderr}`)));
+  const done = new Promise(resolve => {
+    child.on('error', err => resolve({ status: null, signalled: false, stderr: err.message }));
+    child.on('close', status => resolve({ status, signalled: stdout.includes('committed after the signal'), stderr }));
   });
-  return { locked, done };
+  const locked = new Promise((resolve, reject) => {
+    child.stdout.on('data', d => { stdout += d; if (stdout.includes('locked')) resolve(); });
+    done.then(r => reject(new Error(`the lock holder exited before locking: ${r.stderr}`)));
+  });
+  return { locked, done, release: () => fs.writeFileSync(signal, ''), kill: () => child.kill() };
+}
+
+// Run `fn` with the probe `name` releasing the writer; always clean up.
+async function raced(t, sql, name, fn) {
+  const writer = holdLock(t, sql);
+  try {
+    await writer.locked;
+    store.setProbe(name, writer.release);
+    const result = fn();
+    const done = await writer.done;
+    assert.strictEqual(done.status, 0, done.stderr);
+    assert.ok(done.signalled, `the probe ${name} never released the writer`);
+    return result;
+  } finally {
+    store.setProbe(name, null);
+    writer.kill();
+  }
 }
 
 for (const [name, previous] of [['no owner', null], ['an owner that is gone', 'w1:gone']]) {
   test(`a claim judged against ${name} while another commits its own re-judges and takes nothing`, async () => {
     const t = setup();
+    const d = t.open();
     try {
-      const d = t.open();
       if (previous) d.prepare("INSERT INTO owner (id, pane_id, at) VALUES (1, ?, '2026-01-01T00:00:00Z')").run(previous);
-      const rival = holdLock(t.db, "INSERT INTO owner (id, pane_id, at) VALUES (1, 'w1:rival', '2026-11-23T00:00:00Z') " +
-        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at');
-      await rival.locked;
       const judged = [];
-      const first = store.claimOwner(d, { pane_id: 'w1:me' }, held => { judged.push(held.pane_id); return false; });
+      const first = await raced(t, "INSERT INTO owner (id, pane_id, at) VALUES (1, 'w1:rival', '2026-11-23T00:00:00Z') " +
+        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at', 'claim:judged',
+      () => store.claimOwner(d, { pane_id: 'w1:me' }, held => { judged.push(held.pane_id); return false; }));
       assert.deepStrictEqual(judged, previous ? [previous] : [], 'judged the state from before the rival committed');
       assert.strictEqual(first.claimed, false);
       assert.strictEqual(first.changed, true, 'the owner changed after it was judged');
@@ -918,38 +951,32 @@ for (const [name, previous] of [['no owner', null], ['an owner that is gone', 'w
       const again = store.claimOwner(d, { pane_id: 'w1:me' }, held => held.pane_id === 'w1:rival');
       assert.strictEqual(again.claimed, false);
       assert.strictEqual(store.getOwner(d).pane_id, 'w1:rival');
-      d.close();
-      assert.strictEqual((await rival.done).status, 0);
-    } finally { t.cleanup(); }
+    } finally { d.close(); t.cleanup(); }
   });
 }
 
 test('a compaction that waits on another writer counts both', async () => {
   const t = setup();
+  const d = t.open();
   try {
-    const d = t.open();
     const id = store.createSession(d, { title: 'busy', intent: 'i', harness: 'claude', native_session_id: 'c-1', cwd: t.dir });
-    const other = holdLock(t.db, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`);
-    await other.locked;
-    assert.strictEqual(store.getSession(d, id).compactions, 0, 'the other compaction is not visible yet');
-    store.recordHookEvent(d, id, { kind: 'compact', detail: 'auto' });
+    await raced(t, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`, 'hook:before-write', () => {
+      assert.strictEqual(store.getSession(d, id).compactions, 0, 'the other compaction is not visible yet');
+      store.recordHookEvent(d, id, { kind: 'compact', detail: 'auto' });
+    });
     assert.strictEqual(store.getSession(d, id).compactions, 2);
-    d.close();
-    assert.strictEqual((await other.done).status, 0);
-  } finally { t.cleanup(); }
+  } finally { d.close(); t.cleanup(); }
 });
 
 test('an opener that read version 0 while another created the schema does not create it again', async () => {
   const t = setup();
+  let d = null;
   try {
     fs.mkdirSync(path.dirname(t.db), { recursive: true });
-    const creator = holdLock(t.db, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`);
-    await creator.locked;
-    const d = store.open(t.db);
+    d = await raced(t, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`, 'open:read-version',
+      () => store.open(t.db));
     assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
-    d.close();
-    assert.strictEqual((await creator.done).status, 0);
-  } finally { t.cleanup(); }
+  } finally { if (d) d.close(); t.cleanup(); }
 });
 
 // ─── Status, stop, report ────────────────────────────────────────────────────

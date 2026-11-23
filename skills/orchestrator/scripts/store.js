@@ -101,6 +101,12 @@ const UPDATABLE = new Set([
 ]);
 
 const now = () => new Date().toISOString();
+
+// Test seam: a named point a test can stop at, to force an interleaving with
+// another writer. Nothing is registered outside the tests, so each is a no-op.
+const probes = new Map();
+const probe = name => { const fn = probes.get(name); if (fn) fn(); };
+const setProbe = (name, fn) => (fn ? probes.set(name, fn) : probes.delete(name));
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 function retryBusy(fn, budgetMs) {
@@ -128,6 +134,7 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
     retryBusy(() => db.exec('PRAGMA journal_mode = WAL'), busyTimeout);
     const version = () => db.prepare('PRAGMA user_version').get().user_version;
     if (version() === 0) {
+      probe('open:read-version');
       transaction(db, () => {
         if (version() !== 0) return; // another opener initialised it first
         db.exec(SCHEMA);
@@ -248,6 +255,7 @@ const sameOwner = (a, b) => (!a && !b) || (!!a && !!b && a.pane_id === b.pane_id
 function claimOwner(db, me, holderAlive) {
   const seen = getOwner(db);
   const alive = !!seen && seen.pane_id !== me.pane_id && holderAlive(seen);
+  probe('claim:judged');
   return transaction(db, () => {
     const held = getOwner(db);
     if (!sameOwner(held, seen)) return { claimed: false, held, changed: true };
@@ -276,6 +284,7 @@ function releaseOwner(db, paneId) {
 // applied (`seq`, from Pi's independent writers), does not change them. Prompts are
 // always kept; they are what the user said.
 function recordHookEvent(db, sessionId, event) {
+  probe('hook:before-write');
   return transaction(db, () => {
     const row = getSession(db, sessionId);
     if (!row) return false;
@@ -321,5 +330,5 @@ function recordHookEvent(db, sessionId, event) {
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
   addEvent, addPrompt, addDecision, recentPrompts, promptCount, recentEvents, recordHookEvent,
-  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION,
+  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, setProbe,
 };
