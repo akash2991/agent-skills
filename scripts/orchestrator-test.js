@@ -35,6 +35,7 @@ if (group === 'pane' && verb === 'get') {
   okRead({ agents: agents() });
 } else if (group === 'tab' && verb === 'create') {
   if (s.failTabCreate) fail('failed', 'server unavailable');
+  if (s.hangTabCreate) { const end = Date.now() + s.hangTabCreate; while (Date.now() < end) {} process.exit(0); }
   if (s.badTabCreate) ok({});
   const n = ++s.seq;
   const pane = { pane_id: 'w1:p' + n, tab_id: 'w1:t' + n, agent: null, env: [] };
@@ -314,6 +315,18 @@ test('relaunch replaces the conversation only when a worker may have started, an
       assert.strictEqual(t.row(1).transcript_path, transcript, failure);
       t.patchHerdr(s => { s.failStart = null; s.failTabCreate = false; s.badTabCreate = false; });
     }
+
+    // herdr times out creating the tab: nothing was recorded, so nothing is claimed as kept.
+    t.patchHerdr(s => { s.promptPlan = []; s.hangTabCreate = 2500; });
+    const timedOut = t.run(['relaunch', 'S1', '--request', 'now the footer', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    assert.match(timedOut.stderr, /Nothing changed in the record[\s\S]*empty tab may be open/);
+    assert.doesNotMatch(timedOut.stderr, /Its tab is kept/);
+    assert.strictEqual(t.row(1).native_session_id, id);
+    sleep(2000);
+    t.patchHerdr(s => { s.hangTabCreate = 0; });
+    const d0 = t.open();
+    assert.match(store.recentEvents(d0, 1, 50).filter(e => e.kind === 'relaunch-failed').at(-1).detail, /^restored the previous conversation/);
+    d0.close();
 
     const out = json(t.run(['relaunch', 'S1', '--json', '--request', 'now the footer', '--reason', 'resume keeps failing']));
     assert.strictEqual(out.action, 'relaunched');
@@ -858,10 +871,22 @@ test('stop closes a settled worker, refuses a mid-turn or permission-blocked one
     assert.strictEqual(t.row(1).status, 'open', 'closing a tab does not resolve the work');
     assert.match(ok(t.run(['status', 'S1'])).stdout, /tab closed[\s\S]*events: .*stopped/);
 
+    // Blocked mid-turn on a permission prompt: a refused send leaves its request held, and stop still refuses.
+    json(t.run(['resume', 'S1', '--json', '--request', 'continue', '--reason', 'r']));
+    const pane = t.row(1).pane_id;
+    t.patchHerdr(s => { s.panes[pane].agent_status = 'blocked'; s.promptPlan = ['reject']; });
+    assert.match(t.run(['send', 'S1', '--request', 'also tag it', '--reason', 'r']).stderr, /the request is held/);
+    assert.match(t.run(['stop', 'S1']).stderr, /is blocked; wait for it to settle, or pass --force/);
+    assert.ok(t.herdrState().panes[pane], 'the blocked worker keeps running');
+    assert.strictEqual(store.pendingOf(t.row(1)).length, 1, 'and its held request is kept');
+    assert.strictEqual(json(t.run(['stop', 'S1', '--json', '--force'])).action, 'closed');
+
+    // Blocked at startup on a trust prompt: the same rule, the user's call.
     t.patchHerdr(s => { s.blockStart = true; });
-    const waiting = json(t.run(['resume', 'S1', '--json', '--request', 'x', '--reason', 'r']));
+    const waiting = json(t.run(['resume', 'S1', '--json', '--reason', 'r']));
     assert.strictEqual(waiting.action, 'waiting');
-    assert.strictEqual(json(t.run(['stop', 'S1', '--json'])).action, 'closed', 'a tab blocked before its first prompt may close');
+    assert.match(t.run(['stop', 'S1']).stderr, /is blocked/);
+    assert.strictEqual(json(t.run(['stop', 'S1', '--json', '--force'])).action, 'closed');
   } finally { t.cleanup(); }
 });
 

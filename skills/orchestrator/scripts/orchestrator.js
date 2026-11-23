@@ -428,6 +428,13 @@ function deliverPending(db, id, paneId) {
   return { ok: true };
 }
 
+// What an unconfirmed launch failure left behind, for the orchestrator to check.
+function uncertainNote(err, what = 'the agent') {
+  return err.tabRecorded
+    ? `Its tab is kept, because ${what} may have started; check it before anything else`
+    : 'Nothing changed in the record, but herdr timed out creating the tab: an empty tab may be open, with no agent in it';
+}
+
 const unknownHeld = row => store.pendingOf(row).filter(e => e.state === 'unknown');
 
 function requireSettled(row) {
@@ -457,8 +464,8 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`, '--env', `ORCHESTRATOR_LAUNCH=${token}`,
       '--env', `ORCHESTRATOR_CLI=${CLI}`, '--env', `ORCHESTRATOR_NODE=${process.execPath}`]);
   } catch (err) {
-    err.startFailed = true;
-    err.confirmed = err.herdrCode !== 'local_timeout';
+    // Nothing was recorded. A local timeout may still have left an empty tab.
+    Object.assign(err, { startFailed: true, confirmed: err.herdrCode !== 'local_timeout', tabRecorded: false });
     throw err;
   }
   const pane = tab.root_pane && tab.root_pane.pane_id;
@@ -498,7 +505,7 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       store.addEvent(db, row.id, 'start-uncertain', `${err.message}; tab ${tabId} could not be closed`);
     }
     const failure = new CliError(`${err.message}${closed ? '' : `; its tab ${tabId} could not be closed and stays recorded`}`);
-    Object.assign(failure, { startFailed: true, confirmed: closed });
+    Object.assign(failure, { startFailed: true, confirmed: closed, tabRecorded: !closed });
     throw failure;
   }
   store.addEvent(db, row.id, resume ? 'resumed' : 'launched', `${row.harness} pane ${pane}`);
@@ -692,7 +699,7 @@ const commands = {
       } catch (err) {
         if (!err.startFailed) throw err;
         throw new CliError(`S${id} is recorded with its brief held, but ${err.confirmed ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
-          `${err.message}. ${err.confirmed ? `Retry with resume S${id}, without --request` : `Check its tab, then resume S${id}`}`);
+          `${err.message}. ${err.confirmed ? `Retry with resume S${id}, without --request` : `${uncertainNote(err)}; then resume S${id}, without --request`}`);
       }
       print(launchResult(id, 'new', launched, { tracked: TRACKED.has(harness) }), opts);
     });
@@ -719,7 +726,7 @@ const commands = {
         if (!err.startFailed) return err;
         return new CliError(`${what} S${id} failed: ${err.message}. ${err.confirmed
           ? `Nothing changed: its conversation and held prompts are as they were. Retry, or relaunch S${id} for a new conversation`
-          : 'Its tab is kept, because the agent may have started; check it before anything else'}`);
+          : uncertainNote(err)}`);
       };
 
       if (!TRACKED.has(row.harness) || row.launches === 0) {
@@ -787,10 +794,11 @@ const commands = {
         });
       } catch (err) {
         if (!err.startFailed) throw err;
-        store.addEvent(db, id, 'relaunch-failed', `${err.confirmed ? 'restored' : 'kept the new conversation; the'} ${previousText} (${err.message})`);
+        const kept = !err.confirmed && err.tabRecorded;
+        store.addEvent(db, id, 'relaunch-failed', `${kept ? 'kept the new conversation; the' : 'restored the'} ${previousText} (${err.message})`);
         throw new CliError(`relaunching S${id} failed: ${err.message}. ${err.confirmed
           ? 'Its previous conversation is still the recorded one'
-          : 'Its tab is kept, because the new agent may have started; check it before anything else. The previous conversation is in its events'}`);
+          : `${uncertainNote(err, 'the new agent')}${kept ? '. The previous conversation is in its events' : ''}`}`);
       }
       print(launchResult(id, 'relaunched', launched, { previous: previous.native_session_id }), opts);
     });
@@ -927,10 +935,9 @@ const commands = {
         store.addEvent(db, id, 'tab-detached', `${row.pane_id} now runs another conversation`);
         return print({ session: `S${id}`, action: 'detached', note: `its tab now runs another conversation and was left open` }, opts);
       }
-      // `blocked` is settled only for a tab still waiting on the user to start;
-      // mid-turn it is a worker waiting on a permission prompt.
-      const settled = !live || pane.agent_status === 'idle' || pane.agent_status === 'done'
-        || (pane.agent_status === 'blocked' && store.pendingOf(row).length > 0);
+      // A blocked worker is waiting on the user, at startup or mid-turn on a
+      // permission prompt; closing it is the user's call (--force).
+      const settled = !live || pane.agent_status === 'idle' || pane.agent_status === 'done';
       if (!settled && !opts.force) {
         throw new CliError(`S${id} is ${pane.agent_status}; wait for it to settle, or pass --force to close it mid-turn`);
       }

@@ -83,6 +83,8 @@ If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why
 - The worker did not settle in time, for example while adopting its persona. Run `orch deliver S<id>` once it is idle.
 - A prompt may or may not have reached the worker: its send was interrupted. Nothing resends or drops it on its own, and `send`, `deliver`, `resume`, and `relaunch` refuse until you settle it. Look at the worker's tab or `orch status S<id>`, then run `orch settle S<id> --resend` if it never arrived or `--drop` if it did.
 
+A `send` that fails keeps its request in the record: when the worker refused it (for example, blocked on a permission prompt), run `orch deliver S<id>` once it can take it; when its delivery is unknown, settle it as above.
+
 ### 5. Answer the user
 
 Reply in one or two lines: what you did, the session, and the tab label (`S12 login-page-layout (web-engineer)`). Do not wait for the worker; the user can keep giving you work.
@@ -91,7 +93,7 @@ For an update, `orch status S<id>` shows the record: its summary and how long ag
 
 ### 6. Close what is finished
 
-A worker marks its session resolved when its ticket is Done or its PR is merged (`report --resolved`). When the user confirms that work is finished, or a resolved worker sits idle, run `orch stop S<id>`. It closes the tab only when the worker is idle, and the record stays. Stopping a session that is still open keeps it resumable. A worker that is working, or blocked on a permission prompt mid-turn, closes only with `--force`, and only on the user's word. A tab that now runs another conversation, such as one the user started there, is never closed: the session is detached from it.
+A worker marks its session resolved when its ticket is Done or its PR is merged (`report --resolved`). When the user confirms that work is finished, or a resolved worker sits idle, run `orch stop S<id>`. It closes the tab only when the worker is idle, and the record stays. Stopping a session that is still open keeps it resumable. A worker that is working, or blocked waiting on the user (a permission prompt mid-turn, or a trust or login prompt at startup), closes only with `--force`, and only on the user's word. A tab that now runs another conversation, such as one the user started there, is never closed: the session is detached from it.
 
 ## What the workers do
 
