@@ -711,6 +711,80 @@
       ]
     },
     {
+      "id": "orchestrate",
+      "name": "Orchestrate worker sessions",
+      "area": "Brain upkeep",
+      "summary": "/orchestrator: one session per project routes each request to a new, resumed, or running worker in its own Herdr tab and never does the work.",
+      "steps": [
+        [
+          "Take the project's one orchestrator lock and reconcile the record with live tabs",
+          "det",
+          "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Rank recorded sessions against the request",
+          "det",
+          "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Decide new, resume, or send; split a mixed request; judge staleness",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Launch or resume the worker with its session id, hooks, and brief; message a live one",
+          "det",
+          "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Record the decision and its reason",
+          "det",
+          "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Answer a trust or login prompt in a new worker's tab",
+          "human",
+          null,
+          ""
+        ],
+        [
+          "Hold the first prompt while the tab waits, then deliver it",
+          "det",
+          "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Record every worker prompt, compaction, and /clear",
+          "det",
+          "skills/orchestrator/scripts/store.js",
+          ""
+        ],
+        [
+          "Worker keeps its summary, ticket, and resolution current",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Close a settled worker's tab, keeping its record",
+          "det",
+          "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Say whether work is finished when the worker has not",
+          "human",
+          null,
+          ""
+        ]
+      ]
+    },
+    {
       "id": "brain-checks",
       "name": "Check the brain",
       "area": "Brain upkeep",

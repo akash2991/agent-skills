@@ -7,6 +7,8 @@ you ──▶ /brain [persona] [request]     the main agent adopts one persona, 
                                         persona · skills · tools · model · harness · effort,
                                         and starts subagents for long-running work
 you ──▶ /brain-status                   who is running what, on which model
+you ──▶ /orchestrator [request]         optional: one agent that never works itself and hands
+                                        each request to a new, resumed, or running worker tab
 ```
 
 ## What is here

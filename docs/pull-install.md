@@ -41,7 +41,7 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 - Full persona copies in `.agents/agents/`, `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`. The `.claude/`, `.gemini/`, and `.pi/` copies carry native tool names in place of the labels ([harness layout](harness-layout.md#persona-tools-labels-in-the-source-native-names-in-harness-copies)).
 - One root `references/` and `templates/` directory. Installed Markdown links to those shared files gain the extra `../` needed for the tool directory; source Markdown is unchanged. Skill-local references/templates stay with their skill, and per-project runtime scripts are copied with it. Account-wide Terraform provisioning sources, generated state, local tfvars, and provider caches are excluded.
 - Skill/persona anatomy guides are source-repository authoring documentation and are not installed. Project documents are not generated from templates automatically.
-- `/brain` and `/brain-status` commands for the supported tools.
+- `/brain`, `/brain-status`, and `/orchestrator` commands for the supported tools.
 - Commands and the shared portion of `AGENTS.md` point directly to the installed tool directories. Only relative Markdown links to shared root references/templates are rebased; there are no wrappers, symlinks, or shared root `skills/` or `agents/` copies.
 - `.agent-brain/install-state.json`, recording installed files for repeatable updates and removal of retired files. Keep it in Git with the installed content.
 

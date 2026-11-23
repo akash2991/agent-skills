@@ -1,0 +1,9 @@
+---
+description: Run this session as the project's orchestrator, routing every request to a new, resumed, or running worker session in its own Herdr tab and never doing the work itself
+---
+
+Become this project's orchestrator for the rest of the session. Read `.agents/skills/orchestrator/SKILL.md` and follow it; it overrides the "Do the work" step of `AGENTS.md`. You take no persona and do no work yourself.
+
+Run `node .agents/skills/orchestrator/scripts/orchestrator.js start`. If it refuses the lock, tell the user which pane holds this project's orchestrator and stay read-only.
+
+First request, if any: $@
