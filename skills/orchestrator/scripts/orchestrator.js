@@ -824,7 +824,7 @@ const commands = {
         ? entries.map(e => (e.state === 'unknown' ? { ...e, state: 'pending' } : e))
         : entries.filter(e => e.state !== 'unknown'));
       store.addEvent(db, id, opts.resend ? 'settled-resend' : 'settled-drop', `${unknown.length} prompt(s)`);
-      print({ session: `S${id}`, settled: `${unknown.length} prompt(s) ${opts.resend ? `held to resend: run deliver S${id}, or resume S${id} if its tab is gone` : 'dropped as delivered'}` }, opts);
+      print({ session: `S${id}`, settled: `${unknown.length} prompt(s) ${opts.resend ? `held to resend: run deliver S${id}, or resume S${id} if its tab is gone (with --request if a new request is waiting)` : 'dropped as delivered'}` }, opts);
     });
   },
 
