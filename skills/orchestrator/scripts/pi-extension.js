@@ -19,12 +19,15 @@ module.exports = function orchestratorRecorder(pi) {
   const cli = env.ORCHESTRATOR_CLI || path.join(__dirname, 'orchestrator.js');
   const node = env.ORCHESTRATOR_NODE || 'node';
   // The writers race, so each event carries this launch and its order; the
-  // record ignores a session start older than one it already applied.
+  // record ignores a session start older than one it already applied. Pi runs
+  // this factory again for /new, /resume, and /fork, so the order lives on the
+  // process, not on one factory.
   const launch = env.ORCHESTRATOR_LAUNCH;
-  let seq = 0;
+  const SEQ = Symbol.for('orchestrator.recorder.seq');
 
   const record = (fields) => {
-    const event = { ...fields, launch, seq: ++seq };
+    globalThis[SEQ] = (globalThis[SEQ] || 0) + 1;
+    const event = { ...fields, launch, seq: globalThis[SEQ] };
     try {
       const child = spawn(node, [cli, 'hook', 'pi'], { stdio: ['pipe', 'ignore', 'ignore'], detached: true, env });
       child.on('error', () => {});

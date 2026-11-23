@@ -412,6 +412,29 @@ test('an interrupted send is unknown: nothing resends or drops it until it is se
   } finally { t.cleanup(); }
 });
 
+test('send holds its request: an uncertain send is unknown and blocks a retry; a refused one stays held', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Deploy', '--request', 'prepare', '--reason', 'r']));
+    t.patchHerdr(s => { s.promptPlan = ['hang:2500']; });
+    const r = t.run(['send', 'S1', '--request', 'deploy the change', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    assert.strictEqual(r.status, 1);
+    assert.match(r.stderr, /may or may not have arrived[\s\S]*settle S1/);
+    sleep(2000);
+    assert.match(t.run(['send', 'S1', '--request', 'deploy the change', '--reason', 'r']).stderr, /delivery is unknown/);
+    assert.strictEqual(t.herdrState().prompts.filter(p => /deploy the change/.test(p.text)).length, 1, 'no second deploy');
+    ok(t.run(['settle', 'S1', '--drop']));
+
+    t.patchHerdr(s => { s.promptPlan = ['reject']; });
+    assert.match(t.run(['send', 'S1', '--request', 'then tag it', '--reason', 'r']).stderr, /the request is held: run deliver S1/);
+    ok(t.run(['deliver', 'S1']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /then tag it/.test(p.text)).length, 1);
+    ok(t.run(['send', 'S1', '--request', 'and announce it', '--reason', 'r']));
+    assert.strictEqual(t.row(1).pending, null);
+  } finally { t.cleanup(); }
+});
+
 test('a local herdr timeout leaves the prompt unknown, and settle --resend sends it again', () => {
   const t = setup();
   try {
@@ -663,12 +686,12 @@ test('a start event from another launch, or older than one applied, never change
   try {
     const d = t.open();
     const id = store.createSession(d, { title: 'pi', intent: 'i', harness: 'pi', native_session_id: 'A', cwd: t.dir });
-    store.updateSession(d, id, { launches: 2 });
-    store.recordHookEvent(d, id, { kind: 'start', launch: 2, seq: 2, nativeSessionId: 'B', transcriptPath: '/s/B.jsonl' });
-    store.recordHookEvent(d, id, { kind: 'start', launch: 2, seq: 1, nativeSessionId: 'A', transcriptPath: '/s/A.jsonl' });
-    store.recordHookEvent(d, id, { kind: 'start', launch: 3, seq: 9, nativeSessionId: 'C', transcriptPath: '/s/C.jsonl' });
-    store.recordHookEvent(d, id, { kind: 'compact', launch: 1 });
-    store.recordHookEvent(d, id, { kind: 'prompt', launch: 1, text: 'kept: the user said it' });
+    store.updateSession(d, id, { launches: 2, launch_token: 'L2' });
+    store.recordHookEvent(d, id, { kind: 'start', launch: 'L2', seq: 2, nativeSessionId: 'B', transcriptPath: '/s/B.jsonl' });
+    store.recordHookEvent(d, id, { kind: 'start', launch: 'L2', seq: 1, nativeSessionId: 'A', transcriptPath: '/s/A.jsonl' });
+    store.recordHookEvent(d, id, { kind: 'start', launch: 'L3', seq: 9, nativeSessionId: 'C', transcriptPath: '/s/C.jsonl' });
+    store.recordHookEvent(d, id, { kind: 'compact', launch: 'L1' });
+    store.recordHookEvent(d, id, { kind: 'prompt', launch: 'L1', text: 'kept: the user said it' });
     const row = store.getSession(d, id);
     assert.deepStrictEqual([row.native_session_id, row.transcript_path, row.compactions], ['B', '/s/B.jsonl', 0]);
     assert.strictEqual(store.promptCount(d, id), 1);
@@ -676,28 +699,83 @@ test('a start event from another launch, or older than one applied, never change
   } finally { t.cleanup(); }
 });
 
-test('Pi session starts that reach the record out of order leave the latest identity', async () => {
+test('a failed launch\'s late recorder cannot pass for its retry: launch tokens are never reused', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix', '--reason', 'r']));
+    const a = t.row(1);
+    const transcript = path.join(t.dir, `${a.native_session_id}.jsonl`);
+    fs.writeFileSync(transcript, '{}\n');
+    t.patchRow(1, { transcript_path: transcript });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; });
+    assert.strictEqual(t.run(['relaunch', 'S1', '--request', 'again', '--reason', 'r']).status, 1);
+    const failedToken = t.herdrState().calls.filter(c => c[0] === 'tab' && c[1] === 'create').at(-1)
+      .find(x => x.startsWith('ORCHESTRATOR_LAUNCH=')).split('=')[1];
+    assert.strictEqual(t.row(1).native_session_id, a.native_session_id, 'rolled back to A');
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S1', '--request', 'again', '--reason', 'r']));
+    const current = t.row(1);
+    assert.notStrictEqual(current.launch_token, failedToken);
+    // The failed attempt's writer arrives late, before and after the current start.
+    const hook = (token, sid, file) => ok(t.run(['hook', 'claude'], { ORCHESTRATOR_SESSION: '1', ORCHESTRATOR_LAUNCH: token },
+      JSON.stringify({ hook_event_name: 'SessionStart', session_id: sid, transcript_path: file, source: 'startup' })));
+    hook(failedToken, 'B-abandoned', '/s/B.jsonl');
+    hook(current.launch_token, a.native_session_id, transcript);
+    hook(failedToken, 'B-abandoned', '/s/B.jsonl');
+    assert.strictEqual(t.row(1).native_session_id, a.native_session_id);
+    assert.strictEqual(t.row(1).transcript_path, transcript);
+  } finally { t.cleanup(); }
+});
+
+test('an uncertain relaunch keeps its new conversation and records the previous one', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix', '--reason', 'r']));
+    const a = t.row(1).native_session_id;
+    t.patchRow(1, { transcript_path: '/s/A.jsonl' });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; s.failClose = true; });
+    const r = t.run(['relaunch', 'S1', '--request', 'again', '--reason', 'stale context']);
+    assert.match(r.stderr, /may have started[\s\S]*previous conversation is in its events/);
+    const row = t.row(1);
+    assert.notStrictEqual(row.native_session_id, a, 'the possibly-started replacement is kept');
+    assert.ok(row.pane_id, 'and its tab');
+    const d = t.open();
+    const relaunched = store.recentEvents(d, 1, 50).find(e => e.kind === 'relaunched');
+    d.close();
+    assert.match(relaunched.detail, new RegExp(`previous conversation ${a} at /s/A\\.jsonl: stale context`));
+  } finally { t.cleanup(); }
+});
+
+test('Pi session starts that reach the record out of order leave the latest identity, also across /new', async () => {
   const t = setup();
   const saved = { ...process.env };
   try {
     const d = t.open();
     const id = store.createSession(d, { title: 'pi', intent: 'i', harness: 'pi', native_session_id: 'A', cwd: t.dir });
-    store.updateSession(d, id, { launches: 1 });
-    Object.assign(process.env, { ORCHESTRATOR_DB: t.db, ORCHESTRATOR_SESSION: String(id), ORCHESTRATOR_LAUNCH: '1', ORCHESTRATOR_CLI: CLI, ORCHESTRATOR_NODE: process.execPath });
-    const handlers = {};
-    require(path.join(SCRIPTS, 'pi-extension.js'))({ on: (name, fn) => { handlers[name] = fn; } });
-    d.exec('BEGIN IMMEDIATE'); // both writers queue on the record
-    for (const native of ['A', 'B', 'C', 'D']) {
-      handlers.session_start({}, { sessionManager: { getSessionId: () => native, getSessionFile: () => `/s/${native}.jsonl` } });
-    }
+    store.updateSession(d, id, { launches: 1, launch_token: 'L1' });
+    Object.assign(process.env, { ORCHESTRATOR_DB: t.db, ORCHESTRATOR_SESSION: String(id), ORCHESTRATOR_LAUNCH: 'L1', ORCHESTRATOR_CLI: CLI, ORCHESTRATOR_NODE: process.execPath });
+    const extension = require(path.join(SCRIPTS, 'pi-extension.js'));
+    const runtime = () => { const handlers = {}; extension({ on: (name, fn) => { handlers[name] = fn; } }); return handlers; };
+    const start = (h, native) => h.session_start({}, { sessionManager: { getSessionId: () => native, getSessionFile: () => `/s/${native}.jsonl` } });
+    const count = () => { const c = t.open(); try { return store.recentEvents(c, id, 50).filter(e => /start/.test(e.kind)).length; } finally { c.close(); } };
+    const until = async n => { for (let i = 0; i < 100 && count() < n; i++) await new Promise(r => setTimeout(r, 50)); };
+
+    d.exec('BEGIN IMMEDIATE'); // the writers queue on the record
+    const first = runtime();
+    for (const native of ['A', 'B', 'C', 'D']) start(first, native);
     await new Promise(r => setTimeout(r, 800));
     d.exec('COMMIT');
     d.close();
-    const settled = () => { const c = t.open(); try { return store.recentEvents(c, id, 50).filter(e => /start/.test(e.kind)).length === 4; } finally { c.close(); } };
-    for (let i = 0; i < 100 && !settled(); i++) await new Promise(r => setTimeout(r, 50));
-    assert.ok(settled());
+    await until(4);
     assert.strictEqual(t.row(id).native_session_id, 'D');
-    assert.strictEqual(t.row(id).transcript_path, '/s/D.jsonl');
+
+    // /new: Pi builds a new runtime and runs the extension factory again.
+    start(runtime(), 'E');
+    await until(5);
+    assert.strictEqual(t.row(id).native_session_id, 'E', 'the new session is not taken for a stale start');
+    assert.strictEqual(t.row(id).transcript_path, '/s/E.jsonl');
   } finally {
     for (const k of ['ORCHESTRATOR_DB', 'ORCHESTRATOR_SESSION', 'ORCHESTRATOR_LAUNCH', 'ORCHESTRATOR_CLI', 'ORCHESTRATOR_NODE']) {
       if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];

@@ -99,7 +99,7 @@ Every worker's tab carries `ORCHESTRATOR_DB`, `ORCHESTRATOR_SESSION`, and `ORCHE
 
 A session keeps its conversation id for life; only `relaunch` replaces it, recording the old one. `resume` reopens the conversation by what is certain: Pi by its recorded session file, Claude by its id. It starts the same id fresh, with the brief, the summary, the ticket, the last prompts, and any held prompts, only when the recorded transcript is known to be gone. A session that never had a worker (its first launch failed) starts with its held brief: `orch resume S<id>` without `--request`.
 
-When a launch fails and no worker started, the session is left exactly as it was, so retrying the same command sends the request once. When it is uncertain whether a worker started, its tab stays recorded and another launch is refused until that tab is gone or adopted. A resume, relaunch, or reconcile also refuses when Herdr cannot list the running agents, rather than risk a second worker on the same conversation.
+When a launch fails and no worker started, the session is left exactly as it was, so retrying the same command sends the request once. When it is uncertain whether a worker started, its tab stays recorded and another launch is refused until that tab is gone or adopted. A resume or relaunch also refuses when Herdr cannot list the running agents, rather than risk a second worker on the same conversation; `start` then reports reconciliation as skipped.
 
 ## Common Rationalizations
 

@@ -15,9 +15,11 @@
 // - Resume opens the conversation by what is certain: Pi's recorded file, or
 //   Claude's id. It starts the same id fresh only when the recorded transcript
 //   is known to be gone.
-// - A worker's prompts are held in the record before they are sent and removed
-//   once accepted. A prompt whose submission was interrupted is `unknown`: it is
-//   neither resent nor dropped until the orchestrator settles it.
+// - A worker's prompts (its brief, held prompts, and every send) are held in the
+//   record before they are sent and removed once accepted. A prompt whose
+//   submission was interrupted is `unknown`: it is neither resent nor dropped
+//   until the orchestrator settles it. A status probe (status --ask) is best
+//   effort and is not held.
 // - A tab the orchestrator did not start, or that now runs another
 //   conversation, is never closed.
 
@@ -437,21 +439,22 @@ function requireSettled(row) {
   }
 }
 
-const IDENTITY = ['native_session_id', 'transcript_path', 'launches', 'identity_seq', 'pending'];
+const IDENTITY = ['native_session_id', 'transcript_path', 'launches', 'identity_seq', 'launch_token', 'pending'];
 
 // Open a tab and start the agent. `row` may carry a new identity (relaunch);
 // it is committed with the tab. When the agent is known not to have started
 // (no tab, or its tab confirmed closed), the session is restored exactly as it
 // was; when that is uncertain, the tab and the new state stay recorded.
-function launch(db, dbFile, row, { resume, prompts }) {
+function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
   const before = store.getSession(db, row.id);
   const restore = Object.fromEntries(IDENTITY.map(k => [k, before[k]]));
   const generation = before.launches + 1;
+  const token = crypto.randomUUID();
   let tab;
   try {
     tab = herdr(['tab', 'create', '--workspace', process.env.HERDR_WORKSPACE_ID, '--cwd', row.cwd,
       '--label', tabLabel(row), '--no-focus',
-      '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`, '--env', `ORCHESTRATOR_LAUNCH=${generation}`,
+      '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`, '--env', `ORCHESTRATOR_LAUNCH=${token}`,
       '--env', `ORCHESTRATOR_CLI=${CLI}`, '--env', `ORCHESTRATOR_NODE=${process.execPath}`]);
   } catch (err) {
     err.startFailed = true;
@@ -466,12 +469,15 @@ function launch(db, dbFile, row, { resume, prompts }) {
     throw failure;
   }
   const agentName = `orch-s${row.id}-${crypto.randomBytes(2).toString('hex')}`;
-  store.updateSession(db, row.id, {
-    native_session_id: row.native_session_id, transcript_path: row.transcript_path,
-    tab_id: tabId, pane_id: pane, agent_name: agentName, launches: generation, identity_seq: 0,
-    pending: JSON.stringify(prompts.map(text => ({ text, state: 'pending' }))), last_active_at: store.now(),
+  store.transaction(db, () => {
+    store.updateSession(db, row.id, {
+      native_session_id: row.native_session_id, transcript_path: row.transcript_path,
+      tab_id: tabId, pane_id: pane, agent_name: agentName, launches: generation, identity_seq: 0, launch_token: token,
+      pending: JSON.stringify(prompts.map(text => ({ text, state: 'pending' }))), last_active_at: store.now(),
+    });
+    store.addEvent(db, row.id, 'tab-created', `${pane} launch ${generation}`);
+    if (commitEvent) store.addEvent(db, row.id, commitEvent.kind, commitEvent.detail);
   });
-  store.addEvent(db, row.id, 'tab-created', `${pane} launch ${generation}`);
   const placed = { tab_id: tabId, pane_id: pane, label: tabLabel(row) };
   try {
     const args = harnessArgs(row, resume, { settingsFile: row.harness === 'claude' ? claudeSettingsFile(dbFile) : undefined });
@@ -567,7 +573,7 @@ function launchResult(id, action, launched, extra = {}) {
 // recorded session by hand.
 function reconcile(db) {
   const agents = liveAgents();
-  if (agents === null) return { closed: [], adopted: [] };
+  if (agents === null) return { skipped: 'herdr agent list failed', closed: [], adopted: [] };
   const byPane = new Map(agents.map(a => [a.pane_id, a]));
   const closed = [];
   const adopted = [];
@@ -624,7 +630,7 @@ const commands = {
         record: file,
         open_sessions: open.length,
         live_tabs: open.filter(r => r.pane_id).length,
-        reconciled: `${changes.closed.length} closed, ${changes.adopted.length} adopted`,
+        reconciled: changes.skipped ? `skipped (${changes.skipped})` : `${changes.closed.length} closed, ${changes.adopted.length} adopted`,
       }, opts);
       if (!opts.json && open.length) print(`\n${candidates(db, { limit: 10 }).map(describe).join('\n\n')}`, opts);
     });
@@ -769,21 +775,23 @@ const commands = {
       const previous = { native_session_id: row.native_session_id, transcript_path: row.transcript_path };
       // The new identity is committed with its tab, and only if a worker may have started.
       const replacement = { ...row, native_session_id: TRACKED.has(row.harness) ? crypto.randomUUID() : null, transcript_path: null };
+      const previousText = `previous conversation ${previous.native_session_id || 'none'}` +
+        `${previous.transcript_path ? ` at ${previous.transcript_path}` : ''}: ${reason}`;
       let launched;
       try {
         launched = launch(db, file, replacement, {
           resume: false,
           prompts: brief(replacement, request, { context: priorContext(db, row, 'This continues the work of the earlier conversation of session') }),
+          // Written with the new identity, so the old one is never unrecorded.
+          commitEvent: { kind: 'relaunched', detail: previousText },
         });
       } catch (err) {
         if (!err.startFailed) throw err;
-        store.addEvent(db, id, 'relaunch-failed', err.message);
+        store.addEvent(db, id, 'relaunch-failed', `${err.confirmed ? 'restored' : 'kept the new conversation; the'} ${previousText} (${err.message})`);
         throw new CliError(`relaunching S${id} failed: ${err.message}. ${err.confirmed
           ? 'Its previous conversation is still the recorded one'
-          : 'Its tab is kept, because the new agent may have started; check it before anything else'}`);
+          : 'Its tab is kept, because the new agent may have started; check it before anything else. The previous conversation is in its events'}`);
       }
-      store.addEvent(db, id, 'relaunched', `previous conversation ${previous.native_session_id || 'none'}` +
-        `${previous.transcript_path ? ` at ${previous.transcript_path}` : ''}: ${reason}`);
       print(launchResult(id, 'relaunched', launched, { previous: previous.native_session_id }), opts);
     });
   },
@@ -844,9 +852,16 @@ const commands = {
       const row = getRow(db, id);
       requireOpen(row, 'messaging');
       if (!isLive(row, paneInfo(row.pane_id))) throw new CliError(`S${id} has no live tab; use resume`);
+      requireSettled(row);
       if (store.pendingOf(row).length) throw new CliError(`S${id} still holds prompts; run deliver S${id} before sending more`);
       store.addDecision(db, { request, action: 'send', sessionId: id, considered: opts.considered, reason });
-      herdr(['agent', 'prompt', row.pane_id, `[orchestrator S${id}] ${request}`]);
+      store.setPending(db, id, [{ text: `[orchestrator S${id}] ${request}`, state: 'pending' }]);
+      const sent = deliverPending(db, id, row.pane_id);
+      if (!sent.ok) {
+        throw new CliError(`S${id}: ${sent.error}; ${sent.unknown
+          ? `the request may or may not have arrived: check its tab, then settle S${id} --resend or --drop`
+          : `the request is held: run deliver S${id} once the worker can take it`}`);
+      }
       print({ session: `S${id}`, action: 'sent', pane_id: row.pane_id }, opts);
     });
   },

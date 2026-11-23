@@ -55,6 +55,7 @@ CREATE TABLE sessions (
   last_compacted_at TEXT,
   launches INTEGER NOT NULL DEFAULT 0,
   identity_seq INTEGER NOT NULL DEFAULT 0,
+  launch_token TEXT,
   summary_at TEXT,
   pending TEXT
 );
@@ -96,7 +97,7 @@ CREATE INDEX events_by_session ON events(session_id, id);
 const UPDATABLE = new Set([
   'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
   'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
-  'last_compacted_at', 'launches', 'identity_seq', 'summary_at', 'pending',
+  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending',
 ]);
 
 const now = () => new Date().toISOString();
@@ -270,15 +271,16 @@ function releaseOwner(db, paneId) {
 // their native events onto these.
 //
 // Identity and compactions are fenced: an event from another launch than the
-// session's current one (`launch`), or a start older than the last one applied
-// (`seq`, from Pi's independent writers), does not change them. Prompts are
+// session's current one (`launch`, a token never reused, so a failed launch's
+// late writer cannot pass for its retry), or a start older than the last one
+// applied (`seq`, from Pi's independent writers), does not change them. Prompts are
 // always kept; they are what the user said.
 function recordHookEvent(db, sessionId, event) {
   return transaction(db, () => {
     const row = getSession(db, sessionId);
     if (!row) return false;
     const at = now();
-    const current = event.launch == null || Number(event.launch) === row.launches;
+    const current = event.launch == null || String(event.launch) === String(row.launch_token);
     switch (event.kind) {
       case 'start': {
         const seq = event.seq == null ? null : Number(event.seq);
