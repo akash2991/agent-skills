@@ -35,6 +35,7 @@ if (group === 'pane' && verb === 'get') {
   okRead({ agents: agents() });
 } else if (group === 'tab' && verb === 'create') {
   if (s.failTabCreate) fail('failed', 'server unavailable');
+  if (s.hangTabCreate && s.hangLeavesTab) { const n = ++s.seq; s.panes['w1:p' + n] = { pane_id: 'w1:p' + n, tab_id: 'w1:t' + n, agent: null, env: [] }; save(); }
   if (s.hangTabCreate) { const end = Date.now() + s.hangTabCreate; while (Date.now() < end) {} process.exit(0); }
   if (s.badTabCreate) ok({});
   const n = ++s.seq;
@@ -400,14 +401,21 @@ test('a tab waiting on the user keeps its brief held; a failed start keeps it fo
     assert.strictEqual(t.herdrState().prompts.filter(p => /write the exporter/.test(p.text)).length, 1);
 
     // herdr times out creating the tab: no agent start ran, so none is called uncertain.
-    t.patchHerdr(s => { s.hangTabCreate = 2500; });
+    t.patchHerdr(s => { s.hangTabCreate = 2500; s.hangLeavesTab = true; });
     const timedOut = t.run(['new', '--title', 'Third', '--request', 'write the docs', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
     assert.match(timedOut.stderr, /brief held, but no agent started[\s\S]*empty tab may be open: close it if so, then resume S3, without --request/);
     assert.doesNotMatch(timedOut.stderr, /uncertain|Nothing changed|Its tab is kept/);
     sleep(2000);
-    t.patchHerdr(s => { s.hangTabCreate = 0; });
-    assert.strictEqual(json(t.run(['resume', 'S3', '--json', '--reason', 'retry the timed-out start'])).action, 'started');
+    t.patchHerdr(s => { s.hangTabCreate = 0; s.hangLeavesTab = false; });
+    const orphan = Object.values(t.herdrState().panes).find(p => !p.agent && !p.env.length);
+    assert.ok(orphan, 'the timed-out create left an empty tab');
+    assert.strictEqual(t.row(3).pane_id, null, 'the empty tab is never recorded');
+    const retried = json(t.run(['resume', 'S3', '--json', '--reason', 'retry the timed-out start']));
+    assert.strictEqual(retried.action, 'started');
+    assert.notStrictEqual(retried.pane_id, orphan.pane_id);
+    assert.ok(t.herdrState().panes[orphan.pane_id], 'resume neither uses nor closes a tab it never recorded');
     assert.strictEqual(t.herdrState().prompts.filter(p => /write the docs/.test(p.text)).length, 1);
+    assert.ok(t.herdrState().prompts.every(p => p.pane !== orphan.pane_id));
   } finally { t.cleanup(); }
 });
 
@@ -455,6 +463,38 @@ test('send holds its request: an uncertain send is unknown and blocks a retry; a
     assert.strictEqual(t.herdrState().prompts.filter(p => /then tag it/.test(p.text)).length, 1);
     ok(t.run(['send', 'S1', '--request', 'and announce it', '--reason', 'r']));
     assert.strictEqual(t.row(1).pending, null);
+  } finally { t.cleanup(); }
+});
+
+test('a send refused before writing keeps nothing; each route SKILL.md names submits it once', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const count = re => t.herdrState().prompts.filter(p => re.test(p.text)).length;
+
+    // No live tab: resume --request carries the request.
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; });
+    assert.match(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']).stderr, /no live tab; use resume/);
+    assert.strictEqual(t.row(1).pending, null);
+    ok(t.run(['resume', 'S1', '--request', 'also the footer', '--reason', 'its tab was closed']));
+    assert.strictEqual(count(/also the footer/), 1);
+
+    // Still holds a prompt: deliver the older one, then send the new request.
+    t.patchHerdr(s => { s.promptPlan = ['reject']; });
+    assert.match(t.run(['send', 'S1', '--request', 'then the header', '--reason', 'r']).stderr, /the request is held/);
+    assert.match(t.run(['send', 'S1', '--request', 'and the sidebar', '--reason', 'r']).stderr, /still holds prompts/);
+    assert.deepStrictEqual(store.pendingOf(t.row(1)).map(e => e.text), ['[orchestrator S1] then the header']);
+    ok(t.run(['deliver', 'S1']));
+    ok(t.run(['send', 'S1', '--request', 'and the sidebar', '--reason', 'r']));
+    assert.strictEqual(count(/then the header/), 1);
+    assert.strictEqual(count(/and the sidebar/), 1);
+
+    // Not open: new --from carries the request to a new session.
+    ok(t.run(['resolve', 'S1']));
+    assert.match(t.run(['send', 'S1', '--request', 'one more page', '--reason', 'r']).stderr, /resolved; start a new session with --from S1/);
+    ok(t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'one more page', '--reason', 'S1 is resolved']));
+    assert.strictEqual(count(/one more page/), 1);
   } finally { t.cleanup(); }
 });
 
