@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const PROMPT_LIMIT = 4000;
 const ORCHESTRATOR_MARK = /\[orchestrator S\d+\]/;
 
@@ -107,12 +107,14 @@ ALTER TABLE sessions ADD COLUMN parent_generation INTEGER;
 -- reopened or resolved before this version keeps no claim from that time.
 UPDATE sessions SET parent_generation = 0
   WHERE parent_id IN (SELECT id FROM sessions WHERE status = 'superseded');
+`, `
+ALTER TABLE sessions ADD COLUMN worktree TEXT;
 `];
 
 const UPDATABLE = new Set([
   'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
   'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
-  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending', 'parent_generation',
+  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending', 'parent_generation', 'worktree',
 ]);
 
 const now = () => new Date().toISOString();

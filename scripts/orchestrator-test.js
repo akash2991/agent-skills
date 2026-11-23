@@ -153,9 +153,11 @@ test('a related request outranks an unrelated one', () => {
   assert.strictEqual(score('', doc), 0);
 });
 
-test('a tab label follows <ticket> <scope> (<persona>) and keeps the session id', () => {
+test('a tab label follows DS2: <worktree> (<persona>) once reported, <ticket> <scope> (<persona>) until then', () => {
   assert.strictEqual(tabLabel({ id: 3, title: 'Fix login button', ticket: 'FAC-31', persona: 'web-engineer' }), 'FAC-31 S3 fix-login-button (web-engineer)');
   assert.strictEqual(tabLabel({ id: 4, title: 'Spike: queues?' }), 'S4 spike-queues');
+  assert.strictEqual(tabLabel({ id: 3, title: 'Fix login button', ticket: 'FAC-31', persona: 'web-engineer', worktree: '/w/FAC-31-login-fix' }), 'FAC-31-login-fix (web-engineer)');
+  assert.strictEqual(tabLabel({ id: 3, title: 'x', worktree: '/w/FAC-31-login-fix/' }), 'FAC-31-login-fix');
 });
 
 test('workers get a resumable session id and the recording hooks; other kinds get nothing', () => {
@@ -949,6 +951,8 @@ test('a version-1 record is migrated on open and keeps its rows', () => {
       assert.strictEqual(decision.outcome, null);
       store.setOutcome(d, decision.id, 'new');
       assert.strictEqual(store.recentDecisions(d, 1, 5)[0].outcome, 'new');
+      store.updateSession(d, 1, { worktree: '/w/FAC-1-x' });
+      assert.strictEqual(store.getSession(d, 1).worktree, '/w/FAC-1-x');
     } finally { d.close(); }
   } finally { t.cleanup(); }
 });
@@ -1762,6 +1766,26 @@ test('status --ask is a best-effort request that never claims the summary is fre
     const prompts = t.herdrState().prompts.length;
     assert.match(ok(t.run(['status', 'S1', '--ask'])).stdout, /^asked: no: the worker is working/);
     assert.strictEqual(t.herdrState().prompts.length, prompts);
+  } finally { t.cleanup(); }
+});
+
+test('a worker that reports its worktree is relabelled <worktree> (<persona>), and keeps that label on resume', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix it', '--reason', 'r', '--persona', 'web-engineer', '--ticket', 'FAC-41']));
+    assert.strictEqual(first.label, 'FAC-41 S1 fix-login (web-engineer)');
+    assert.match(t.herdrState().prompts.at(-1).text, /report --worktree <path>|--worktree <path>/);
+    const worktree = path.join(t.dir, 'FAC-41-login-fix');
+    ok(t.run(['report', '--worktree', worktree], { ORCHESTRATOR_SESSION: '1' }));
+    assert.strictEqual(t.row(1).worktree, worktree);
+    assert.deepStrictEqual(t.herdrState().renames.at(-1), [first.tab_id, 'FAC-41-login-fix (web-engineer)']);
+    assert.match(ok(t.run(['status', 'S1'])).stdout, new RegExp(`worktree: ${worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; });
+    const resumed = json(t.run(['resume', 'S1', '--json', '--request', 'and the footer', '--reason', 'its tab was closed']));
+    assert.strictEqual(resumed.label, 'FAC-41-login-fix (web-engineer)');
+    assert.strictEqual(t.herdrState().panes[resumed.pane_id].label, 'FAC-41-login-fix (web-engineer)');
   } finally { t.cleanup(); }
 });
 
