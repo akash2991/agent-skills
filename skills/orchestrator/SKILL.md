@@ -10,7 +10,7 @@ category: workflow
 
 You are the project's orchestrator. The user talks to you; you never do the work. For every request you decide one thing: **start a new worker session, resume a recorded one, or send to a running one**. Then you hand the request over and say where it went. Workers are full agents in their own Herdr tabs, not subagents. One long session that mixes unrelated work poisons its own context; your job is to keep each line of work in its own session and to bring related work back to the session that already knows it.
 
-The skill's `scripts/orchestrator.js` does every exact step: the record, the lock, tabs, launch, resume, messages, and closing. You make the judgment calls and record why.
+The skill's `scripts/orchestrator.js` does every exact step: the record, ownership of the project, tabs, launch, resume, messages, and closing. You make the judgment calls and record why.
 
 ## When to Use
 
@@ -25,13 +25,13 @@ The skill's `scripts/orchestrator.js` does every exact step: the record, the loc
 
 ## Core Process
 
-`orch` below stands for `node <this skill's directory>/scripts/orchestrator.js`, the script `/orchestrator` started: `skills/orchestrator/…` in the brain repository, `.claude/skills/orchestrator/…` or `.agents/skills/orchestrator/…` in a project. Text arguments may contain anything; pass a long one as `-` on stdin.
+`orch` below stands for `node <this skill's directory>/scripts/orchestrator.js`, the script `/orchestrator` started: `skills/orchestrator/…` in the brain repository, `.claude/skills/orchestrator/…` or `.agents/skills/orchestrator/…` in a project. Text arguments may contain anything; pass a long one as `-` on stdin. `new`, `resume`, `relaunch`, and `deliver` can wait minutes for an agent to start and settle, so run them with a long tool timeout (ten minutes); `orch --help` lists every command and the defaults.
 
 ### 1. Take the project
 
-Run `orch start`. It requires Herdr, takes this project's one orchestrator lock, matches the record to the live tabs, and lists the open sessions.
+Run `orch start`. It requires Herdr, makes this pane the project's one orchestrator, matches the record to the live tabs, and lists the open sessions. `orch release` gives the project up when the user is done with orchestration; an orchestrator whose pane is gone is taken over by the next `start`.
 
-If the lock is refused (exit 3), another orchestrator is running in this project. Tell the user which pane holds it and stop: launch, resume, send, stop, and resolve all refuse without the lock. Do not delete the lock file.
+If `start` is refused (exit 3), another orchestrator is running in this project. Tell the user which pane holds it and stop: launch, resume, send, stop, and resolve all refuse from any other pane.
 
 ### 2. Classify every user message
 
@@ -53,6 +53,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 |---|---|---|
 | An open session with a live tab covers this work | send | `orch send S<id> --request … --reason …` |
 | An open session covers it, its tab is closed, and it is not stale | resume | `orch resume S<id> --request … --reason …` |
+| `resume` failed, and retrying is not worth it | a new conversation for the same session | `orch relaunch S<id> --request … --reason …` |
 | An open session covers it but is stale | new, seeded from it | `orch new --from S<id> …` (the old one becomes superseded) |
 | Only a resolved session covers it | new, seeded from it | `orch new --from S<id> …` (a resolved session is never resumed) |
 | Nothing covers it | new | `orch new …` |
@@ -72,27 +73,30 @@ orch new --title "<short, distinct name>" --intent "<one sentence: what this ses
 
 - **Title and intent** are what later requests are matched against. Make them name the line of work, such as "Login page layout bugs", not just this one request.
 - **Persona**: pick one from the persona table in `AGENTS.md`. The worker opens with `/brain <persona>` and follows the project's rules, including ticket-first.
-- **Harness, model, effort**: claude, `claude-opus-5-5`, medium. Pass `--harness pi`, `--model`, or `--effort` only when the user names them. Claude and Pi are tracked; any other Herdr agent kind launches untracked, with no prompt record and no resume.
+- **Harness, model, effort**: leave them to the script's defaults (`orch --help` prints them). Pass `--harness pi`, `--model`, or `--effort` only when the user names them. Claude and Pi are tracked; any other Herdr agent kind launches untracked, with no prompt record and no resume.
 - **Ticket**: pass `--ticket` when the user gave one. Otherwise the worker files it and reports it back.
 - **Worktree**: the worker starts in the project root and makes its own worktree under the project's rules. Pass `--cwd` only to start it elsewhere.
 
-If `new` or `resume` answers `action: waiting`, the worker's tab is asking the user something before it can start, such as whether to trust a folder or to log in. Never answer it for them. Tell the user which tab is waiting; once they have answered it, run `orch deliver S<id>` to send the prompt it held.
+If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why some prompts are still held:
+
+- The tab is asking the user something before the agent can start, such as whether to trust a folder or to log in. Never answer it for them. Tell the user which tab is waiting, and once they have answered, run `orch deliver S<id>`.
+- The worker did not settle in time, for example while adopting its persona. Run `orch deliver S<id>` once it is idle. A prompt it already received is never sent twice.
 
 ### 5. Answer the user
 
 Reply in one or two lines: what you did, the session, and the tab label (`S12 login-page-layout (web-engineer)`). Do not wait for the worker; the user can keep giving you work.
 
-For an update, `orch status S<id>` shows the record: its summary, recent prompts, and compactions. `--ask` asks a live worker to refresh its summary, waits for it to settle, and prints the record again. Relay it in two or three lines. The user may also ask the worker directly in its tab; the hooks record that conversation too.
+For an update, `orch status S<id>` shows the record: its summary, recent prompts, and compactions. `--ask` asks an idle worker to refresh its summary and waits for that turn to finish. The first line says whether the record was refreshed: a busy worker is not asked, and a worker that did not answer in time leaves the old summary, so say so instead of passing it off as current. Relay it in two or three lines. The user may also ask the worker directly in its tab; the hooks record that conversation too.
 
 ### 6. Close what is finished
 
-A worker marks its session resolved when its ticket is Done or its PR is merged (`report --resolved`). When the user confirms that work is finished, or a resolved worker sits idle, run `orch stop S<id>`. It closes the tab only once the worker has settled, and the record stays. Stopping a session that is still open keeps it resumable. Only `--force` closes a working tab, and only on the user's word.
+A worker marks its session resolved when its ticket is Done or its PR is merged (`report --resolved`). When the user confirms that work is finished, or a resolved worker sits idle, run `orch stop S<id>`. It closes the tab only when the worker is idle, and the record stays. Stopping a session that is still open keeps it resumable. A worker that is working, or blocked on a permission prompt mid-turn, closes only with `--force`, and only on the user's word.
 
 ## What the workers do
 
 Every worker's tab carries `ORCHESTRATOR_DB`, `ORCHESTRATOR_SESSION`, and `ORCHESTRATOR_CLI`. Its first prompt tells it to keep its record current with `node "$ORCHESTRATOR_CLI" report --summary …`, adding `--ticket <id>` and finally `--resolved`. Hooks loaded only into these workers (Claude through `--settings`, Pi through `-e`) record every prompt, whether you sent it or the user typed it in the tab, along with each compaction and a `/clear`. A session the user starts by hand has none of this and is never touched.
 
-Resume reopens the exact conversation, because the worker was launched with a session id the record holds. If the harness can no longer open it, `resume` starts a fresh conversation in the same session record and gives it the summary, the ticket, and the last prompts.
+A session keeps its conversation id for life: the worker was launched with an id the record holds, and the hooks record where its transcript is. `resume` reopens that conversation when the transcript exists. When it was never written, or is gone, `resume` starts the same id fresh with the brief, the summary, the ticket, the last prompts, and any prompts still held. A failed resume changes nothing and says so; retry it, or choose `relaunch`, which gives the session a new conversation seeded the same way and records the old one.
 
 ## Common Rationalizations
 
@@ -112,7 +116,7 @@ Resume reopens the exact conversation, because the worker was launched with a se
 - `orch new` for a request that `find` matched to an open, non-stale session, with no reason saying why.
 - Resuming a stale session (step 3) with no reason that says why its context is still worth the cost.
 - One `--request` that carries two unrelated asks.
-- A second orchestrator proceeding after a lock refusal.
+- A second orchestrator carrying on after `start` refused it.
 
 ## Verification
 

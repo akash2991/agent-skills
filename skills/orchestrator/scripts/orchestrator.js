@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 'use strict';
 
-// The orchestrator's mechanics: the session record, the one-orchestrator lock,
-// and launching, resuming, messaging, and closing worker agents in Herdr tabs.
-// The orchestrator agent makes the judgment (which session a request belongs
-// to); this script does everything that can be exact. See ../SKILL.md.
+// The orchestrator's mechanics: the session record, the one-orchestrator
+// ownership, and launching, resuming, messaging, and closing worker agents in
+// Herdr tabs. The orchestrator agent makes the judgment (which session a
+// request belongs to); this script does everything that can be exact. See
+// ../SKILL.md.
+//
+// Invariants:
+// - A session's native conversation id never changes on its own. Resume opens
+//   that conversation when its transcript exists, and starts it fresh under the
+//   same id with the full brief when it was never written or is gone. A failed
+//   resume leaves the session as it was; only `relaunch` replaces the id.
+// - A worker's prompts are recorded as held before they are sent, and its tab
+//   is recorded as soon as it exists.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,7 +31,9 @@ const DEFAULTS = {
 // Harnesses whose sessions can be named at launch, resumed by id, and recorded
 // by a hook. Any other Herdr agent kind can be launched, untracked.
 const TRACKED = new Set(['claude', 'pi']);
-const SETTLED = new Set(['idle', 'done', 'blocked']);
+// Herdr errors after which the prompt was still accepted by the agent.
+const ACCEPTED = new Set(['timeout', 'agent_prompt_stalled']);
+const HOOK_BUSY_MS = { claude: 1500, pi: 5000 };
 const EXIT = { error: 1, usage: 2, lock: 3 };
 
 class CliError extends Error {
@@ -62,35 +73,45 @@ function sessionArg(opts, { fromEnv = false } = {}) {
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+}
+
+// The project's main working tree: shared by its linked worktrees, and right
+// for submodules and separate git directories, where the git directory is not
+// inside the working tree.
 function projectRoot(cwd = process.cwd()) {
+  let top;
+  try { top = git(['rev-parse', '--show-toplevel'], cwd); } catch { return cwd; }
   try {
-    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return path.dirname(common);
-  } catch {
-    return cwd;
-  }
+    const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], cwd);
+    const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
+    if (gitDir === common) return top; // the main working tree itself
+    // A linked worktree: its main working tree is listed first.
+    const first = git(['worktree', 'list', '--porcelain'], cwd).split(/\n\n/)[0].split('\n');
+    const line = first.find(l => l.startsWith('worktree '));
+    if (line && !first.includes('bare')) return line.slice('worktree '.length);
+  } catch { /* an old git */ }
+  return top;
 }
 
 function dbPath(opts = {}) {
   return path.resolve(opts.db || process.env.ORCHESTRATOR_DB || path.join(projectRoot(), '.agent-brain', 'orchestrator.db'));
 }
 
-const lockPath = db => path.join(path.dirname(db), 'orchestrator.lock');
+// Files that belong to a record are named after it, so one exclude covers them.
+const companion = (db, suffix) => `${db}${suffix}`;
 
-// Keep the record out of git without editing the project's .gitignore.
+const escapeGlob = s => s.replace(/[*?[\]\\]/g, '\\$&');
+
+// Keep the record, its SQLite sidecars, and its companions out of git without
+// editing the project's .gitignore.
 function excludeFromGit(root, db) {
-  const rel = path.relative(root, path.dirname(db));
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return;
+  const rel = path.relative(root, db);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return;
   let exclude;
-  try {
-    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    exclude = path.join(common, 'info', 'exclude');
-  } catch {
-    return;
-  }
-  const pattern = `/${rel ? `${rel.split(path.sep).join('/')}/` : ''}orchestrator.*`;
+  try { exclude = git(['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], root); } catch { return; }
+  const pattern = `/${rel.split(path.sep).map(escapeGlob).join('/')}*`;
   const current = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
   if (current.split(/\r?\n/).includes(pattern)) return;
   fs.mkdirSync(path.dirname(exclude), { recursive: true });
@@ -109,7 +130,7 @@ function herdr(args) {
     let parsed;
     try { parsed = JSON.parse(detail); } catch { /* not JSON */ }
     const failure = new CliError(`herdr ${args.slice(0, 2).join(' ')} failed: ${parsed && parsed.error ? parsed.error.message : detail}`);
-    failure.herdrCode = parsed && parsed.error ? parsed.error.code : 'failed';
+    failure.herdrCode = parsed && parsed.error ? parsed.error.code : (err.code === 'ETIMEDOUT' ? 'timeout' : 'failed');
     throw failure;
   }
   let json;
@@ -131,8 +152,7 @@ function requireHerdr() {
 function paneInfo(paneId) {
   if (!paneId) return null;
   try {
-    const result = herdr(['pane', 'get', paneId]);
-    return result.pane || null;
+    return herdr(['pane', 'get', paneId]).pane || null;
   } catch (err) {
     if (err.herdrCode === 'pane_not_found') return null;
     throw err;
@@ -159,50 +179,38 @@ function isLive(row, pane) {
   return !row.native_session_id || !native || sameId(native, row.native_session_id);
 }
 
-// ─── Lock: one orchestrator per project ─────────────────────────────────────
+// ─── Ownership: one orchestrator per project ─────────────────────────────────
 
-function readLock(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
-}
-
-function holderAlive(lock) {
-  if (!lock || !lock.pane_id) return false;
-  const pane = paneInfo(lock.pane_id);
+function holderAlive(held) {
+  const pane = paneInfo(held.pane_id);
   if (!pane || !pane.agent) return false;
   const native = pane.agent_session && pane.agent_session.value;
-  return !lock.agent_session || !native || sameId(native, lock.agent_session);
+  return !held.agent_session || !native || sameId(native, held.agent_session);
 }
 
-function acquireLock(db) {
+function claimOwnership(db) {
   requireHerdr();
-  const file = lockPath(db);
-  const me = paneInfo(process.env.HERDR_PANE_ID);
-  const mySession = me && me.agent_session ? me.agent_session.value : null;
-  const held = readLock(file);
-  if (held && held.pane_id !== process.env.HERDR_PANE_ID && holderAlive(held)) {
-    throw new CliError(`another orchestrator holds this project: pane ${held.pane_id} (tab ${held.tab_id}), since ${held.at}. ` +
-      'Use that one, or close it first. This session stays read-only.', EXIT.lock);
-  }
-  const lock = {
+  const pane = paneInfo(process.env.HERDR_PANE_ID);
+  const me = {
     pane_id: process.env.HERDR_PANE_ID,
-    tab_id: process.env.HERDR_TAB_ID || (me && me.tab_id) || null,
+    tab_id: process.env.HERDR_TAB_ID || (pane && pane.tab_id) || null,
     workspace_id: process.env.HERDR_WORKSPACE_ID,
-    agent_session: mySession,
-    at: store.now(),
+    agent_session: pane && pane.agent_session ? pane.agent_session.value : null,
   };
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(lock, null, 2)}\n`);
-  fs.renameSync(tmp, file);
-  return { lock, tookOver: !!held && held.pane_id !== lock.pane_id };
+  const result = store.claimOwner(db, me, holderAlive);
+  if (!result.claimed) {
+    throw new CliError(`another orchestrator holds this project: pane ${result.held.pane_id} (tab ${result.held.tab_id}), since ` +
+      `${result.held.at}. Use that one, or close it first. This session stays read-only.`, EXIT.lock);
+  }
+  return { me, tookOver: result.tookOver };
 }
 
-function requireLock(db) {
+function requireOwner(db) {
   requireHerdr();
-  const held = readLock(lockPath(db));
-  if (!held || held.pane_id !== process.env.HERDR_PANE_ID) {
-    throw new CliError(held
-      ? `this pane is not the orchestrator; pane ${held.pane_id} is. Only the orchestrator launches, resumes, messages, or closes workers.`
+  const owner = store.getOwner(db);
+  if (!owner || owner.pane_id !== process.env.HERDR_PANE_ID) {
+    throw new CliError(owner
+      ? `this pane is not the orchestrator; pane ${owner.pane_id} is. Only the orchestrator launches, resumes, messages, or closes workers.`
       : 'no orchestrator is running in this project; start one with /orchestrator', EXIT.lock);
   }
 }
@@ -284,7 +292,8 @@ function describe(c) {
   if (last) lines.push(`  last prompt (${last.source}, ${ago(last.at)}): ${oneLine(last.text)}`);
   if (r.status === 'resolved') lines.push(`  resolved ${ago(r.resolved_at)}: do not resume; start new with --from S${r.id} if related`);
   if (r.status === 'superseded') lines.push('  superseded by a newer session');
-  if (r.pending_prompt) lines.push(`  first prompt held: the tab is waiting for the user; then deliver S${r.id}`);
+  const held = store.pendingOf(r).length;
+  if (held) lines.push(`  ${held} prompt(s) held: run deliver S${r.id} once its tab is ready`);
   return lines.join('\n');
 }
 
@@ -305,7 +314,7 @@ function claudeSettings() {
 // Herdr types the launch command into the tab's shell, whose line limit is
 // 1024 bytes, so the hook settings go in a file beside the record.
 function claudeSettingsFile(dbFile) {
-  const file = path.join(path.dirname(dbFile), 'orchestrator.claude-settings.json');
+  const file = companion(dbFile, '.claude-settings.json');
   const content = `${JSON.stringify(claudeSettings(), null, 2)}\n`;
   if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== content) fs.writeFileSync(file, content);
   return file;
@@ -324,7 +333,8 @@ function harnessArgs(row, resume, { settingsFile } = {}) {
     ];
   }
   if (row.harness === 'pi') {
-    // --session-id opens the exact session, creating it when missing.
+    // --session-id opens the session when its file exists and creates it when not;
+    // resume checks the transcript first, so a missing one gets the full brief.
     return [
       '--session-id', row.native_session_id,
       '-e', PI_EXTENSION,
@@ -354,85 +364,136 @@ function brief(row, request, { context } = {}) {
   return [`/brain ${row.persona} [orchestrator S${row.id}] Adopt this persona and declare; the brief follows in the next message.`, text];
 }
 
-// Returns the prompts not sent when one fails, so they can be held for deliver.
-function sendPrompts(paneId, prompts) {
-  for (let i = 0; i < prompts.length; i++) {
-    const last = i === prompts.length - 1;
-    try {
-      herdr(['agent', 'prompt', paneId, prompts[i], ...(last ? [] : ['--wait', '--timeout', '300000'])]);
-    } catch (err) {
-      // A --wait that timed out still delivered its prompt; anything else did not.
-      const unsent = err.herdrCode === 'timeout' ? prompts.slice(i + 1) : prompts.slice(i);
-      return { unsent, error: err.message };
-    }
-  }
-  return { unsent: [] };
-}
-
 function priorContext(db, row, heading) {
   const prompts = store.recentPrompts(db, row.id, 5);
+  const held = store.pendingOf(row).map(e => e.text).filter(t => !t.startsWith('/brain '));
   return [
     `${heading} S${row.id} ("${row.title}")${row.ticket ? `, ticket ${row.ticket}` : ''}:`,
     `- intent: ${oneLine(row.intent, 400)}`,
     row.summary ? `- where it stood: ${oneLine(row.summary, 800)}` : '- no summary was recorded',
     ...prompts.map(p => `- asked ${ago(p.at)}: ${oneLine(p.text, 300)}`),
+    ...(held.length ? ['Messages that were held for this session and never reached a worker:', ...held.map(t => `---\n${t}\n---`)] : []),
     'Read the ticket, its PR, and the code for the current state before acting; this summary may be stale.',
   ].join('\n');
 }
 
+function clearPlacement(db, id) {
+  store.updateSession(db, id, { pane_id: null, tab_id: null, agent_name: null });
+}
+
+// Send the held prompts in order, removing each once the agent accepted it.
+// A prompt left `sending` by an interrupted run was submitted already and is
+// dropped rather than sent twice. Stops at the first prompt not accepted.
+function deliverPending(db, id, paneId) {
+  let entries = store.pendingOf(store.getSession(db, id));
+  const skipped = entries.filter(e => e.state === 'sending').length;
+  entries = entries.filter(e => e.state !== 'sending');
+  store.setPending(db, id, entries);
+  while (entries.length) {
+    const [entry, ...rest] = entries;
+    store.setPending(db, id, [{ ...entry, state: 'sending' }, ...rest]);
+    try {
+      herdr(['agent', 'prompt', paneId, entry.text, ...(rest.length ? ['--wait', '--timeout', '300000'] : [])]);
+    } catch (err) {
+      if (!ACCEPTED.has(err.herdrCode)) {
+        store.setPending(db, id, entries);
+        return { ok: false, error: err.message, skipped };
+      }
+      // Accepted, but the turn has not settled: hold the rest until it has.
+      store.setPending(db, id, rest);
+      return rest.length ? { ok: false, error: err.message, skipped } : { ok: true, skipped };
+    }
+    entries = rest;
+    store.setPending(db, id, entries);
+  }
+  return { ok: true, skipped };
+}
+
 function launch(db, dbFile, row, { resume, prompts }) {
+  store.setPending(db, row.id, prompts.map(text => ({ text, state: 'pending' })));
   const tab = herdr(['tab', 'create', '--workspace', process.env.HERDR_WORKSPACE_ID, '--cwd', row.cwd,
     '--label', tabLabel(row), '--no-focus',
-    '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`, '--env', `ORCHESTRATOR_CLI=${CLI}`]);
+    '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`,
+    '--env', `ORCHESTRATOR_CLI=${CLI}`, '--env', `ORCHESTRATOR_NODE=${process.execPath}`]);
   const pane = tab.root_pane && tab.root_pane.pane_id;
   const tabId = (tab.tab && tab.tab.tab_id) || (tab.root_pane && tab.root_pane.tab_id);
   if (!pane || !tabId) throw new CliError(`herdr tab create returned no pane or tab id: ${JSON.stringify(tab)}`);
   const agentName = `orch-s${row.id}-${crypto.randomBytes(2).toString('hex')}`;
-  const placed = { tab_id: tabId, pane_id: pane, agent_name: agentName, launches: row.launches + 1, last_active_at: store.now() };
+  store.updateSession(db, row.id, { tab_id: tabId, pane_id: pane, agent_name: agentName, launches: row.launches + 1, last_active_at: store.now() });
+  store.addEvent(db, row.id, 'tab-created', pane);
+  const placed = { tab_id: tabId, pane_id: pane, label: tabLabel(row) };
   try {
     const args = harnessArgs(row, resume, { settingsFile: row.harness === 'claude' ? claudeSettingsFile(dbFile) : undefined });
     herdr(['agent', 'start', agentName, '--kind', row.harness, '--pane', pane, '--timeout', '120000', '--', ...args]);
   } catch (err) {
     if (err.herdrCode === 'agent_not_ready') {
       // The agent is up but asking the user something first, such as whether
-      // to trust the folder. That answer is the user's, never the orchestrator's:
-      // keep the tab and hold the first prompt until `deliver`.
-      store.updateSession(db, row.id, { ...placed, pending_prompt: JSON.stringify(prompts) });
+      // to trust the folder. That answer is the user's, never the orchestrator's.
       store.addEvent(db, row.id, 'waiting-for-user', err.message);
-      return { tab_id: tabId, pane_id: pane, label: tabLabel(row), waiting: true };
+      return { ...placed, waiting: 'user' };
     }
-    try { herdr(['tab', 'close', tabId]); } catch { /* best effort */ }
-    err.startFailed = true;
-    throw err;
+    let closed = false;
+    try { herdr(['tab', 'close', tabId]); closed = true; } catch { /* reported below */ }
+    if (closed) clearPlacement(db, row.id);
+    store.addEvent(db, row.id, closed ? 'start-failed' : 'start-failed-tab-kept', err.message);
+    const failure = new CliError(`${err.message}${closed ? '' : `; its tab ${tabId} could not be closed and stays recorded`}`);
+    failure.startFailed = true;
+    throw failure;
   }
-  store.updateSession(db, row.id, { ...placed, pending_prompt: null });
   store.addEvent(db, row.id, resume ? 'resumed' : 'launched', `${row.harness} pane ${pane}`);
-  const sent = sendPrompts(pane, prompts);
-  if (sent.unsent.length) {
-    store.updateSession(db, row.id, { pending_prompt: JSON.stringify(sent.unsent) });
-    store.addEvent(db, row.id, 'prompt-held', sent.error);
-    return { tab_id: tabId, pane_id: pane, label: tabLabel(row), waiting: true };
+  if (row.harness === 'pi') {
+    const session = (paneInfo(pane) || {}).agent_session;
+    if (session && session.kind === 'path') store.updateSession(db, row.id, { transcript_path: session.value });
   }
-  return { tab_id: tabId, pane_id: pane, label: tabLabel(row) };
+  const sent = deliverPending(db, row.id, pane);
+  return sent.ok ? placed : { ...placed, waiting: 'busy', error: sent.error };
 }
 
-const WAITING_NOTE = 'its tab is waiting for the user (a trust or login prompt). Ask the user to answer it in that tab, then run deliver';
-
-function relaunch(db, dbFile, row, request, why) {
-  const fresh = TRACKED.has(row.harness) ? crypto.randomUUID() : null;
-  store.updateSession(db, row.id, { native_session_id: fresh });
-  store.addEvent(db, row.id, 'relaunched', why);
-  const updated = store.getSession(db, row.id);
-  return launch(db, dbFile, updated, {
-    resume: false,
-    prompts: brief(updated, request, { context: priorContext(db, row, 'This continues the work of the earlier conversation of session') }),
-  });
+function waitingNote(id, launched) {
+  if (launched.waiting === 'user') {
+    return `its tab is waiting for the user (a trust or login prompt). Ask the user to answer it in that tab, then run deliver S${id}`;
+  }
+  return `a prompt is still held (${launched.error}). Run deliver S${id} once the worker settles`;
 }
+
+// Before launching a session again: refuse if it already runs anywhere, close
+// an agentless leftover tab of ours, and adopt a tab the user resumed by hand.
+function clearForLaunch(db, row) {
+  if (row.pane_id) {
+    const pane = paneInfo(row.pane_id);
+    if (isLive(row, pane)) throw new CliError(`S${row.id} is already running in pane ${row.pane_id}; use send`);
+    if (pane) {
+      try { herdr(['tab', 'close', row.tab_id || pane.tab_id]); } catch (err) {
+        throw new CliError(`S${row.id}'s earlier tab ${row.tab_id || pane.tab_id} is still open and could not be closed: ${err.message}`);
+      }
+    }
+    clearPlacement(db, row.id);
+    store.addEvent(db, row.id, 'tab-closed', row.pane_id);
+  }
+  const agents = liveAgents();
+  const match = agents && row.native_session_id && agents.find(a => a.agent_session && sameId(a.agent_session.value, row.native_session_id));
+  if (match) {
+    store.updateSession(db, row.id, { pane_id: match.pane_id, tab_id: match.tab_id || null });
+    store.addEvent(db, row.id, 'tab-adopted', match.pane_id);
+    throw new CliError(`S${row.id} is already running in pane ${match.pane_id}, opened outside the orchestrator; it is adopted now, so use send`);
+  }
+  return store.getSession(db, row.id);
+}
+
+const transcriptExists = row => !!row.transcript_path && fs.existsSync(row.transcript_path);
 
 function print(value, opts) {
   if (opts.json) process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   else if (typeof value === 'string') process.stdout.write(`${value}\n`);
   else process.stdout.write(`${Object.entries(value).map(([k, v]) => `${k}: ${v}`).join('\n')}\n`);
+}
+
+function launchResult(id, action, launched, extra = {}) {
+  return {
+    session: `S${id}`, action: launched.waiting ? 'waiting' : action, ...extra,
+    tab_id: launched.tab_id, pane_id: launched.pane_id, label: launched.label,
+    ...(launched.waiting ? { note: waitingNote(id, launched) } : {}),
+  };
 }
 
 // ─── Reconcile ────────────────────────────────────────────────────────────────
@@ -446,16 +507,16 @@ function reconcile(db) {
   const byPane = new Map(agents.map(a => [a.pane_id, a]));
   const closed = [];
   const adopted = [];
-  for (const row of store.listSessions(db)) {
-    if (row.pane_id) {
-      if (!isLive(row, byPane.get(row.pane_id))) {
-        store.updateSession(db, row.id, { pane_id: null, tab_id: null, agent_name: null });
+  for (let row of store.listSessions(db)) {
+    if (row.pane_id && !isLive(row, byPane.get(row.pane_id))) {
+      if (!paneInfo(row.pane_id)) {
+        clearPlacement(db, row.id);
         store.addEvent(db, row.id, 'tab-closed', row.pane_id);
         closed.push(`S${row.id}`);
+        row = store.getSession(db, row.id);
       }
-      continue;
     }
-    if (!row.native_session_id) continue;
+    if (row.pane_id || !row.native_session_id) continue;
     const match = agents.find(a => a.agent_session && sameId(a.agent_session.value, row.native_session_id));
     if (match) {
       store.updateSession(db, row.id, { pane_id: match.pane_id, tab_id: match.tab_id || null });
@@ -480,33 +541,36 @@ function getRow(db, id) {
   return row;
 }
 
+function requireOpen(row, verb) {
+  if (row.status !== 'open') throw new CliError(`S${row.id} is ${row.status}; start a new session with --from S${row.id} instead of ${verb} it`);
+}
+
 const commands = {
   start(argv) {
     const opts = parseArgs(argv, ['json']);
     return withDb(opts, (db, file) => {
       excludeFromGit(projectRoot(), file);
-      const { lock, tookOver } = acquireLock(file);
+      const { me, tookOver } = claimOwnership(db);
       const changes = reconcile(db);
       const open = store.listSessions(db).filter(r => r.status === 'open');
-      const result = {
-        orchestrator: `pane ${lock.pane_id}${tookOver ? ' (took over a stale lock)' : ''}`,
+      print({
+        orchestrator: `pane ${me.pane_id}${tookOver ? ' (took over from an orchestrator that is gone)' : ''}`,
         record: file,
         open_sessions: open.length,
         live_tabs: open.filter(r => r.pane_id).length,
         reconciled: `${changes.closed.length} closed, ${changes.adopted.length} adopted`,
-      };
-      print(result, opts);
+      }, opts);
       if (!opts.json && open.length) print(`\n${candidates(db, { limit: 10 }).map(describe).join('\n\n')}`, opts);
     });
   },
 
   release(argv) {
     const opts = parseArgs(argv);
-    const file = lockPath(dbPath(opts));
-    const held = readLock(file);
-    if (held && held.pane_id !== process.env.HERDR_PANE_ID) throw new CliError(`the lock belongs to pane ${held.pane_id}`, EXIT.lock);
-    fs.rmSync(file, { force: true });
-    print('released', opts);
+    return withDb(opts, db => {
+      requireOwner(db);
+      store.releaseOwner(db, process.env.HERDR_PANE_ID);
+      print('released', opts);
+    });
   },
 
   find(argv) {
@@ -526,7 +590,7 @@ const commands = {
     const harness = (opts.harness || DEFAULT_HARNESS).toLowerCase();
     const defaults = DEFAULTS[harness] || { model: null, effort: null };
     return withDb(opts, (db, file) => {
-      requireLock(file);
+      requireOwner(db);
       const parent = opts.from ? getRow(db, sessionArg({ _: [opts.from] })) : null;
       const id = store.createSession(db, {
         title,
@@ -551,11 +615,10 @@ const commands = {
       try {
         launched = launch(db, file, row, { resume: false, prompts: brief(row, request, { context }) });
       } catch (err) {
-        store.addEvent(db, id, 'launch-failed', err.message);
-        throw new CliError(`S${id} was recorded but its agent did not start: ${err.message}. Retry with: resume S${id}`);
+        if (!err.startFailed) throw err;
+        throw new CliError(`S${id} is recorded, with its brief held, but its agent did not start: ${err.message}. Retry with resume S${id}`);
       }
-      print({ session: `S${id}`, action: launched.waiting ? 'waiting' : 'new', tracked: TRACKED.has(harness), ...launched,
-        ...(launched.waiting ? { note: `${WAITING_NOTE} S${id}` } : {}) }, opts);
+      print(launchResult(id, 'new', launched, { tracked: TRACKED.has(harness) }), opts);
     });
   },
 
@@ -565,57 +628,98 @@ const commands = {
     const request = required(opts, 'request');
     const reason = required(opts, 'reason');
     return withDb(opts, (db, file) => {
-      requireLock(file);
-      const row = getRow(db, id);
-      if (row.status !== 'open') {
-        throw new CliError(`S${id} is ${row.status}; start a new session with --from S${id} instead of resuming it`);
-      }
-      if (isLive(row, paneInfo(row.pane_id))) throw new CliError(`S${id} is already running in pane ${row.pane_id}; use send`);
+      requireOwner(db);
+      let row = getRow(db, id);
+      requireOpen(row, 'resuming');
+      row = clearForLaunch(db, row);
       store.addDecision(db, { request, action: 'resume', sessionId: id, considered: opts.considered, reason });
-      // The resumed conversation already holds its persona and brief, unless
-      // its tab closed while they were still held for deliver.
-      const prompts = [...(row.pending_prompt ? JSON.parse(row.pending_prompt) : []), `[orchestrator S${id}] ${request}`];
-      let launched;
-      let mode = 'resumed';
-      if (!TRACKED.has(row.harness) || !row.native_session_id) {
-        launched = relaunch(db, file, row, request, `${row.harness} has no resumable session id`);
-        mode = 'relaunched';
-      } else {
+      const ask = `[orchestrator S${id}] ${request}`;
+      if (TRACKED.has(row.harness) && transcriptExists(row)) {
+        let launched;
         try {
-          launched = launch(db, file, row, { resume: true, prompts });
+          // Held prompts first: they were meant for this conversation.
+          launched = launch(db, file, row, { resume: true, prompts: [...store.pendingOf(row).map(e => e.text), ask] });
         } catch (err) {
           if (!err.startFailed) throw err;
-          store.addEvent(db, id, 'resume-failed', err.message);
-          launched = relaunch(db, file, store.getSession(db, id), request, `resume failed: ${err.message}`);
-          mode = 'relaunched';
+          throw new CliError(`resuming S${id} failed: ${err.message}. Its conversation is intact (${row.transcript_path}); ` +
+            `retry resume S${id}, or start it over with relaunch S${id}`);
         }
+        return print(launchResult(id, 'resumed', launched), opts);
       }
-      if (launched.waiting) mode = 'waiting';
-      print({ session: `S${id}`, action: mode, ...launched, ...(launched.waiting ? { note: `${WAITING_NOTE} S${id}` } : {}) }, opts);
+      // Never written, or its transcript is gone: start the same session id
+      // fresh, with the brief and everything the record knows.
+      let launched;
+      try {
+        launched = launch(db, file, row, {
+          resume: false,
+          prompts: brief(row, request, { context: priorContext(db, row, 'This continues the work of session') }),
+        });
+      } catch (err) {
+        if (!err.startFailed) throw err;
+        throw new CliError(`starting S${id} again failed: ${err.message}. Retry resume S${id}, or relaunch S${id} for a new conversation`);
+      }
+      print(launchResult(id, 'restarted', launched, {
+        why: row.transcript_path ? `its transcript ${row.transcript_path} is gone` : 'its conversation was never written',
+      }), opts);
     });
   },
 
-  // Send the first prompt held back while the new tab waited for the user.
+  // A new conversation for an open session, on the orchestrator's decision
+  // (after a failed resume, or when the old one is not worth its context).
+  relaunch(argv) {
+    const opts = parseArgs(argv, ['json']);
+    const id = sessionArg(opts);
+    const request = required(opts, 'request');
+    const reason = required(opts, 'reason');
+    return withDb(opts, (db, file) => {
+      requireOwner(db);
+      let row = getRow(db, id);
+      requireOpen(row, 'relaunching');
+      row = clearForLaunch(db, row);
+      store.addDecision(db, { request, action: 'relaunch', sessionId: id, considered: opts.considered, reason });
+      const previous = { native_session_id: row.native_session_id, transcript_path: row.transcript_path };
+      const fresh = TRACKED.has(row.harness) ? crypto.randomUUID() : null;
+      store.updateSession(db, id, { native_session_id: fresh, transcript_path: null });
+      store.addEvent(db, id, 'relaunched', `previous conversation ${previous.native_session_id || 'none'}` +
+        `${previous.transcript_path ? ` at ${previous.transcript_path}` : ''}: ${reason}`);
+      const updated = store.getSession(db, id);
+      let launched;
+      try {
+        launched = launch(db, file, updated, {
+          resume: false,
+          prompts: brief(updated, request, { context: priorContext(db, row, 'This continues the work of the earlier conversation of session') }),
+        });
+      } catch (err) {
+        if (!err.startFailed) throw err;
+        store.updateSession(db, id, previous);
+        store.addEvent(db, id, 'relaunch-failed', `restored ${previous.native_session_id || 'none'}: ${err.message}`);
+        throw new CliError(`relaunching S${id} failed: ${err.message}. Its previous conversation is still the recorded one`);
+      }
+      print(launchResult(id, 'relaunched', launched, { previous: previous.native_session_id }), opts);
+    });
+  },
+
+  // Send the prompts held while a new tab waited for the user or the worker.
   deliver(argv) {
     const opts = parseArgs(argv, ['json']);
     const id = sessionArg(opts);
-    return withDb(opts, (db, file) => {
-      requireLock(file);
+    return withDb(opts, db => {
+      requireOwner(db);
       const row = getRow(db, id);
-      if (!row.pending_prompt) throw new CliError(`S${id} has no held prompt`);
+      if (!store.pendingOf(row).length) throw new CliError(`S${id} has no held prompt`);
       const pane = paneInfo(row.pane_id);
-      if (!isLive(row, pane)) throw new CliError(`S${id}'s tab is gone; resume it`);
+      if (!isLive(row, pane)) throw new CliError(`S${id}'s tab is gone; resume it, and its held prompts go with it`);
       if (pane.agent_status !== 'idle' && pane.agent_status !== 'done') {
-        throw new CliError(`S${id} is ${pane.agent_status}; the user has not finished answering its tab yet`);
+        throw new CliError(`S${id} is ${pane.agent_status}; the user has not finished answering its tab, or it is still working`);
       }
-      const sent = sendPrompts(row.pane_id, JSON.parse(row.pending_prompt));
-      if (sent.unsent.length) {
-        store.updateSession(db, id, { pending_prompt: JSON.stringify(sent.unsent) });
-        throw new CliError(`S${id}: ${sent.error}; ${sent.unsent.length} prompt(s) still held, run deliver again once it settles`);
+      const sent = deliverPending(db, id, row.pane_id);
+      if (!sent.ok) {
+        throw new CliError(`S${id}: ${sent.error}; ${store.pendingOf(store.getSession(db, id)).length} prompt(s) still held, run deliver again once it settles`);
       }
-      store.updateSession(db, id, { pending_prompt: null, last_active_at: store.now() });
+      store.updateSession(db, id, { last_active_at: store.now() });
       store.addEvent(db, id, 'delivered', row.pane_id);
-      print({ session: `S${id}`, action: 'delivered', pane_id: row.pane_id }, opts);
+      print({ session: `S${id}`, action: 'delivered', pane_id: row.pane_id,
+        ...(sent.skipped ? { skipped: `${sent.skipped} prompt(s) already submitted before an interruption` } : {}) }, opts);
     });
   },
 
@@ -624,12 +728,12 @@ const commands = {
     const id = sessionArg(opts);
     const request = required(opts, 'request');
     const reason = required(opts, 'reason');
-    return withDb(opts, (db, file) => {
-      requireLock(file);
+    return withDb(opts, db => {
+      requireOwner(db);
       const row = getRow(db, id);
-      if (row.status !== 'open') throw new CliError(`S${id} is ${row.status}; start a new session with --from S${id}`);
+      requireOpen(row, 'messaging');
       if (!isLive(row, paneInfo(row.pane_id))) throw new CliError(`S${id} has no live tab; use resume`);
-      if (row.pending_prompt) throw new CliError(`S${id} still holds its first prompt: ${WAITING_NOTE} S${id} before sending more`);
+      if (store.pendingOf(row).length) throw new CliError(`S${id} still holds prompts; run deliver S${id} before sending more`);
       store.addDecision(db, { request, action: 'send', sessionId: id, considered: opts.considered, reason });
       herdr(['agent', 'prompt', row.pane_id, `[orchestrator S${id}] ${request}`]);
       print({ session: `S${id}`, action: 'sent', pane_id: row.pane_id }, opts);
@@ -639,27 +743,37 @@ const commands = {
   status(argv) {
     const opts = parseArgs(argv, ['ask', 'json']);
     const id = sessionArg(opts);
-    return withDb(opts, (db, file) => {
+    return withDb(opts, db => {
       let row = getRow(db, id);
       const pane = row.pane_id && process.env.HERDR_ENV === '1' ? paneInfo(row.pane_id) : null;
       const live = isLive(row, pane);
+      let refreshed = null;
       if (opts.ask) {
-        requireLock(file);
+        requireOwner(db);
         if (!live) throw new CliError(`S${id} has no live tab; read the record below or resume it`);
-        herdr(['agent', 'prompt', row.pane_id, `[orchestrator S${id}] Status check from the user: update the record with ` +
-          '`node "$ORCHESTRATOR_CLI" report --summary "<what is done, what remains, anything blocking>"`, then answer in two or three lines.']);
-        try {
-          herdr(['agent', 'wait', row.pane_id, '--timeout', String(Number(opts.timeout || 300000))]);
-        } catch (err) {
-          process.stderr.write(`S${id} did not settle in time; showing the record as it is: ${err.message}\n`);
+        if (store.pendingOf(row).length) throw new CliError(`S${id} still holds prompts; deliver them first`);
+        if (pane.agent_status !== 'idle' && pane.agent_status !== 'done') {
+          refreshed = `no: the worker is ${pane.agent_status}, so it was not asked`;
+        } else {
+          try {
+            // --wait waits for the worker to start this turn, then to settle.
+            herdr(['agent', 'prompt', row.pane_id, `[orchestrator S${id}] Status check from the user: update the record with ` +
+              '`node "$ORCHESTRATOR_CLI" report --summary "<what is done, what remains, anything blocking>"`, then answer in two or three lines.',
+            '--wait', '--timeout', String(Number(opts.timeout || 300000))]);
+            refreshed = 'yes';
+          } catch (err) {
+            refreshed = `no: ${err.message}`;
+          }
         }
         row = getRow(db, id);
       }
       const prompts = store.recentPrompts(db, id, 5);
       const events = store.recentEvents(db, id, 8);
-      if (opts.json) return print({ ...row, live: live ? (pane.agent_status || 'live') : 'closed', prompts, events }, opts);
-      const c = { row, prompts, live: live ? (pane.agent_status || 'live') : 'closed', score: null, promptCount: store.promptCount(db, id) };
+      const liveState = live ? (pane.agent_status || 'live') : 'closed';
+      if (opts.json) return print({ ...row, live: liveState, refreshed, prompts, events }, opts);
+      const c = { row, prompts, live: liveState, score: null, promptCount: store.promptCount(db, id) };
       print([
+        ...(refreshed ? [`refreshed: ${refreshed}`] : []),
         describe(c),
         prompts.length ? `  recent prompts:\n${prompts.map(p => `    ${ago(p.at)} (${p.source}): ${oneLine(p.text)}`).join('\n')}` : '',
         events.length ? `  events: ${events.map(e => `${e.kind} ${ago(e.at)}`).join(', ')}` : '',
@@ -670,20 +784,25 @@ const commands = {
   stop(argv) {
     const opts = parseArgs(argv, ['force', 'json']);
     const id = sessionArg(opts);
-    return withDb(opts, (db, file) => {
-      requireLock(file);
+    return withDb(opts, db => {
+      requireOwner(db);
       const row = getRow(db, id);
       const pane = paneInfo(row.pane_id);
-      if (!isLive(row, pane)) {
-        store.updateSession(db, id, { pane_id: null, tab_id: null, agent_name: null });
+      if (!pane) {
+        clearPlacement(db, id);
         return print({ session: `S${id}`, action: 'already closed' }, opts);
       }
-      if (!SETTLED.has(pane.agent_status) && !opts.force) {
+      const live = isLive(row, pane);
+      // `blocked` is settled only for a tab still waiting on the user to start;
+      // mid-turn it is a worker waiting on a permission prompt.
+      const settled = !live || pane.agent_status === 'idle' || pane.agent_status === 'done'
+        || (pane.agent_status === 'blocked' && store.pendingOf(row).length > 0);
+      if (!settled && !opts.force) {
         throw new CliError(`S${id} is ${pane.agent_status}; wait for it to settle, or pass --force to close it mid-turn`);
       }
       herdr(['tab', 'close', row.tab_id || pane.tab_id]);
-      store.updateSession(db, id, { pane_id: null, tab_id: null, agent_name: null });
-      store.addEvent(db, id, 'stopped', opts.force ? 'forced' : pane.agent_status);
+      clearPlacement(db, id);
+      store.addEvent(db, id, 'stopped', opts.force ? `forced while ${pane.agent_status}` : pane.agent_status || 'no agent');
       print({ session: `S${id}`, action: 'closed', status: row.status }, opts);
     });
   },
@@ -691,8 +810,8 @@ const commands = {
   resolve(argv) {
     const opts = parseArgs(argv, ['json']);
     const id = sessionArg(opts);
-    return withDb(opts, (db, file) => {
-      requireLock(file);
+    return withDb(opts, db => {
+      requireOwner(db);
       getRow(db, id);
       store.updateSession(db, id, { status: 'resolved', resolved_at: store.now() });
       store.addEvent(db, id, 'resolved', opts.reason || 'orchestrator');
@@ -703,8 +822,8 @@ const commands = {
   reopen(argv) {
     const opts = parseArgs(argv, ['json']);
     const id = sessionArg(opts);
-    return withDb(opts, (db, file) => {
-      requireLock(file);
+    return withDb(opts, db => {
+      requireOwner(db);
       getRow(db, id);
       store.updateSession(db, id, { status: 'open', resolved_at: null });
       store.addEvent(db, id, 'reopened', opts.reason || 'orchestrator');
@@ -718,7 +837,7 @@ const commands = {
     const id = sessionArg(opts, { fromEnv: true });
     if (opts.resolved && opts.open) throw usageError('--resolved and --open are exclusive');
     return withDb(opts, db => {
-      const row = getRow(db, id);
+      getRow(db, id);
       const fields = {};
       if (opts.summary) fields.summary = opts.summary.trim();
       if (opts.title) fields.title = opts.title.trim();
@@ -741,54 +860,68 @@ const commands = {
     return withDb(opts, db => print(reconcile(db), opts));
   },
 
-  // Claude Code hook entry point. Registered only through the --settings the
-  // orchestrator passes to the workers it launches; prints nothing, never fails.
+  // A worker's recorder: the Claude hook (registered only through the settings
+  // file the orchestrator passes its workers) and the Pi extension's detached
+  // writer. Opens only an existing record, waits a bounded time for it, prints
+  // nothing, and never fails; errors go to the record's hook log.
   hook(argv) {
     const harness = argv[0];
-    if (harness !== 'claude') return;
     const file = process.env.ORCHESTRATOR_DB;
     const sessionId = process.env.ORCHESTRATOR_SESSION;
-    if (!file || !sessionId) return;
-    let payload;
-    try { payload = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { return; }
-    const kinds = { SessionStart: 'start', UserPromptSubmit: 'prompt', PreCompact: 'compact', Stop: 'stop', SessionEnd: 'end' };
-    const kind = kinds[payload.hook_event_name];
-    if (!kind) return;
+    if (!file || !sessionId || !HOOK_BUSY_MS[harness]) return;
+    let event;
     try {
-      const db = store.open(file);
-      try {
-        store.recordHookEvent(db, sessionId, {
-          kind,
+      const payload = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
+      if (harness === 'claude') {
+        const kinds = { SessionStart: 'start', UserPromptSubmit: 'prompt', PreCompact: 'compact', Stop: 'stop', SessionEnd: 'end' };
+        if (!kinds[payload.hook_event_name]) return;
+        event = {
+          kind: kinds[payload.hook_event_name],
           nativeSessionId: payload.session_id,
+          transcriptPath: payload.transcript_path,
           text: payload.prompt,
           detail: payload.source || payload.trigger || payload.reason || null,
-        });
-      } finally { db.close(); }
+        };
+      } else {
+        event = payload;
+      }
+    } catch { return; }
+    try {
+      const db = store.open(file, { create: false, busyTimeout: HOOK_BUSY_MS[harness] });
+      if (!db) return;
+      try { store.recordHookEvent(db, sessionId, event); } finally { db.close(); }
     } catch (err) {
-      process.stderr.write(`orchestrator hook: ${err.message}\n`);
+      try {
+        if (fs.statSync(path.dirname(file)).isDirectory()) {
+          fs.appendFileSync(companion(file, '.hook.log'), `${store.now()} ${harness} ${event.kind}: ${err.message}\n`);
+        }
+      } catch { /* nowhere to note it; the session goes on */ }
     }
   },
 };
 
 const HELP = `Usage: orchestrator.js <command> [options]
 
-Orchestrator (needs the lock; run inside Herdr):
-  start                      take the project's orchestrator lock, reconcile, list open sessions
-  release                    give the lock up
+Orchestrator (needs ownership; run inside Herdr):
+  start                      own this project's orchestration, reconcile, list open sessions
+  release                    give ownership up
   new --title T --request R --reason W [--intent I] [--persona P] [--ticket T]
       [--harness claude|pi|<herdr kind>] [--model M] [--effort E] [--cwd DIR] [--from S<id>] [--considered S1,S2]
-  resume S<id> --request R --reason W [--considered ...]   reopen a closed open session in a new tab
-  send S<id> --request R --reason W [--considered ...]     message a live session
-  deliver S<id>              send the first prompt held while a new tab waited for the user
+  resume S<id> --request R --reason W [--considered ...]    reopen an open session's conversation in a new tab
+  relaunch S<id> --request R --reason W [--considered ...]  give an open session a new conversation, seeded from the record
+  send S<id> --request R --reason W [--considered ...]      message a live session
+  deliver S<id>              send prompts held while a tab waited for the user or the worker
   stop S<id> [--force]       close a settled worker's tab; the session stays as it is
   resolve S<id> | reopen S<id>
-  status S<id> [--ask]       the record; --ask has the worker update it first
+  status S<id> [--ask]       the record; --ask has an idle worker update it first
 
 Anyone:
   find [--query TEXT] [--all] [--limit N]   rank sessions against a request
   report [S<id>] [--summary S] [--title T] [--ticket T] [--resolved|--open]   the worker's own update
   reconcile                  match the record to live Herdr tabs
 
+Defaults: ${Object.entries(DEFAULTS).map(([h, d]) => `${h} ${[d.model || 'its own model', d.effort].join(' ')}`).join('; ')}; harness ${DEFAULT_HARNESS}.
+new, resume, relaunch, and deliver can wait minutes for an agent to start and settle; give them a long tool timeout.
 A value of - reads it from stdin. --json prints JSON. --db overrides the record path.`;
 
 function main(argv) {
@@ -817,4 +950,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { main, parseArgs, score, tokens, tabLabel, harnessArgs, brief, claudeSettings, EXIT };
+module.exports = { main, parseArgs, score, tokens, tabLabel, harnessArgs, brief, claudeSettings, projectRoot, EXIT };

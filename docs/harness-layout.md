@@ -74,7 +74,7 @@ What the allowlist cannot enforce, and what it takes away:
 
 `/orchestrator` is a command plus the `orchestrator` skill, not a file in `agents/`. A persona is installed as a native subagent in `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`, so any agent could start an orchestrator as a subagent, and the orchestrator must never be one. Its workers are separate agents in Herdr tabs.
 
-Workers record their prompts and compactions through hooks the orchestrator passes when it launches each one: Claude's `--settings` JSON and Pi's `-e` extension, both pointing at the installed skill's `scripts/`. Nothing is written to `.claude/settings.json`, `.pi/settings.json`, or any other harness settings. A session started any other way loads none of it. The record and the lock live in `.agent-brain/orchestrator.*`, which the orchestrator adds to the repository's `.git/info/exclude` rather than to `.gitignore`.
+Workers record their prompts and compactions through hooks the orchestrator passes when it launches each one: Claude's `--settings` JSON and Pi's `-e` extension, both pointing at the installed skill's `scripts/`. Nothing is written to `.claude/settings.json`, `.pi/settings.json`, or any other harness settings. A session started any other way loads none of it. The record, which also says which pane is the orchestrator, lives in `.agent-brain/orchestrator.db` beside its SQLite sidecars and the Claude settings file; the orchestrator excludes that name with a wildcard in the repository's `.git/info/exclude` rather than `.gitignore`.
 
 ## Runtime checks versus documentation
 

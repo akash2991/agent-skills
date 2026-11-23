@@ -1,8 +1,9 @@
 'use strict';
 
 // The orchestrator's session record: one SQLite file per project, shared by the
-// orchestrator CLI, the Claude hook, and the Pi extension. Every writer goes
-// through this module so the schema and the hook semantics live in one place.
+// orchestrator CLI and the recorders in its workers (the Claude hook and the
+// Pi extension's writer). Every writer goes through this module so the schema,
+// the ownership rule, and the hook semantics live in one place.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -21,7 +22,7 @@ function loadSqlite() {
   };
   try {
     return require('node:sqlite');
-  } catch (err) {
+  } catch {
     throw new Error(`node:sqlite is unavailable in Node ${process.version}; the orchestrator needs Node 22.5 or newer`);
   } finally {
     process.emitWarning = emit;
@@ -41,6 +42,7 @@ CREATE TABLE sessions (
   persona TEXT,
   ticket TEXT,
   native_session_id TEXT,
+  transcript_path TEXT,
   cwd TEXT NOT NULL,
   tab_id TEXT,
   pane_id TEXT,
@@ -52,7 +54,7 @@ CREATE TABLE sessions (
   compactions INTEGER NOT NULL DEFAULT 0,
   last_compacted_at TEXT,
   launches INTEGER NOT NULL DEFAULT 0,
-  pending_prompt TEXT
+  pending TEXT
 );
 CREATE TABLE prompts (
   id INTEGER PRIMARY KEY,
@@ -65,7 +67,7 @@ CREATE TABLE decisions (
   id INTEGER PRIMARY KEY,
   at TEXT NOT NULL,
   request TEXT NOT NULL,
-  action TEXT NOT NULL CHECK (action IN ('new', 'resume', 'send')),
+  action TEXT NOT NULL CHECK (action IN ('new', 'resume', 'send', 'relaunch')),
   session_id INTEGER REFERENCES sessions(id),
   considered TEXT,
   reason TEXT NOT NULL
@@ -77,34 +79,66 @@ CREATE TABLE events (
   kind TEXT NOT NULL,
   detail TEXT
 );
+CREATE TABLE owner (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  pane_id TEXT NOT NULL,
+  tab_id TEXT,
+  workspace_id TEXT,
+  agent_session TEXT,
+  at TEXT NOT NULL
+);
 CREATE INDEX prompts_by_session ON prompts(session_id, id);
 CREATE INDEX events_by_session ON events(session_id, id);
 `;
 
 const UPDATABLE = new Set([
-  'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket',
-  'native_session_id', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at',
-  'resolved_at', 'compactions', 'last_compacted_at', 'launches', 'pending_prompt',
+  'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
+  'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
+  'last_compacted_at', 'launches', 'pending',
 ]);
 
 const now = () => new Date().toISOString();
+const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-function open(dbPath) {
-  const { DatabaseSync } = loadSqlite();
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-  const { user_version: version } = db.prepare('PRAGMA user_version').get();
-  if (version === 0) {
-    transaction(db, () => {
-      db.exec(SCHEMA);
-      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-    });
-  } else if (version > SCHEMA_VERSION) {
-    db.close();
-    throw new Error(`${dbPath} has schema ${version}; this orchestrator knows ${SCHEMA_VERSION}. Update the brain.`);
+function retryBusy(fn, budgetMs) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      return fn();
+    } catch (err) {
+      if (!/locked|busy/i.test(err.message) || Date.now() >= deadline) throw err;
+      sleep(25);
+    }
   }
-  return db;
+}
+
+// `create: false` opens only an existing record (a worker's recorder never
+// creates one); `busyTimeout` bounds how long a write waits for another writer.
+function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
+  if (!create && !fs.existsSync(dbPath)) return null;
+  const { DatabaseSync } = loadSqlite();
+  if (create) fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`PRAGMA busy_timeout = ${Number(busyTimeout)}; PRAGMA foreign_keys = ON;`);
+    // Switching to WAL takes an exclusive lock that does not honour busy_timeout.
+    retryBusy(() => db.exec('PRAGMA journal_mode = WAL'), busyTimeout);
+    const version = () => db.prepare('PRAGMA user_version').get().user_version;
+    if (version() === 0) {
+      transaction(db, () => {
+        if (version() !== 0) return; // another opener initialised it first
+        db.exec(SCHEMA);
+        db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      });
+    }
+    if (version() > SCHEMA_VERSION) {
+      throw new Error(`${dbPath} has schema ${version()}; this orchestrator knows ${SCHEMA_VERSION}. Update the brain.`);
+    }
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 }
 
 function transaction(db, fn) {
@@ -178,27 +212,69 @@ function recentEvents(db, sessionId, limit = 10) {
     .all(Number(sessionId), limit).reverse();
 }
 
+// ─── Held prompts ───────────────────────────────────────────────────────────
+// A worker's prompts are written here before they are sent. Each entry is
+// `pending` (not sent) or `sending` (submitted, acceptance not yet confirmed).
+// An accepted prompt is removed, so nothing is lost or sent twice when the CLI
+// is interrupted mid-delivery.
+
+function pendingOf(row) {
+  try { return row && row.pending ? JSON.parse(row.pending) : []; } catch { return []; }
+}
+
+function setPending(db, id, entries) {
+  updateSession(db, id, { pending: entries.length ? JSON.stringify(entries) : null });
+}
+
+// ─── Ownership: one orchestrator per project ────────────────────────────────
+
+function getOwner(db) {
+  return db.prepare('SELECT * FROM owner WHERE id = 1').get() || null;
+}
+
+// Read, judge, and replace ownership inside one write transaction, so two
+// contenders are serialized and exactly one wins. `holderAlive` decides whether
+// a different holder still runs.
+function claimOwner(db, me, holderAlive) {
+  return transaction(db, () => {
+    const held = getOwner(db);
+    if (held && held.pane_id !== me.pane_id && holderAlive(held)) return { claimed: false, held };
+    db.prepare(`INSERT INTO owner (id, pane_id, tab_id, workspace_id, agent_session, at) VALUES (1, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, tab_id = excluded.tab_id,
+      workspace_id = excluded.workspace_id, agent_session = excluded.agent_session, at = excluded.at`)
+      .run(me.pane_id, me.tab_id ?? null, me.workspace_id ?? null, me.agent_session ?? null, now());
+    return { claimed: true, tookOver: !!held && held.pane_id !== me.pane_id, held };
+  });
+}
+
+function releaseOwner(db, paneId) {
+  return db.prepare('DELETE FROM owner WHERE id = 1 AND pane_id = ?').run(paneId).changes > 0;
+}
+
+// ─── Recorder events ────────────────────────────────────────────────────────
+
 // One harness event from a worker the orchestrator launched. `kind` is one of
 // start, prompt, compact, stop, end; the Claude hook and the Pi extension map
 // their native events onto these.
 function recordHookEvent(db, sessionId, event) {
-  const row = getSession(db, sessionId);
-  if (!row) return false;
-  const at = now();
-  transaction(db, () => {
+  return transaction(db, () => {
+    const row = getSession(db, sessionId);
+    if (!row) return false;
+    const at = now();
     switch (event.kind) {
       case 'start':
         if (event.nativeSessionId && event.nativeSessionId !== row.native_session_id) {
           if (row.native_session_id) addEvent(db, row.id, 'native-session-changed', `${row.native_session_id} -> ${event.nativeSessionId}`);
           updateSession(db, row.id, { native_session_id: event.nativeSessionId });
         }
+        if (event.transcriptPath) updateSession(db, row.id, { transcript_path: event.transcriptPath });
         addEvent(db, row.id, 'start', event.detail);
         break;
       case 'prompt':
         if (event.text) addPrompt(db, row.id, event.text);
         break;
       case 'compact':
-        updateSession(db, row.id, { compactions: row.compactions + 1, last_compacted_at: at });
+        db.prepare('UPDATE sessions SET compactions = compactions + 1, last_compacted_at = ? WHERE id = ?').run(at, row.id);
         addEvent(db, row.id, 'compact', event.detail);
         break;
       case 'stop':
@@ -210,12 +286,12 @@ function recordHookEvent(db, sessionId, event) {
         throw new Error(`unknown hook event kind: ${event.kind}`);
     }
     updateSession(db, row.id, { last_active_at: at });
+    return true;
   });
-  return true;
 }
 
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
   addEvent, addPrompt, addDecision, recentPrompts, promptCount, recentEvents, recordHookEvent,
-  SCHEMA_VERSION,
+  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION,
 };

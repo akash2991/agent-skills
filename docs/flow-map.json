@@ -717,7 +717,7 @@
       "summary": "/orchestrator: one session per project routes each request to a new, resumed, or running worker in its own Herdr tab and never does the work.",
       "steps": [
         [
-          "Take the project's one orchestrator lock and reconcile the record with live tabs",
+          "Claim the project's one orchestrator in the record and reconcile it with live tabs",
           "det",
           "skills/orchestrator/scripts/orchestrator.js",
           ""
@@ -735,9 +735,15 @@
           ""
         ],
         [
-          "Launch or resume the worker with its session id, hooks, and brief; message a live one",
+          "Launch, resume, or restart the worker under its session id with hooks and held prompts; message a live one",
           "det",
           "skills/orchestrator/scripts/orchestrator.js",
+          ""
+        ],
+        [
+          "Retry a failed resume or give the session a new conversation (relaunch)",
+          "judgment",
+          null,
           ""
         ],
         [
