@@ -871,6 +871,87 @@ test('records opened at the same moment for the first time all succeed', async (
   } finally { t.cleanup(); }
 });
 
+// ─── Forced interleavings ────────────────────────────────────────────────────
+// Another writer takes the record's write lock, makes its change, and holds it
+// uncommitted; the code under test then reads the old state, waits on the lock,
+// and must see the change once the writer commits. The order is forced by the
+// lock: the writer holds it before the code under test starts.
+
+const LOCK_HOLDER = `
+const { DatabaseSync } = require('node:sqlite');
+const [file, sql, holdMs] = process.argv.slice(1);
+const db = new DatabaseSync(file);
+db.exec('PRAGMA journal_mode = WAL');
+db.exec('BEGIN IMMEDIATE');
+db.exec(sql);
+process.stdout.write('locked\\n');
+setTimeout(() => { db.exec('COMMIT'); db.close(); }, Number(holdMs));
+`;
+
+function holdLock(file, sql, holdMs = 1500) {
+  const child = spawn(process.execPath, ['-e', LOCK_HOLDER, file, sql, String(holdMs)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', d => { stderr += d; });
+  const done = new Promise(resolve => child.on('close', status => resolve({ status, stderr })));
+  const locked = new Promise((resolve, reject) => {
+    child.stdout.on('data', d => { if (String(d).includes('locked')) resolve(); });
+    child.on('close', () => reject(new Error(`the lock holder exited before locking: ${stderr}`)));
+  });
+  return { locked, done };
+}
+
+for (const [name, previous] of [['no owner', null], ['an owner that is gone', 'w1:gone']]) {
+  test(`a claim judged against ${name} while another commits its own re-judges and takes nothing`, async () => {
+    const t = setup();
+    try {
+      const d = t.open();
+      if (previous) d.prepare("INSERT INTO owner (id, pane_id, at) VALUES (1, ?, '2026-01-01T00:00:00Z')").run(previous);
+      const rival = holdLock(t.db, "INSERT INTO owner (id, pane_id, at) VALUES (1, 'w1:rival', '2026-11-23T00:00:00Z') " +
+        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at');
+      await rival.locked;
+      const judged = [];
+      const first = store.claimOwner(d, { pane_id: 'w1:me' }, held => { judged.push(held.pane_id); return false; });
+      assert.deepStrictEqual(judged, previous ? [previous] : [], 'judged the state from before the rival committed');
+      assert.strictEqual(first.claimed, false);
+      assert.strictEqual(first.changed, true, 'the owner changed after it was judged');
+      assert.strictEqual(store.getOwner(d).pane_id, 'w1:rival', 'the rival keeps its claim');
+      const again = store.claimOwner(d, { pane_id: 'w1:me' }, held => held.pane_id === 'w1:rival');
+      assert.strictEqual(again.claimed, false);
+      assert.strictEqual(store.getOwner(d).pane_id, 'w1:rival');
+      d.close();
+      assert.strictEqual((await rival.done).status, 0);
+    } finally { t.cleanup(); }
+  });
+}
+
+test('a compaction that waits on another writer counts both', async () => {
+  const t = setup();
+  try {
+    const d = t.open();
+    const id = store.createSession(d, { title: 'busy', intent: 'i', harness: 'claude', native_session_id: 'c-1', cwd: t.dir });
+    const other = holdLock(t.db, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`);
+    await other.locked;
+    assert.strictEqual(store.getSession(d, id).compactions, 0, 'the other compaction is not visible yet');
+    store.recordHookEvent(d, id, { kind: 'compact', detail: 'auto' });
+    assert.strictEqual(store.getSession(d, id).compactions, 2);
+    d.close();
+    assert.strictEqual((await other.done).status, 0);
+  } finally { t.cleanup(); }
+});
+
+test('an opener that read version 0 while another created the schema does not create it again', async () => {
+  const t = setup();
+  try {
+    fs.mkdirSync(path.dirname(t.db), { recursive: true });
+    const creator = holdLock(t.db, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`);
+    await creator.locked;
+    const d = store.open(t.db);
+    assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+    d.close();
+    assert.strictEqual((await creator.done).status, 0);
+  } finally { t.cleanup(); }
+});
+
 // ─── Status, stop, report ────────────────────────────────────────────────────
 
 test('status --ask is a best-effort request that never claims the summary is fresh', () => {
