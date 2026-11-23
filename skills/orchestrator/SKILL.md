@@ -83,7 +83,7 @@ If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why
 - The worker did not settle in time, for example while adopting its persona. Run `orch deliver S<id>` once it is idle.
 - A prompt may or may not have reached the worker: its send was interrupted. Nothing resends or drops it on its own, and `send`, `deliver`, `resume`, and `relaunch` refuse until you settle it. Look at the worker's tab or `orch status S<id>`, then run `orch settle S<id> --resend` if it never arrived or `--drop` if it did.
 
-A `send` that fails keeps its request in the record: when the worker refused it (for example, blocked on a permission prompt), run `orch deliver S<id>` once it can take it; when its delivery is unknown, settle it as above.
+A `send` refused before it writes its request (the session is not open, has no live tab, or still holds a prompt) keeps nothing: clear the cause, for example with `orch deliver S<id>` or a settle, then send the request again. Once `send` has written its request, a failure keeps it in the record: when the worker refused it (for example, blocked on a permission prompt), run `orch deliver S<id>` once it can take it; when its delivery is unknown, settle it as above.
 
 ### 5. Answer the user
 

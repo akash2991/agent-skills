@@ -698,8 +698,12 @@ const commands = {
         launched = launch(db, file, store.getSession(db, id), { resume: false, prompts });
       } catch (err) {
         if (!err.startFailed) throw err;
-        throw new CliError(`S${id} is recorded with its brief held, but ${err.confirmed ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
-          `${err.message}. ${err.confirmed ? `Retry with resume S${id}, without --request` : `${uncertainNote(err)}; then resume S${id}, without --request`}`);
+        // A tab that herdr never confirmed creating ran no agent start, so no agent started.
+        const retry = `resume S${id}, without --request`;
+        throw new CliError(`S${id} is recorded with its brief held, but ${err.confirmed || !err.tabRecorded ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
+          `${err.message}. ${err.confirmed ? `Retry with ${retry}`
+            : err.tabRecorded ? `${uncertainNote(err)}; then ${retry}`
+              : `herdr timed out creating its tab, so an empty tab may be open: close it if so, then ${retry}`}`);
       }
       print(launchResult(id, 'new', launched, { tracked: TRACKED.has(harness) }), opts);
     });

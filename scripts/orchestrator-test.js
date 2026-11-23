@@ -398,6 +398,16 @@ test('a tab waiting on the user keeps its brief held; a failed start keeps it fo
     assert.strictEqual(started.action, 'started');
     assert.match(t.herdrState().prompts.at(-1).text, /^\[orchestrator S2\] write the exporter/);
     assert.strictEqual(t.herdrState().prompts.filter(p => /write the exporter/.test(p.text)).length, 1);
+
+    // herdr times out creating the tab: no agent start ran, so none is called uncertain.
+    t.patchHerdr(s => { s.hangTabCreate = 2500; });
+    const timedOut = t.run(['new', '--title', 'Third', '--request', 'write the docs', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    assert.match(timedOut.stderr, /brief held, but no agent started[\s\S]*empty tab may be open: close it if so, then resume S3, without --request/);
+    assert.doesNotMatch(timedOut.stderr, /uncertain|Nothing changed|Its tab is kept/);
+    sleep(2000);
+    t.patchHerdr(s => { s.hangTabCreate = 0; });
+    assert.strictEqual(json(t.run(['resume', 'S3', '--json', '--reason', 'retry the timed-out start'])).action, 'started');
+    assert.strictEqual(t.herdrState().prompts.filter(p => /write the docs/.test(p.text)).length, 1);
   } finally { t.cleanup(); }
 });
 
