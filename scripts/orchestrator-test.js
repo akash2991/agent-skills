@@ -475,7 +475,7 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
 
     // No live tab: resume --request carries the request.
     t.patchHerdr(s => { delete s.panes[first.pane_id]; });
-    assert.match(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']).stderr, /no live tab; use resume/);
+    assert.match(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']).stderr, /no live tab; use resume S1 --request with this request[\s\S]*nothing was kept/);
     assert.strictEqual(t.row(1).pending, null);
     ok(t.run(['resume', 'S1', '--request', 'also the footer', '--reason', 'its tab was closed']));
     assert.strictEqual(count(/also the footer/), 1);
@@ -489,6 +489,19 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     ok(t.run(['send', 'S1', '--request', 'and the sidebar', '--reason', 'r']));
     assert.strictEqual(count(/then the header/), 1);
     assert.strictEqual(count(/and the sidebar/), 1);
+
+    // Holds a prompt of unknown delivery: settle --resend holds it again, so deliver, then send.
+    t.patchHerdr(s => { s.promptPlan = ['hang:2500']; });
+    assert.match(t.run(['send', 'S1', '--request', 'then the banner', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' }).stderr, /may or may not have arrived/);
+    sleep(2000);
+    assert.match(t.run(['send', 'S1', '--request', 'and the logo', '--reason', 'r']).stderr, /delivery is unknown/);
+    assert.match(t.run(['settle', 'S1', '--resend']).stdout, /held to resend: run deliver S1/);
+    assert.match(t.run(['send', 'S1', '--request', 'and the logo', '--reason', 'r']).stderr, /still holds prompts/);
+    ok(t.run(['deliver', 'S1']));
+    ok(t.run(['send', 'S1', '--request', 'and the logo', '--reason', 'r']));
+    assert.strictEqual(count(/then the banner/), 2, 'the interrupted send, then the resend the settle asked for');
+    assert.strictEqual(count(/and the logo/), 1);
+    assert.strictEqual(t.row(1).pending, null);
 
     // Not open: new --from carries the request to a new session.
     ok(t.run(['resolve', 'S1']));
