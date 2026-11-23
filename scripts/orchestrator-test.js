@@ -523,12 +523,15 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     t.patchHerdr(s => { s.promptPlan = ['lost:2500']; });
     t.run(['send', 'S1', '--request', 'then the icons', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
     sleep(2000);
+    // The worker's agent exited but its tab is still open: no live worker, a tab the user may check.
     const worker = t.row(1).pane_id;
-    t.patchHerdr(s => { delete s.panes[worker]; });
+    t.patchHerdr(s => { s.panes[worker].agent = null; });
     assert.match(t.run(['send', 'S1', '--request', 'and the fonts', '--reason', 'r']).stderr, /no live tab/);
-    const heldBefore = t.row(1).pending;
+    const decisions = () => { const d = t.open(); try { return d.prepare('SELECT COUNT(*) AS n FROM decisions').get().n; } finally { d.close(); } };
+    const before = { row: t.row(1), events: t.events(1), decisions: decisions() };
     assert.match(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'r']).stderr, /delivery is unknown/);
-    assert.strictEqual(t.row(1).pending, heldBefore, 'the refused resume kept nothing');
+    assert.deepStrictEqual({ row: t.row(1), events: t.events(1), decisions: decisions() }, before, 'the refused resume changed nothing');
+    assert.ok(t.herdrState().panes[worker], 'nor closed the tab the user is told to check');
     assert.strictEqual(count(/and the fonts/), 0);
     assert.match(t.run(['settle', 'S1', '--resend']).stdout, /or resume S1 if its tab is gone \(with --request if a new request is waiting\)/);
     ok(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'its tab was closed']));
