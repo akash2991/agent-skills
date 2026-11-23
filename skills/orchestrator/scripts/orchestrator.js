@@ -573,6 +573,52 @@ function launchResult(id, action, launched, extra = {}) {
   };
 }
 
+// Record the route, run it, then record what happened: the action it printed,
+// or why it failed. A failure that may have left a worker is `uncertain`.
+function decided(db, decision, run) {
+  const id = store.addDecision(db, decision);
+  let result;
+  try {
+    result = run();
+  } catch (err) {
+    const kind = err.outcome || (err.startFailed ? (noWorker(err) ? 'failed' : 'uncertain')
+      : err instanceof CliError ? 'refused' : 'error');
+    store.setOutcome(db, id, `${kind}: ${oneLine(err.message, 300)}`);
+    throw err;
+  }
+  store.setOutcome(db, id, result.action);
+  return result;
+}
+
+// No worker can have started: herdr confirmed the failure, or never confirmed
+// creating the tab, so no agent start ran in it.
+const noWorker = err => err.confirmed || !err.tabRecorded;
+
+// The orchestrator's message for a failed launch, keeping what the outcome needs.
+const fromLaunch = (err, message) => Object.assign(new CliError(message),
+  { startFailed: true, confirmed: err.confirmed, tabRecorded: err.tabRecorded });
+
+// A session started from an earlier one (new --from) supersedes it once it has
+// a worker, or may have one; until then the earlier one stays open.
+function supersedeParent(db, sessionId) {
+  const row = store.getSession(db, sessionId);
+  const parent = row && row.parent_id ? store.getSession(db, row.parent_id) : null;
+  if (!parent || parent.status !== 'open') return;
+  store.updateSession(db, parent.id, { status: 'superseded' });
+  store.addEvent(db, parent.id, 'superseded', `by S${sessionId}`);
+}
+
+function launchFor(db, file, row, options) {
+  try {
+    const launched = launch(db, file, row, options);
+    supersedeParent(db, row.id);
+    return launched;
+  } catch (err) {
+    if (err.startFailed && !err.confirmed && err.tabRecorded) supersedeParent(db, row.id);
+    throw err;
+  }
+}
+
 // ─── Reconcile ────────────────────────────────────────────────────────────────
 
 // The record is the truth about intent; Herdr is the truth about what is
@@ -683,29 +729,27 @@ const commands = {
         cwd: path.resolve(opts.cwd || projectRoot()),
         parent_id: parent ? parent.id : null,
       });
-      store.addDecision(db, { request, action: 'new', sessionId: id, considered: opts.considered, reason });
-      if (parent && parent.status === 'open') {
-        store.updateSession(db, parent.id, { status: 'superseded' });
-        store.addEvent(db, parent.id, 'superseded', `by S${id}`);
-      }
       const row = store.getSession(db, id);
       const context = parent ? priorContext(db, parent, 'Related earlier session') : null;
       const prompts = brief(row, request, { context });
       // Held before the launch, so a launch that fails keeps the brief for resume.
       store.setPending(db, id, prompts.map(text => ({ text, state: 'pending' })));
-      let launched;
-      try {
-        launched = launch(db, file, store.getSession(db, id), { resume: false, prompts });
-      } catch (err) {
-        if (!err.startFailed) throw err;
-        // A tab that herdr never confirmed creating ran no agent start, so no agent started.
-        const retry = `resume S${id}, without --request`;
-        throw new CliError(`S${id} is recorded with its brief held, but ${err.confirmed || !err.tabRecorded ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
-          `${err.message}. ${err.confirmed ? `Retry with ${retry}`
-            : err.tabRecorded ? `${uncertainNote(err)}; then ${retry}`
-              : `herdr timed out creating its tab, so an empty tab may be open: close it if so, then ${retry}`}`);
-      }
-      print(launchResult(id, 'new', launched, { tracked: TRACKED.has(harness) }), opts);
+      const result = decided(db, { request, action: 'new', sessionId: id, considered: opts.considered, reason }, () => {
+        let launched;
+        try {
+          launched = launchFor(db, file, store.getSession(db, id), { resume: false, prompts });
+        } catch (err) {
+          if (!err.startFailed) throw err;
+          // A tab that herdr never confirmed creating ran no agent start, so no agent started.
+          const retry = `resume S${id}, without --request`;
+          throw fromLaunch(err, `S${id} is recorded with its brief held, but ${noWorker(err) ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
+            `${err.message}. ${err.confirmed ? `Retry with ${retry}`
+              : err.tabRecorded ? `${uncertainNote(err)}; then ${retry}`
+                : `herdr timed out creating its tab, so an empty tab may be open: close it if so, then ${retry}`}`);
+        }
+        return launchResult(id, 'new', launched, { tracked: TRACKED.has(harness) });
+      });
+      print(result, opts);
     });
   },
 
@@ -724,48 +768,54 @@ const commands = {
       row = clearForLaunch(db, row);
       const held = store.pendingOf(row).map(e => e.text);
       if (!request && !held.length) throw usageError('--request is required: the session holds nothing to deliver');
-      store.addDecision(db, { request: request || '(deliver held prompts)', action: 'resume', sessionId: id, considered: opts.considered, reason });
-      const asks = [...held, ...(request ? [`[orchestrator S${id}] ${request}`] : [])];
-      const fail = (err, what) => {
-        if (!err.startFailed) return err;
-        return new CliError(`${what} S${id} failed: ${err.message}. ${err.confirmed
-          ? `Nothing changed: its conversation and held prompts are as they were. Retry, or relaunch S${id} for a new conversation`
-          : uncertainNote(err)}`);
-      };
-
-      if (!TRACKED.has(row.harness) || row.launches === 0) {
-        // No conversation can exist yet: it never had a worker. Deliver the
-        // held brief, or a new one when there is none.
-        const prompts = held.length ? asks : brief(row, request, { context: priorContext(db, row, 'This continues the work of session') });
-        let launched;
-        try { launched = launch(db, file, row, { resume: false, prompts }); } catch (err) { throw fail(err, 'starting'); }
-        return print(launchResult(id, 'started', launched), opts);
+      // Refusals come before the decision, so only a route that runs is recorded.
+      const fresh = !TRACKED.has(row.harness) || row.launches === 0;
+      if (!fresh && !request && row.transcript_path && !fs.existsSync(row.transcript_path)) {
+        throw usageError(`--request is required: S${id}'s conversation is gone, so it starts again from a new brief`);
       }
-      if (row.transcript_path && !fs.existsSync(row.transcript_path)) {
-        // Its recorded transcript is gone: start the same id fresh, with the
-        // brief and everything the record knows.
-        if (!request) throw usageError(`--request is required: S${id}'s conversation is gone, so it starts again from a new brief`);
-        let launched;
-        try {
-          launched = launch(db, file, row, { resume: false, prompts: brief(row, request, { context: priorContext(db, row, 'This continues the work of session') }) });
-        } catch (err) { throw fail(err, 'restarting'); }
-        return print(launchResult(id, 'restarted', launched, { why: `its transcript ${row.transcript_path} is gone` }), opts);
-      }
-      if (!row.transcript_path && row.harness === 'pi') {
+      if (!fresh && !row.transcript_path && row.harness === 'pi') {
         throw new CliError(`S${id}'s Pi session file was never recorded, so it cannot be resumed exactly; relaunch S${id} for a new conversation`);
       }
-      // Reopen the conversation: Pi by its recorded file, Claude by its id
-      // (where the transcript lives is Claude's to find).
-      let launched;
-      try {
-        launched = launch(db, file, row, { resume: true, prompts: asks });
-      } catch (err) {
-        const unknownPlace = !row.transcript_path ? ' Its transcript location was never recorded; if its conversation was never written (its tab closed while waiting for the user), relaunch it.' : '';
-        const out = fail(err, 'resuming');
-        out.message += unknownPlace;
-        throw out;
-      }
-      print(launchResult(id, 'resumed', launched), opts);
+      const decision = { request: request || '(deliver held prompts)', action: 'resume', sessionId: id, considered: opts.considered, reason };
+      print(decided(db, decision, () => {
+        const asks = [...held, ...(request ? [`[orchestrator S${id}] ${request}`] : [])];
+        const fail = (err, what) => {
+          if (!err.startFailed) return err;
+          return fromLaunch(err, `${what} S${id} failed: ${err.message}. ${err.confirmed
+            ? `Nothing changed: its conversation and held prompts are as they were. Retry, or relaunch S${id} for a new conversation`
+            : uncertainNote(err)}`);
+        };
+
+        if (fresh) {
+          // No conversation can exist yet: it never had a worker. Deliver the
+          // held brief, or a new one when there is none.
+          const prompts = held.length ? asks : brief(row, request, { context: priorContext(db, row, 'This continues the work of session') });
+          let launched;
+          try { launched = launchFor(db, file, row, { resume: false, prompts }); } catch (err) { throw fail(err, 'starting'); }
+          return launchResult(id, 'started', launched);
+        }
+        if (row.transcript_path && !fs.existsSync(row.transcript_path)) {
+          // Its recorded transcript is gone: start the same id fresh, with the
+          // brief and everything the record knows.
+          let launched;
+          try {
+            launched = launchFor(db, file, row, { resume: false, prompts: brief(row, request, { context: priorContext(db, row, 'This continues the work of session') }) });
+          } catch (err) { throw fail(err, 'restarting'); }
+          return launchResult(id, 'restarted', launched, { why: `its transcript ${row.transcript_path} is gone` });
+        }
+        // Reopen the conversation: Pi by its recorded file, Claude by its id
+        // (where the transcript lives is Claude's to find).
+        let launched;
+        try {
+          launched = launchFor(db, file, row, { resume: true, prompts: asks });
+        } catch (err) {
+          const unknownPlace = !row.transcript_path ? ' Its transcript location was never recorded; if its conversation was never written (its tab closed while waiting for the user), relaunch it.' : '';
+          const out = fail(err, 'resuming');
+          out.message += unknownPlace;
+          throw out;
+        }
+        return launchResult(id, 'resumed', launched);
+      }), opts);
     });
   },
 
@@ -782,29 +832,32 @@ const commands = {
       requireOpen(row, 'relaunching');
       requireSettled(row);
       row = clearForLaunch(db, row);
-      store.addDecision(db, { request, action: 'relaunch', sessionId: id, considered: opts.considered, reason });
       const previous = { native_session_id: row.native_session_id, transcript_path: row.transcript_path };
       // The new identity is committed with its tab, and only if a worker may have started.
       const replacement = { ...row, native_session_id: TRACKED.has(row.harness) ? crypto.randomUUID() : null, transcript_path: null };
       const previousText = `previous conversation ${previous.native_session_id || 'none'}` +
         `${previous.transcript_path ? ` at ${previous.transcript_path}` : ''}: ${reason}`;
-      let launched;
-      try {
-        launched = launch(db, file, replacement, {
-          resume: false,
-          prompts: brief(replacement, request, { context: priorContext(db, row, 'This continues the work of the earlier conversation of session') }),
-          // Written with the new identity, so the old one is never unrecorded.
-          commitEvent: { kind: 'relaunched', detail: previousText },
-        });
-      } catch (err) {
-        if (!err.startFailed) throw err;
-        const kept = !err.confirmed && err.tabRecorded;
-        store.addEvent(db, id, 'relaunch-failed', `${kept ? 'kept the new conversation; the' : 'restored the'} ${previousText} (${err.message})`);
-        throw new CliError(`relaunching S${id} failed: ${err.message}. ${err.confirmed
-          ? 'Its previous conversation is still the recorded one'
-          : `${uncertainNote(err, 'the new agent')}${kept ? '. The previous conversation is in its events' : ''}`}`);
-      }
-      print(launchResult(id, 'relaunched', launched, { previous: previous.native_session_id }), opts);
+      print(decided(db, { request, action: 'relaunch', sessionId: id, considered: opts.considered, reason }, () => {
+        let launched;
+        try {
+          launched = launchFor(db, file, replacement, {
+            resume: false,
+            prompts: brief(replacement, request, { context: priorContext(db, row, 'This continues the work of the earlier conversation of session') }),
+            // Written with the new identity, so the old one is never unrecorded;
+            // `relaunched` follows only once the new worker is placed.
+            commitEvent: { kind: 'relaunch-staged', detail: previousText },
+          });
+        } catch (err) {
+          if (!err.startFailed) throw err;
+          const kept = !err.confirmed && err.tabRecorded;
+          store.addEvent(db, id, 'relaunch-failed', `${kept ? 'kept the new conversation; the' : 'restored the'} ${previousText} (${err.message})`);
+          throw fromLaunch(err, `relaunching S${id} failed: ${err.message}. ${err.confirmed
+            ? 'Its previous conversation is still the recorded one'
+            : `${uncertainNote(err, 'the new agent')}${kept ? '. The previous conversation is in its events' : ''}`}`);
+        }
+        store.addEvent(db, id, 'relaunched', previousText);
+        return launchResult(id, 'relaunched', launched, { previous: previous.native_session_id });
+      }), opts);
     });
   },
 
@@ -866,15 +919,16 @@ const commands = {
       if (!isLive(row, paneInfo(row.pane_id))) throw new CliError(`S${id} has no live tab; use resume`);
       requireSettled(row);
       if (store.pendingOf(row).length) throw new CliError(`S${id} still holds prompts; run deliver S${id} before sending more`);
-      store.addDecision(db, { request, action: 'send', sessionId: id, considered: opts.considered, reason });
-      store.setPending(db, id, [{ text: `[orchestrator S${id}] ${request}`, state: 'pending' }]);
-      const sent = deliverPending(db, id, row.pane_id);
-      if (!sent.ok) {
-        throw new CliError(`S${id}: ${sent.error}; ${sent.unknown
-          ? `the request may or may not have arrived: check its tab, then settle S${id} --resend or --drop`
-          : `the request is held: run deliver S${id} once the worker can take it`}`);
-      }
-      print({ session: `S${id}`, action: 'sent', pane_id: row.pane_id }, opts);
+      print(decided(db, { request, action: 'send', sessionId: id, considered: opts.considered, reason }, () => {
+        store.setPending(db, id, [{ text: `[orchestrator S${id}] ${request}`, state: 'pending' }]);
+        const sent = deliverPending(db, id, row.pane_id);
+        if (!sent.ok) {
+          throw Object.assign(new CliError(`S${id}: ${sent.error}; ${sent.unknown
+            ? `the request may or may not have arrived: check its tab, then settle S${id} --resend or --drop`
+            : `the request is held: run deliver S${id} once the worker can take it`}`), { outcome: sent.unknown ? 'unknown' : 'held' });
+        }
+        return { session: `S${id}`, action: 'sent', pane_id: row.pane_id };
+      }), opts);
     });
   },
 
@@ -908,8 +962,9 @@ const commands = {
       }
       const prompts = store.recentPrompts(db, id, 5);
       const events = store.recentEvents(db, id, 8);
+      const decisions = store.recentDecisions(db, id, 3);
       const liveState = live ? (pane.agent_status || 'live') : 'closed';
-      if (opts.json) return print({ ...row, live: liveState, asked, prompts, events }, opts);
+      if (opts.json) return print({ ...row, live: liveState, asked, prompts, events, decisions }, opts);
       const c = { row, prompts, live: liveState, score: null, promptCount: store.promptCount(db, id) };
       print([
         ...(asked ? [`asked: ${asked}`] : []),
@@ -917,6 +972,7 @@ const commands = {
         describe(c),
         prompts.length ? `  recent prompts:\n${prompts.map(p => `    ${ago(p.at)} (${p.source}): ${oneLine(p.text)}`).join('\n')}` : '',
         events.length ? `  events: ${events.map(e => `${e.kind} ${ago(e.at)}`).join(', ')}` : '',
+        decisions.length ? `  decisions:\n${decisions.map(d => `    ${ago(d.at)} ${d.action} -> ${d.outcome ? oneLine(d.outcome, 160) : 'no outcome recorded'}`).join('\n')}` : '',
       ].filter(Boolean).join('\n'), opts);
     });
   },

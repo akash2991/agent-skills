@@ -327,7 +327,11 @@ test('relaunch replaces the conversation only when a worker may have started, an
     t.patchHerdr(s => { s.hangTabCreate = 0; });
     const d0 = t.open();
     assert.match(store.recentEvents(d0, 1, 50).filter(e => e.kind === 'relaunch-failed').at(-1).detail, /^restored the previous conversation/);
+    // Each attempt is its own decision, and none claims a relaunch that did not happen.
+    assert.deepStrictEqual(store.recentDecisions(d0, 1, 4).map(x => x.outcome.split(':')[0]), ['failed', 'failed', 'failed', 'failed']);
     d0.close();
+    assert.ok(!t.events(1).includes('relaunched'));
+    assert.strictEqual(t.events(1).filter(k => k === 'relaunch-staged').length, 1, 'only the agent-start failure staged a replacement');
 
     const out = json(t.run(['relaunch', 'S1', '--json', '--request', 'now the footer', '--reason', 'resume keeps failing']));
     assert.strictEqual(out.action, 'relaunched');
@@ -337,7 +341,107 @@ test('relaunch replaces the conversation only when a worker may have started, an
     assert.match(t.herdrState().prompts.at(-1).text, /now the footer[\s\S]*ticket FAC-31[\s\S]*Button fixed; footer remains/);
     const d = t.open();
     assert.match(store.recentEvents(d, 1, 50).find(e => e.kind === 'relaunched').detail, new RegExp(`previous conversation ${id} at `));
+    assert.strictEqual(store.recentDecisions(d, 1, 1)[0].outcome, 'relaunched');
     d.close();
+  } finally { t.cleanup(); }
+});
+
+test('every decision records how its route ended; a refused route records none', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const outcomes = () => { const d = t.open(); try { return store.recentDecisions(d, 1, 20).map(x => `${x.action} ${x.outcome}`); } finally { d.close(); } };
+    assert.deepStrictEqual(outcomes(), ['new new']);
+    ok(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.promptPlan = ['reject']; });
+    t.run(['send', 'S1', '--request', 'then the header', '--reason', 'r']);
+    ok(t.run(['deliver', 'S1']));
+    t.patchHerdr(s => { s.promptPlan = ['hang:2500']; });
+    t.run(['send', 'S1', '--request', 'then the banner', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    sleep(2000);
+    ok(t.run(['settle', 'S1', '--drop']));
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; });
+    t.run(['resume', 'S1', '--request', 'and the logo', '--reason', 'r']);
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S1', '--request', 'and the logo', '--reason', 'retry']));
+    const got = outcomes();
+    assert.deepStrictEqual(got.map(x => x.split(':')[0]), ['new new', 'send sent', 'send held', 'send unknown', 'resume failed', 'resume resumed']);
+
+    // A Pi session whose file was never recorded is refused before any decision.
+    const d = t.open();
+    d.prepare("UPDATE sessions SET harness = 'pi', transcript_path = NULL, pane_id = NULL, tab_id = NULL WHERE id = 1").run();
+    d.close();
+    t.patchHerdr(s => { s.panes = {}; });
+    assert.match(t.run(['resume', 'S1', '--request', 'x', '--reason', 'r']).stderr, /never recorded/);
+    assert.strictEqual(outcomes().length, got.length);
+
+    const status = ok(t.run(['status', 'S1'])).stdout;
+    assert.match(status, /decisions:\n[\s\S]*send -> unknown: [\s\S]*resume -> failed: [\s\S]*resume -> resumed/);
+  } finally { t.cleanup(); }
+});
+
+test('new --from supersedes its parent only once the new session has a worker', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'S1 is stale']).stderr, /no agent started/);
+    assert.strictEqual(t.row(1).status, 'open', 'a confirmed failure leaves the parent open');
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S2', '--reason', 'retry the failed start']));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    assert.ok(t.events(1).includes('superseded'));
+
+    ok(t.run(['reopen', 'S1']));
+    ok(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'S1 is stale']));
+    assert.strictEqual(t.row(1).status, 'superseded', 'a launch that succeeds supersedes at once');
+
+    // A launch that may have started a worker supersedes too.
+    ok(t.run(['reopen', 'S1']));
+    t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
+    assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 4', '--request', 'the logo', '--reason', 'r']).stderr, /uncertain/);
+    assert.strictEqual(t.row(1).status, 'superseded');
+  } finally { t.cleanup(); }
+});
+
+test('prompts show in the order they were typed, whatever order their writers commit in', () => {
+  const t = setup();
+  try {
+    const d = t.open();
+    const id = store.createSession(d, { title: 'pi', intent: 'i', harness: 'pi', cwd: t.dir });
+    const typed = Date.now() - 60000;
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'second', at: new Date(typed + 5).toISOString(), seq: 3 });
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'first', at: new Date(typed).toISOString(), seq: 2 });
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'third', at: new Date(typed + 5).toISOString(), seq: 4 });
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'no stamp' });
+    assert.deepStrictEqual(store.recentPrompts(d, id, 10).map(p => p.text), ['first', 'second', 'third', 'no stamp']);
+    d.close();
+  } finally { t.cleanup(); }
+});
+
+test('a version-1 record is migrated on open and keeps its rows', () => {
+  const t = setup();
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    fs.mkdirSync(path.dirname(t.db), { recursive: true });
+    const old = new DatabaseSync(t.db);
+    old.exec(store.MIGRATIONS[1]);
+    old.exec('PRAGMA user_version = 1');
+    old.prepare("INSERT INTO sessions (title, intent, harness, cwd, started_at, last_active_at) VALUES ('t', 'i', 'claude', '/x', 'a', 'a')").run();
+    old.prepare("INSERT INTO decisions (at, request, action, session_id, reason) VALUES ('a', 'r', 'new', 1, 'why')").run();
+    old.prepare("INSERT INTO prompts (session_id, at, source, text) VALUES (1, 'a', 'direct', 'hello')").run();
+    old.close();
+    const d = t.open();
+    try {
+      assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+      assert.strictEqual(store.recentPrompts(d, 1, 5)[0].text, 'hello');
+      const [decision] = store.recentDecisions(d, 1, 5);
+      assert.strictEqual(decision.outcome, null);
+      store.setOutcome(d, decision.id, 'new');
+      assert.strictEqual(store.recentDecisions(d, 1, 5)[0].outcome, 'new');
+    } finally { d.close(); }
   } finally { t.cleanup(); }
 });
 
@@ -805,9 +909,12 @@ test('an uncertain relaunch keeps its new conversation and records the previous 
     assert.notStrictEqual(row.native_session_id, a, 'the possibly-started replacement is kept');
     assert.ok(row.pane_id, 'and its tab');
     const d = t.open();
-    const relaunched = store.recentEvents(d, 1, 50).find(e => e.kind === 'relaunched');
+    const events = store.recentEvents(d, 1, 50);
+    const outcome = store.recentDecisions(d, 1, 1)[0].outcome;
     d.close();
-    assert.match(relaunched.detail, new RegExp(`previous conversation ${a} at /s/A\\.jsonl: stale context`));
+    assert.match(events.find(e => e.kind === 'relaunch-staged').detail, new RegExp(`previous conversation ${a} at /s/A\\.jsonl: stale context`));
+    assert.ok(!events.some(e => e.kind === 'relaunched'), 'no relaunch is claimed while its worker is uncertain');
+    assert.match(outcome, /^uncertain: /);
   } finally { t.cleanup(); }
 });
 

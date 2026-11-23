@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const PROMPT_LIMIT = 4000;
 const ORCHESTRATOR_MARK = /\[orchestrator S\d+\]/;
 
@@ -94,6 +94,15 @@ CREATE INDEX prompts_by_session ON prompts(session_id, id);
 CREATE INDEX events_by_session ON events(session_id, id);
 `;
 
+// MIGRATIONS[v] takes a record from version v - 1 to v. Version 1 is the
+// schema above; every later change is a step here, so a new record and an
+// old one end at the same shape.
+const MIGRATIONS = [null, SCHEMA, `
+ALTER TABLE decisions ADD COLUMN outcome TEXT;
+ALTER TABLE decisions ADD COLUMN outcome_at TEXT;
+ALTER TABLE prompts ADD COLUMN seq INTEGER;
+`];
+
 const UPDATABLE = new Set([
   'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
   'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
@@ -127,10 +136,10 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
     // Switching to WAL takes an exclusive lock that does not honour busy_timeout.
     retryBusy(() => db.exec('PRAGMA journal_mode = WAL'), busyTimeout);
     const version = () => db.prepare('PRAGMA user_version').get().user_version;
-    if (version() === 0) {
+    if (version() < SCHEMA_VERSION) {
       transaction(db, () => {
-        if (version() !== 0) return; // another opener initialised it first
-        db.exec(SCHEMA);
+        // Read again under the lock: another opener may have moved it on.
+        for (let v = version(); v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v + 1]);
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
     }
@@ -188,21 +197,43 @@ function addEvent(db, sessionId, kind, detail) {
     .run(Number(sessionId), now(), kind, detail == null ? null : String(detail));
 }
 
-function addPrompt(db, sessionId, text) {
+// A time the recorder stamped when the user typed, or now when it gave none.
+function stampOf(at) {
+  const ms = typeof at === 'string' ? Date.parse(at) : NaN;
+  return Number.isNaN(ms) ? now() : new Date(ms).toISOString();
+}
+
+// `at` and `seq` are when, and in what order, the recorder saw the prompt.
+// Pi's writers race, so the order they commit in is not the order typed.
+function addPrompt(db, sessionId, text, { at, seq } = {}) {
   const body = String(text);
   const source = ORCHESTRATOR_MARK.test(body.slice(0, 400)) ? 'orchestrator' : 'direct';
-  db.prepare('INSERT INTO prompts (session_id, at, source, text) VALUES (?, ?, ?, ?)')
-    .run(Number(sessionId), now(), source, body.length > PROMPT_LIMIT ? `${body.slice(0, PROMPT_LIMIT)}…` : body);
+  db.prepare('INSERT INTO prompts (session_id, at, seq, source, text) VALUES (?, ?, ?, ?, ?)')
+    .run(Number(sessionId), stampOf(at), Number.isInteger(seq) ? seq : null, source,
+      body.length > PROMPT_LIMIT ? `${body.slice(0, PROMPT_LIMIT)}…` : body);
   return source;
 }
 
+// A decision is the route chosen; its outcome, written once the route has
+// run, is what happened. A retry is a new decision with its own outcome.
 function addDecision(db, { request, action, sessionId, considered, reason }) {
-  db.prepare('INSERT INTO decisions (at, request, action, session_id, considered, reason) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(now(), request, action, sessionId == null ? null : Number(sessionId), considered || null, reason);
+  return Number(db.prepare('INSERT INTO decisions (at, request, action, session_id, considered, reason) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(now(), request, action, sessionId == null ? null : Number(sessionId), considered || null, reason).lastInsertRowid);
 }
 
+function setOutcome(db, decisionId, outcome) {
+  db.prepare('UPDATE decisions SET outcome = ?, outcome_at = ? WHERE id = ?').run(String(outcome), now(), Number(decisionId));
+}
+
+function recentDecisions(db, sessionId, limit = 3) {
+  return db.prepare('SELECT * FROM decisions WHERE session_id = ? ORDER BY id DESC LIMIT ?')
+    .all(Number(sessionId), limit).reverse();
+}
+
+const PROMPT_ORDER = 'at DESC, COALESCE(seq, 0) DESC, id DESC';
+
 function recentPrompts(db, sessionId, limit = 5) {
-  return db.prepare('SELECT * FROM prompts WHERE session_id = ? ORDER BY id DESC LIMIT ?')
+  return db.prepare(`SELECT * FROM prompts WHERE session_id = ? ORDER BY ${PROMPT_ORDER} LIMIT ?`)
     .all(Number(sessionId), limit).reverse();
 }
 
@@ -298,7 +329,7 @@ function recordHookEvent(db, sessionId, event) {
         break;
       }
       case 'prompt':
-        if (event.text) addPrompt(db, row.id, event.text);
+        if (event.text) addPrompt(db, row.id, event.text, { at: event.at, seq: event.seq == null ? undefined : Number(event.seq) });
         break;
       case 'compact':
         if (!current) break;
@@ -320,6 +351,6 @@ function recordHookEvent(db, sessionId, event) {
 
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
-  addEvent, addPrompt, addDecision, recentPrompts, promptCount, recentEvents, recordHookEvent,
-  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION,
+  addEvent, addPrompt, addDecision, setOutcome, recentDecisions, recentPrompts, promptCount, recentEvents, recordHookEvent,
+  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, MIGRATIONS,
 };
