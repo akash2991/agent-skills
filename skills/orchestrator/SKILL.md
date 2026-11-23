@@ -88,7 +88,7 @@ A `send` refused before it writes its request keeps nothing, so submit that requ
 - The session is not open: `orch new --from S<id> --request …`, with the usual arguments, carries it to a new session.
 - It has no live tab: `orch resume S<id> --request …` carries it.
 - It still holds a prompt: `orch deliver S<id>`, then `send` the new request.
-- It holds a prompt whose delivery is unknown: settle that one first. `--drop` clears it; `--resend` holds it again, so run `orch deliver S<id>` next. Then `send` the new request.
+- It holds a prompt whose delivery is unknown: settle that one first. `--drop` removes it, and `--resend` holds it again; either way, run `orch deliver S<id>` next if anything is still held. Then `send` the new request. If its tab is gone, settle, then `orch resume S<id> --request …`, which carries both the held prompts and the request.
 
 Once `send` has written its request, a failure keeps it in the record: when the worker refused it (for example, blocked on a permission prompt), run `orch deliver S<id>` once it can take it; when its delivery is unknown, settle it as above.
 
