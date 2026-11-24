@@ -796,13 +796,12 @@ test('a resume --request whose record cannot be restored names resume without --
   try {
     ok(t.run(['start']));
     const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
-    const transcript = path.join(t.dir, `${t.row(1).native_session_id}.jsonl`);
-    fs.writeFileSync(transcript, '{}\n');
-    t.patchRow(1, { transcript_path: transcript });
+    // A Claude conversation whose transcript location was never recorded.
     t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; });
     blockClear(t);
     const r = t.run(['resume', 'S1', '--request', 'a unique new request', '--reason', 'its tab was closed']);
     assert.match(r.stderr, /Do not send the request again; resume S1 without --request: it delivers the held prompts/);
+    assert.doesNotMatch(r.stderr, /relaunch it/, 'one route only');
     unblockClear(t);
     t.patchHerdr(s => { s.failStart = null; });
     ok(t.run(['resume', 'S1', '--reason', 'retry the failed resume']));

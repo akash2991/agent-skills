@@ -882,7 +882,7 @@ const commands = {
         try {
           launched = launch(db, file, row, { resume: true, prompts: asks });
         } catch (err) {
-          const unknownPlace = err.startFailed && !row.transcript_path ? ' Its transcript location was never recorded; if its conversation was never written (its tab closed while waiting for the user), relaunch it.' : '';
+          const unknownPlace = err.startFailed && !err.tabClosed && !row.transcript_path ? ' Its transcript location was never recorded; if its conversation was never written (its tab closed while waiting for the user), relaunch it.' : '';
           const out = fail(err, 'resuming');
           out.message += unknownPlace;
           throw out;
