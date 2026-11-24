@@ -621,9 +621,9 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     assert.strictEqual(count(/then the menu/), 1);
     assert.strictEqual(count(/and the colours/), 1);
 
-    // Its tab is gone: the resume the send refusal names is refused until the
-    // unknown prompt is settled, and keeps nothing; settle, then resume --request
-    // carries the held prompt and the request.
+    // Its agent exited (no live worker, its tab still open): the resume the send
+    // refusal names is refused until the unknown prompt is settled, and changes
+    // nothing; settle, then resume --request carries the held prompt and the request.
     t.patchHerdr(s => { s.promptPlan = ['lost:2500']; });
     t.run(['send', 'S1', '--request', 'then the icons', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
     sleep(2000);
@@ -638,7 +638,7 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     assert.ok(t.herdrState().panes[worker], 'nor closed the tab the user is told to check');
     assert.strictEqual(count(/and the fonts/), 0);
     assert.match(t.run(['settle', 'S1', '--resend']).stdout, /or resume S1 if its tab is gone \(with --request if a new request is waiting\)/);
-    ok(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'its tab was closed']));
+    ok(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'its agent exited']));
     assert.strictEqual(count(/then the icons/), 1);
     assert.strictEqual(count(/and the fonts/), 1);
     assert.strictEqual(t.row(1).pending, null);
