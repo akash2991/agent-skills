@@ -1777,6 +1777,7 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     assert.strictEqual(first.label, 'FAC-41 S1 fix-login (web-engineer)');
     assert.match(t.herdrState().prompts.at(-1).text, /report --worktree <path>|--worktree <path>/);
     const worktree = path.join(t.dir, 'FAC-41-login-fix');
+    fs.mkdirSync(worktree);
     ok(t.run(['report', '--worktree', worktree], { ORCHESTRATOR_SESSION: '1' }));
     assert.strictEqual(t.row(1).worktree, worktree);
     assert.deepStrictEqual(t.herdrState().renames.at(-1), [first.tab_id, 'FAC-41-login-fix (web-engineer)']);
@@ -1791,14 +1792,29 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     t.patchHerdr(s => { delete s.panes[resumed.pane_id]; });
     json(t.run(['relaunch', 'S1', '--json', '--request', 'and the logo', '--reason', 'stale context']));
     const relaunchBrief = t.herdrState().prompts.at(-1).text;
-    assert.match(relaunchBrief, new RegExp(`Its worktree is ${worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: continue there, and do not create another`));
-    assert.doesNotMatch(relaunchBrief, /--worktree <path>/);
+    const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(relaunchBrief, new RegExp(`Its worktree is ${esc(worktree)}: continue there, and do not create another`));
+    assert.strictEqual(relaunchBrief.split(worktree).length - 1, 1, 'stated once');
 
-    // A report that names no usable worktree is refused, and changes nothing.
-    for (const bad of [' ', '/']) {
-      assert.strictEqual(t.run(['report', '--worktree', bad], { ORCHESTRATOR_SESSION: '1' }).status, 2, JSON.stringify(bad));
+    // Removed after its PR opened: a fresh conversation (transcript gone) is told to make it again.
+    fs.rmSync(worktree, { recursive: true });
+    const transcript = path.join(t.dir, 'gone.jsonl');
+    t.patchRow(1, { transcript_path: transcript });
+    t.patchHerdr(s => { for (const p of Object.values(s.panes)) if (p.pane_id !== 'w1:p0') delete s.panes[p.pane_id]; });
+    json(t.run(['resume', 'S1', '--json', '--request', 'review feedback', '--reason', 'its tab was closed']));
+    assert.match(t.herdrState().prompts.at(-1).text, new RegExp(`Its worktree ${esc(worktree)} is gone: create it again for the same branch, and report it with --worktree`));
+
+    // A session made from it sees the worktree as the earlier session's.
+    json(t.run(['new', '--json', '--from', 'S1', '--title', 'Login follow-up', '--request', 'the footer', '--reason', 'r']));
+    assert.match(t.herdrState().prompts.at(-1).text, new RegExp(`- worktree: ${esc(worktree)} \\(the earlier session's; create your own unless the user said to continue it\\)`));
+    assert.doesNotMatch(t.herdrState().prompts.at(-1).text, /Its worktree is/);
+
+    // A report that names no usable worktree, or the project checkout, is refused and writes nothing.
+    for (const bad of [' ', '/', t.row(1).cwd]) {
+      assert.strictEqual(t.run(['report', '--summary', 'should not land', '--worktree', bad], { ORCHESTRATOR_SESSION: '1' }).status, 2, JSON.stringify(bad));
     }
     assert.strictEqual(t.row(1).worktree, worktree);
+    assert.notStrictEqual(t.row(1).summary, 'should not land');
   } finally { t.cleanup(); }
 });
 

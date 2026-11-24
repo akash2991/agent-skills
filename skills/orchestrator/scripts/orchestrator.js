@@ -374,11 +374,16 @@ function brief(row, request, { context } = {}) {
     `The orchestrator started you as the worker for session S${row.id}: "${row.title}".`,
     'Keep its record current: run `node "$ORCHESTRATOR_CLI" report --summary "<what this session is for, what is done, what remains>"` ' +
       'when that changes and before you stop for the user. Add `--ticket <id>` once the work has a ticket, ' +
-      `${row.worktree ? '' : '`--worktree <path>` once you have created your worktree, '}and \`--resolved\` when ` +
+      '`--worktree <path>` once you have created your worktree (or when it changes), and `--resolved` when ' +
       'its ticket is Done or its PR is merged. Never close this tab yourself.',
   ];
-  // A session that already has a worktree continues there.
-  if (row.worktree) lines.push('', `Its worktree is ${row.worktree}: continue there, and do not create another.`);
+  // A session that already has a worktree continues there; one that was
+  // removed (after its PR opened, say) is made again for the same branch.
+  if (row.worktree) {
+    lines.push('', fs.existsSync(row.worktree)
+      ? `Its worktree is ${row.worktree}: continue there, and do not create another.`
+      : `Its worktree ${row.worktree} is gone: create it again for the same branch, and report it with --worktree.`);
+  }
   if (context) lines.push('', context);
   const text = lines.join('\n');
   // A multi-line prompt arrives as pasted text, and a slash command inside a
@@ -388,14 +393,16 @@ function brief(row, request, { context } = {}) {
   return [`/brain ${row.persona} [orchestrator S${row.id}] Adopt this persona and declare; the brief follows in the next message.`, text];
 }
 
-function priorContext(db, row, heading) {
+// `related`: the row is an earlier session, not the one being briefed, so its
+// worktree is shown as its own rather than stated again.
+function priorContext(db, row, heading, { related = false } = {}) {
   const prompts = store.recentPrompts(db, row.id, 5);
   const held = store.pendingOf(row).filter(e => e.state === 'pending').map(e => e.text).filter(t => !t.startsWith('/brain '));
   return [
     `${heading} S${row.id} ("${row.title}")${row.ticket ? `, ticket ${row.ticket}` : ''}:`,
     `- intent: ${oneLine(row.intent, 400)}`,
     row.summary ? `- where it stood: ${oneLine(row.summary, 800)}` : '- no summary was recorded',
-    ...(row.worktree ? [`- worktree: ${row.worktree}`] : []),
+    ...(related && row.worktree ? [`- worktree: ${row.worktree} (the earlier session's; create your own unless the user said to continue it)`] : []),
     ...prompts.map(p => `- asked ${ago(p.at)}: ${oneLine(p.text, 300)}`),
     ...(held.length ? ['Messages that were held for this session and never reached a worker:', ...held.map(t => `---\n${t}\n---`)] : []),
     'Read the ticket, its PR, and the code for the current state before acting; this summary may be stale.',
@@ -811,7 +818,7 @@ const commands = {
         parent_id: parent ? parent.id : null,
       });
       const row = store.getSession(db, id);
-      const context = parent ? priorContext(db, parent, 'Related earlier session') : null;
+      const context = parent ? priorContext(db, parent, 'Related earlier session', { related: true }) : null;
       const prompts = brief(row, request, { context });
       // Held before the launch, so a launch that fails keeps the brief for resume.
       store.setPending(db, id, prompts.map(text => ({ text, state: 'pending' })));
@@ -1133,6 +1140,11 @@ const commands = {
       if (opts.worktree !== undefined) {
         const dir = String(opts.worktree).trim();
         if (!dir || !path.basename(path.resolve(dir))) throw usageError('--worktree needs the path of your worktree');
+        // The project checkout itself is never a worker's worktree (DS1, DS2).
+        const row = store.getSession(db, id);
+        if ([row.cwd, projectRoot()].some(p => p && path.resolve(p) === path.resolve(dir))) {
+          throw usageError(`${path.resolve(dir)} is the project checkout, not a worktree: create your own worktree beside it and report that`);
+        }
         fields.worktree = path.resolve(dir);
       }
       if (opts.resolved) Object.assign(fields, { status: 'resolved', resolved_at: store.now() });
