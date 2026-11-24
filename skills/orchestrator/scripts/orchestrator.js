@@ -430,7 +430,7 @@ function deliverPending(db, id, paneId) {
 
 // What an unconfirmed launch failure left behind, for the orchestrator to check.
 function uncertainNote(err, what = 'the agent') {
-  if (err.tabClosed) return 'No agent is running: its tab was closed, but restoring the record failed, so it still holds that launch until a resume clears it';
+  if (err.tabClosed) return err.recovery;
   if (err.tabRecorded) return `Its tab is kept, because ${what} may have started; check it before anything else`;
   return `Nothing changed in the record, but ${emptyTabCause(err)}: an empty tab may be open, with no agent in it`;
 }
@@ -544,8 +544,18 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       `${err.message}${closed ? '' : `; tab ${tabId} could not be closed`}`);
     const failure = new CliError(`${err.message}${closed ? '' : `; its tab ${tabId} could not be closed and stays recorded`}`);
     // A record that could not be restored is treated as uncertain: it stays
-    // recorded and blocks another launch until it is checked.
+    // recorded and blocks another launch until it is checked. It also still
+    // holds this launch's prompts, so its retry must not send them again.
     Object.assign(failure, { startFailed: true, confirmed: restored, tabRecorded: !restored, tabClosed: closed && !restored });
+    if (failure.tabClosed) {
+      // No conversation was written for a first launch or a relaunch's new id,
+      // so only relaunch can start it; otherwise resume reopens the old one.
+      const neverWritten = before.launches === 0 || !!commitEvent;
+      failure.recovery = 'No agent is running: its tab was closed, but restoring the record failed, so it still holds that launch ' +
+        'and its prompts, including this request. Do not send the request again; ' + (neverWritten
+        ? `relaunch S${row.id} with a --request asking it to continue: its held prompts go into the brief`
+        : `resume S${row.id} without --request: it delivers the held prompts`);
+    }
     throw failure;
   }
   // The worker is running from here on: a failure now never reads as a start
@@ -658,7 +668,7 @@ const noWorker = err => err.confirmed || !err.tabRecorded || !!err.tabClosed;
 
 // The orchestrator's message for a failed launch, keeping what the outcome needs.
 const fromLaunch = (err, message) => Object.assign(new CliError(message),
-  { startFailed: true, confirmed: err.confirmed, tabRecorded: err.tabRecorded, tabClosed: err.tabClosed, emptyTab: err.emptyTab });
+  { startFailed: true, confirmed: err.confirmed, tabRecorded: err.tabRecorded, tabClosed: err.tabClosed, emptyTab: err.emptyTab, recovery: err.recovery });
 
 // History is not routing state: an event that cannot be written warns and
 // never replaces the result or the error of the step it describes.
@@ -795,6 +805,7 @@ const commands = {
           const retry = `resume S${id}, without --request`;
           throw fromLaunch(err, `S${id} is recorded with its brief held, but ${noWorker(err) ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
             `${err.message}. ${err.confirmed ? `Retry with ${retry}`
+              : err.tabClosed ? uncertainNote(err)
               : err.tabRecorded ? `${uncertainNote(err)}; then ${retry}`
                 : `${emptyTabCause(err)}, so an empty tab may be open: close it if so, then ${retry}`}`);
         }

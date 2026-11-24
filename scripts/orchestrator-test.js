@@ -693,26 +693,55 @@ test('a delivery whose activity time cannot be written still reports delivered, 
   } finally { t.cleanup(); }
 });
 
-test('a launch whose record cannot be restored after its tab closed says so, and resume clears it', () => {
+// A record that cannot be restored after its tab closed still holds that
+// launch's prompts; following the retry its error names submits each once.
+const blockClear = t => {
+  const d = t.open();
+  // Only the rollback clears the placement and lowers the launch count.
+  d.exec("CREATE TRIGGER no_clear BEFORE UPDATE OF pane_id ON sessions WHEN NEW.pane_id IS NULL AND NEW.launches < OLD.launches BEGIN SELECT RAISE(ABORT, 'injected'); END");
+  d.close();
+};
+const unblockClear = t => { const d = t.open(); d.exec('DROP TRIGGER no_clear'); d.close(); };
+
+for (const harness of ['claude', 'pi']) {
+  test(`a ${harness} first launch whose record cannot be restored names relaunch, and that sends its brief once`, () => {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      blockClear(t);
+      t.patchHerdr(s => { s.failStart = 'failed'; });
+      const r = t.run(['new', '--harness', harness, '--title', 'Site', '--request', 'fix the login', '--reason', 'r']);
+      assert.match(r.stderr, /no agent started[\s\S]*restoring the record failed \(injected\)[\s\S]*No agent is running[\s\S]*including this request\. Do not send the request again; relaunch S1 with a --request asking it to continue/);
+      assert.doesNotMatch(r.stderr, /Its tab is kept|then resume/);
+      const d = t.open();
+      assert.match(store.recentDecisions(d, 1, 1)[0].outcome, /^failed: /);
+      d.close();
+      unblockClear(t);
+      t.patchHerdr(s => { s.failStart = null; });
+      ok(t.run(['relaunch', 'S1', '--request', 'continue where the held messages leave off', '--reason', 'retry the failed start']));
+      assert.strictEqual(t.herdrState().prompts.filter(p => /fix the login/.test(p.text)).length, 1);
+      assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent && p.pane_id !== 'w1:p0').length, 1);
+    } finally { t.cleanup(); }
+  });
+}
+
+test('a resume --request whose record cannot be restored names resume without --request, and the request goes once', () => {
   const t = setup();
   try {
     ok(t.run(['start']));
-    const d = t.open();
-    d.exec("CREATE TRIGGER no_clear BEFORE UPDATE OF pane_id ON sessions WHEN NEW.pane_id IS NULL BEGIN SELECT RAISE(ABORT, 'injected'); END");
-    d.close();
-    t.patchHerdr(s => { s.failStart = 'failed'; });
-    const r = t.run(['new', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']);
-    assert.match(r.stderr, /no agent started[\s\S]*restoring the record failed \(injected\)[\s\S]*No agent is running: its tab was closed[\s\S]*then resume S1, without --request/);
-    assert.doesNotMatch(r.stderr, /Its tab is kept/);
-    assert.ok(t.row(1).pane_id, 'the record still holds the launch');
-    const d2 = t.open();
-    assert.match(store.recentDecisions(d2, 1, 1)[0].outcome, /^failed: /);
-    d2.exec('DROP TRIGGER no_clear');
-    d2.close();
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const transcript = path.join(t.dir, `${t.row(1).native_session_id}.jsonl`);
+    fs.writeFileSync(transcript, '{}\n');
+    t.patchRow(1, { transcript_path: transcript });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; });
+    blockClear(t);
+    const r = t.run(['resume', 'S1', '--request', 'a unique new request', '--reason', 'its tab was closed']);
+    assert.match(r.stderr, /Do not send the request again; resume S1 without --request: it delivers the held prompts/);
+    unblockClear(t);
     t.patchHerdr(s => { s.failStart = null; });
-    ok(t.run(['resume', 'S1', '--reason', 'retry']));
-    assert.strictEqual(t.herdrState().prompts.filter(p => /fix the login/.test(p.text)).length, 1);
-    assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent && p.pane_id !== 'w1:p0').length, 1);
+    ok(t.run(['resume', 'S1', '--reason', 'retry the failed resume']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /a unique new request/.test(p.text)).length, 1);
+    assert.strictEqual(t.row(1).pending, null);
   } finally { t.cleanup(); }
 });
 
