@@ -498,6 +498,7 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       const parent = before.launches === 0 && before.parent_id ? store.getSession(db, before.parent_id) : null;
       if (parent && (parent.status === 'open' || parent.status === 'superseded')) {
         if (parent.status === 'open') store.updateSession(db, parent.id, { status: 'superseded' });
+        store.updateSession(db, row.id, { parent_generation: parent.succession });
         store.addEvent(db, parent.id, 'superseded', `by S${row.id}`);
         superseded = parent.id;
       }
@@ -530,10 +531,10 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
           store.updateSession(db, row.id, { ...restore, tab_id: null, pane_id: null, agent_name: null });
           // Undo only a supersession that still stands: not for a parent its
           // own worker resolved meanwhile,
-          // nor one another session it was superseded by since its last
-          // reopen has, or may have, a worker for.
+          // nor one another session that superseded it in the same succession
+          // has, or may have, a worker for.
           const parent = superseded ? store.getSession(db, superseded) : null;
-          if (parent && parent.status === 'superseded' && !store.otherSuccessor(db, parent.id, row.id)) {
+          if (parent && parent.status === 'superseded' && !store.otherSuccessor(db, parent, row.id)) {
             store.updateSession(db, parent.id, { status: 'open' });
             reopened = true;
           }

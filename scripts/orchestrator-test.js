@@ -738,6 +738,82 @@ test('a failed launch of a later sibling leaves its parent with the earlier succ
   } finally { t.cleanup(); }
 });
 
+test('a parent reopened by any route, even with its event lost, stays open when a later child fails', () => {
+  for (const reopen of ['report --open', 'reopen without its event', 'resolve then report --open']) {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+      json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+      if (reopen === 'report --open') ok(t.run(['report', '--open'], { ORCHESTRATOR_SESSION: '1' }));
+      if (reopen === 'resolve then report --open') {
+        ok(t.run(['report', '--resolved'], { ORCHESTRATOR_SESSION: '1' }));
+        ok(t.run(['report', '--open'], { ORCHESTRATOR_SESSION: '1' }));
+      }
+      if (reopen === 'reopen without its event') {
+        failEvent(t, 'reopened');
+        assert.match(ok(t.run(['reopen', 'S1'])).stderr, /warning: S1's reopened event was not recorded/);
+      }
+      assert.strictEqual(t.row(1).status, 'open', reopen);
+      t.patchHerdr(s => { s.failStart = 'failed'; });
+      assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']).stderr, /no agent started/);
+      t.patchHerdr(s => { s.failStart = null; });
+      assert.strictEqual(t.row(1).status, 'open', `${reopen}: S1 is left as it was`);
+      ok(t.run(['send', 'S1', '--request', 'one more', '--reason', 'r']));
+    } finally { t.cleanup(); }
+  }
+});
+
+test('children that fail in turn leave their parent open: a rolled-back claim is no successor', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
+    t.patchHerdr(s => { s.failStart = null; });
+    assert.strictEqual(t.row(1).status, 'open');
+    ok(t.run(['send', 'S1', '--request', 'one more', '--reason', 'r']));
+  } finally { t.cleanup(); }
+
+  // Overlapping, in one succession: S3 is placed and fails while S2 starts, then S2 fails too.
+  const u = setup();
+  try {
+    ok(u.run(['start']));
+    json(u.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    u.patchHerdr(s => {
+      s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
+      s.innerFailStart = 'failed';
+      s.failStart = 'failed';
+    });
+    assert.match(u.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']).stderr, /no agent started/);
+    u.patchHerdr(s => { s.failStart = null; });
+    assert.strictEqual(u.row(2).pane_id, null);
+    assert.strictEqual(u.row(3).pane_id, null);
+    assert.strictEqual(u.row(1).status, 'open', 'neither rolled-back claim is a successor');
+  } finally { u.cleanup(); }
+});
+
+test('a failed restore notes that the parent stays superseded only while it is', () => {
+  for (const resolvedMeanwhile of [false, true]) {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+      blockClear(t);
+      t.patchHerdr(s => {
+        s.failStart = 'failed';
+        if (resolvedMeanwhile) s.onStart = `ORCHESTRATOR_SESSION=1 "${process.execPath}" "${CLI}" report --summary done --resolved`;
+      });
+      const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+      assert.match(r.stderr, /restoring the record failed/);
+      if (resolvedMeanwhile) assert.doesNotMatch(r.stderr, /S1 stays superseded/);
+      else assert.match(r.stderr, /including this request, and S1 stays superseded\. Do not send the request again/);
+    } finally { t.cleanup(); }
+  }
+});
+
 test('a delivery whose activity time cannot be written still reports delivered, once', () => {
   const t = setup();
   try {

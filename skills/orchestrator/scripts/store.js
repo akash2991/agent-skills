@@ -101,12 +101,14 @@ const MIGRATIONS = [null, SCHEMA, `
 ALTER TABLE decisions ADD COLUMN outcome TEXT;
 ALTER TABLE decisions ADD COLUMN outcome_at TEXT;
 ALTER TABLE prompts ADD COLUMN seq INTEGER;
+ALTER TABLE sessions ADD COLUMN succession INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN parent_generation INTEGER;
 `];
 
 const UPDATABLE = new Set([
   'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
   'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
-  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending',
+  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending', 'parent_generation',
 ]);
 
 const now = () => new Date().toISOString();
@@ -198,11 +200,16 @@ function listSessions(db) {
   return db.prepare('SELECT * FROM sessions ORDER BY last_active_at DESC').all();
 }
 
+// Opening a session (a reopen, a worker's report --open, or a rolled-back
+// supersession) starts a new succession in the same statement: sessions that
+// superseded it before no longer count as its successors.
 function updateSession(db, id, fields) {
   const keys = Object.keys(fields);
   for (const key of keys) if (!UPDATABLE.has(key)) throw new Error(`not an updatable session field: ${key}`);
   if (!keys.length) return;
-  db.prepare(`UPDATE sessions SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`)
+  const sets = keys.map(k => `${k} = ?`);
+  if (fields.status === 'open') sets.push('succession = succession + 1');
+  db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`)
     .run(...keys.map(k => fields[k] ?? null), Number(id));
 }
 
@@ -239,18 +246,12 @@ function setOutcome(db, decisionId, outcome) {
   db.prepare('UPDATE decisions SET outcome = ?, outcome_at = ? WHERE id = ?').run(String(outcome), now(), Number(decisionId));
 }
 
-// Whether a session other than `exceptId` has superseded `parentId` since the
-// parent was last reopened, and has, or may have, a worker (launches or a
-// recorded tab). A claim whose own launch was rolled back has neither.
-function otherSuccessor(db, parentId, exceptId) {
-  const reopened = db.prepare("SELECT MAX(id) AS id FROM events WHERE session_id = ? AND kind = 'reopened'").get(Number(parentId)).id || 0;
-  const claims = db.prepare("SELECT detail FROM events WHERE session_id = ? AND kind = 'superseded' AND id > ?").all(Number(parentId), reopened);
-  return claims.some(({ detail }) => {
-    const id = Number((/^by S(\d+)$/.exec(detail || '') || [])[1]);
-    if (!id || id === Number(exceptId)) return false;
-    const child = getSession(db, id);
-    return !!child && (child.launches > 0 || !!child.pane_id);
-  });
+// Whether a session other than `exceptId` superseded `parent` in its current
+// succession and has, or may have, a worker (launches or a recorded tab). A
+// claim whose own launch was rolled back has neither. Both are routing state.
+function otherSuccessor(db, parent, exceptId) {
+  return !!db.prepare('SELECT 1 FROM sessions WHERE parent_id = ? AND id != ? AND parent_generation = ? AND (launches > 0 OR pane_id IS NOT NULL) LIMIT 1')
+    .get(Number(parent.id), Number(exceptId), Number(parent.succession));
 }
 
 function recentDecisions(db, sessionId, limit = 3) {
