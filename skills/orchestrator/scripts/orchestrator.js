@@ -824,7 +824,7 @@ const commands = {
         ? entries.map(e => (e.state === 'unknown' ? { ...e, state: 'pending' } : e))
         : entries.filter(e => e.state !== 'unknown'));
       store.addEvent(db, id, opts.resend ? 'settled-resend' : 'settled-drop', `${unknown.length} prompt(s)`);
-      print({ session: `S${id}`, settled: `${unknown.length} prompt(s) ${opts.resend ? 'held to resend' : 'dropped as delivered'}` }, opts);
+      print({ session: `S${id}`, settled: `${unknown.length} prompt(s) ${opts.resend ? `held to resend: run deliver S${id}, or resume S${id} if its tab is gone (with --request if a new request is waiting)` : 'dropped as delivered'}` }, opts);
     });
   },
 
@@ -863,7 +863,7 @@ const commands = {
       requireOwner(db);
       const row = getRow(db, id);
       requireOpen(row, 'messaging');
-      if (!isLive(row, paneInfo(row.pane_id))) throw new CliError(`S${id} has no live tab; use resume`);
+      if (!isLive(row, paneInfo(row.pane_id))) throw new CliError(`S${id} has no live tab; use resume S${id} --request with this request, which carries it: nothing was kept`);
       requireSettled(row);
       if (store.pendingOf(row).length) throw new CliError(`S${id} still holds prompts; run deliver S${id} before sending more`);
       store.addDecision(db, { request, action: 'send', sessionId: id, considered: opts.considered, reason });

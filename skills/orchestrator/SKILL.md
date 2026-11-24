@@ -83,11 +83,12 @@ If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why
 - The worker did not settle in time, for example while adopting its persona. Run `orch deliver S<id>` once it is idle.
 - A prompt may or may not have reached the worker: its send was interrupted. Nothing resends or drops it on its own, and `send`, `deliver`, `resume`, and `relaunch` refuse until you settle it. Look at the worker's tab or `orch status S<id>`, then run `orch settle S<id> --resend` if it never arrived or `--drop` if it did.
 
-A `send` refused before it writes its request keeps nothing, so submit that request once, by the route its refusal names. Never send it again after a command that already carried it:
+A `send` refused before it writes its request keeps nothing, so submit that request once, by the route its refusal names. Never send it again after a command that kept or delivered it; a command that failed and changed nothing is retried as its error says:
 
 - The session is not open: `orch new --from S<id> --request …`, with the usual arguments, carries it to a new session.
 - It has no live tab: `orch resume S<id> --request …` carries it.
-- It still holds a prompt, or one whose delivery is unknown: clear the older one first with `orch deliver S<id>` or a settle, then `send` the new request.
+- It still holds a prompt: `orch deliver S<id>`, then `send` the new request.
+- It holds a prompt whose delivery is unknown: settle that one first. `--drop` removes it, and `--resend` holds it again; either way, run `orch deliver S<id>` next if anything is still held. Then `send` the new request. If its tab is gone, settle, then `orch resume S<id> --request …`, which carries both the held prompts and the request.
 
 Once `send` has written its request, a failure keeps it in the record: when the worker refused it (for example, blocked on a permission prompt), run `orch deliver S<id>` once it can take it; when its delivery is unknown, settle it as above.
 
