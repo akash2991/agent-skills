@@ -1898,6 +1898,11 @@ test('in a bare-repository layout, the checkout the orchestrator started in is r
       const d = store.open(db);
       assert.strictEqual(store.getSession(d, 1).worktree, worker, where);
       d.close();
+      // The checkout is no worktree for a session started there either.
+      json(t.run(['new', '--json', '--cwd', path.join(checkout), '--title', 'Z', '--request', 'z', '--reason', 'r'], env, undefined, { cwd: checkout }));
+      const d2 = store.open(db);
+      assert.strictEqual(store.getSession(d2, 2).worktree, null, where);
+      d2.close();
     } finally { t.cleanup(); }
   }
 });
@@ -1975,6 +1980,44 @@ test('a session started in a worktree that was later removed relaunches from the
     assert.ok(t.events(1).includes('cwd-missing'));
     assert.match(t.herdrState().prompts.at(-1).text, /is gone: create it again for the same branch/);
     assert.strictEqual(t.herdrState().prompts.filter(p => /review feedback/.test(p.text)).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a worktree is held by one open session; start says which checkout it protects', () => {
+  const t = setup();
+  try {
+    assert.match(ok(t.run(['start'])).stdout, /protected_checkout: none: .* is in no git working tree/);
+    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
+    assert.match(ok(t.run(['start'], {}, undefined, { cwd: main })).stdout, new RegExp(`protected_checkout: ${main.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    json(t.run(['new', '--json', '--cwd', linked, '--title', 'A', '--request', 'a', '--reason', 'r'], {}, undefined, { cwd: main }));
+    assert.strictEqual(t.row(1).worktree, linked);
+    const second = t.run(['new', '--json', '--cwd', linked, '--title', 'B', '--request', 'b', '--reason', 'r'], {}, undefined, { cwd: main });
+    assert.match(second.stderr, /is S1's worktree and S1 is open; S2 is not given it/);
+    assert.strictEqual(t.row(2).worktree, null);
+    const refused = t.run(['report', '--worktree', linked], { ORCHESTRATOR_SESSION: '2' }, undefined, { cwd: linked });
+    assert.strictEqual(refused.status, 2);
+    assert.match(refused.stderr, /is already S1's worktree, and S1 is open/);
+    ok(t.run(['resolve', 'S1']));
+    ok(t.run(['report', '--worktree', linked], { ORCHESTRATOR_SESSION: '2' }, undefined, { cwd: linked }));
+    assert.strictEqual(t.row(2).worktree, linked);
+  } finally { t.cleanup(); }
+});
+
+test('a worktree an outer repository tracks is still a worktree; a refusal names the path reported', () => {
+  const t = setup();
+  const g = (cwd, ...args) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, stdio: 'ignore' });
+  try {
+    const { main } = gitWorktree(t, 'FAC-0-seed');
+    const nested = path.join(main, 'wt', 'FAC-5-n');
+    g(main, 'worktree', 'add', '-q', '-b', 'FAC-5-n', nested);
+    g(main, 'add', 'wt/FAC-5-n'); // an accidental add records it as a gitlink
+    ok(t.run(['start'], {}, undefined, { cwd: main }));
+    json(t.run(['new', '--json', '--title', 'N', '--request', 'n', '--reason', 'r'], {}, undefined, { cwd: main }));
+    ok(t.run(['report', '--worktree', '.'], { ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: nested }));
+    assert.strictEqual(t.row(1).worktree, fs.realpathSync(nested));
+    fs.mkdirSync(path.join(main, 'docs'));
+    const refused = t.run(['report', '--worktree', path.join(main, 'docs')], { ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: nested });
+    assert.match(refused.stderr, new RegExp(`${path.join(main, 'docs').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(in ${main.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\) is the project checkout`));
   } finally { t.cleanup(); }
 });
 

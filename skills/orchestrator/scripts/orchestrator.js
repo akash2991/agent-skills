@@ -96,11 +96,20 @@ const realPath = p => { try { return fs.realpathSync(p); } catch { return path.r
 // `dir` is in none, or is gone.
 function workingTree(dir) {
   try {
-    let top = git(['rev-parse', '--show-toplevel'], dir);
-    for (let up = git(['rev-parse', '--show-superproject-working-tree'], top); up; up = git(['rev-parse', '--show-superproject-working-tree'], top)) top = up;
-    const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], top);
-    const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], top);
-    return { top: realPath(top), main: realPath(gitDir) === realPath(common) };
+    const classify = top => {
+      const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], top);
+      const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], top);
+      return { top: realPath(top), main: realPath(gitDir) === realPath(common) };
+    };
+    // A submodule checkout is never a linked worktree, so climbing stops at one
+    // (a worktree an outer repository happens to track is still a worktree).
+    let tree = classify(git(['rev-parse', '--show-toplevel'], dir));
+    for (;;) {
+      if (!tree.main) return tree;
+      const up = git(['rev-parse', '--show-superproject-working-tree'], tree.top);
+      if (!up) return tree;
+      tree = classify(up);
+    }
   } catch {
     return null;
   }
@@ -800,11 +809,13 @@ const commands = {
       // linked worktree: that working tree is the one no worker may report.
       const here = workingTree(process.cwd());
       store.setProjectRoot(db, here ? here.top : realPath(process.cwd()));
+      const protectedCheckout = here ? here.top : `none: ${realPath(process.cwd())} is in no git working tree, so only main working trees are refused as worktrees`;
       const changes = reconcile(db);
       const open = store.listSessions(db).filter(r => r.status === 'open');
       print({
         orchestrator: `pane ${me.pane_id}${tookOver ? ' (took over from an orchestrator that is gone)' : ''}`,
         record: file,
+        protected_checkout: protectedCheckout,
         open_sessions: open.length,
         live_tabs: open.filter(r => r.pane_id).length,
         reconciled: changes.skipped ? `skipped (${changes.skipped})` : `${changes.closed.length} closed, ${changes.adopted.length} adopted`,
@@ -858,7 +869,9 @@ const commands = {
       if (opts.cwd) {
         const tree = workingTree(path.resolve(opts.cwd));
         const root = store.getProjectRoot(db);
-        if (tree && !tree.main && !(root && tree.top === realPath(root))) store.updateSession(db, id, { worktree: tree.top });
+        const holder = tree && store.listSessions(db).find(r => r.id !== id && r.status === 'open' && r.worktree === tree.top);
+        if (holder) process.stderr.write(`orchestrator: warning: ${tree.top} is S${holder.id}'s worktree and S${holder.id} is open; S${id} is not given it\n`);
+        else if (tree && !tree.main && !(root && tree.top === realPath(root))) store.updateSession(db, id, { worktree: tree.top });
       }
       const row = store.getSession(db, id);
       const context = parent ? priorContext(db, parent, 'Related earlier session', { related: true }) : null;
@@ -1188,9 +1201,12 @@ const commands = {
         const tree = dir ? workingTree(path.resolve(dir)) : null;
         if (!tree) throw usageError(`--worktree needs the path of your git worktree${dir ? `; ${path.resolve(dir)} is in none` : ''}`);
         const root = store.getProjectRoot(db);
+        const shown = tree.top === realPath(path.resolve(dir)) ? tree.top : `${path.resolve(dir)} (in ${tree.top})`;
         if (tree.main || (root && tree.top === realPath(root))) {
-          throw usageError(`${tree.top} is the project checkout, not a worktree: report your own worktree, and create one beside the checkout only if you have none`);
+          throw usageError(`${shown} is the project checkout, not a worktree: report your own worktree, and create one beside the checkout only if you have none`);
         }
+        const holder = store.listSessions(db).find(r => r.id !== Number(id) && r.status === 'open' && r.worktree === tree.top);
+        if (holder) throw usageError(`${tree.top} is already S${holder.id}'s worktree, and S${holder.id} is open: report your own worktree`);
         fields.worktree = tree.top;
       }
       if (opts.resolved) Object.assign(fields, { status: 'resolved', resolved_at: store.now() });
