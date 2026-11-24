@@ -430,10 +430,14 @@ function deliverPending(db, id, paneId) {
 
 // What an unconfirmed launch failure left behind, for the orchestrator to check.
 function uncertainNote(err, what = 'the agent') {
-  return err.tabRecorded
-    ? `Its tab is kept, because ${what} may have started; check it before anything else`
-    : 'Nothing changed in the record, but herdr timed out creating the tab: an empty tab may be open, with no agent in it';
+  if (err.tabClosed) return 'No agent is running: its tab was closed, but restoring the record failed, so it still holds that launch until a resume clears it';
+  if (err.tabRecorded) return `Its tab is kept, because ${what} may have started; check it before anything else`;
+  return `Nothing changed in the record, but ${emptyTabCause(err)}: an empty tab may be open, with no agent in it`;
 }
+
+// Why an unrecorded tab may be left open: herdr timed out creating it, or the
+// orchestrator could not close the tab it made after recording it failed.
+const emptyTabCause = err => (err.emptyTab ? 'its tab could not be closed after recording it failed' : 'herdr timed out creating the tab');
 
 const unknownHeld = row => store.pendingOf(row).filter(e => e.state === 'unknown');
 
@@ -501,7 +505,7 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
     let closed = false;
     try { herdr(['tab', 'close', tabId]); closed = true; } catch { /* reported below */ }
     throw Object.assign(new CliError(`recording S${row.id}'s new tab failed: ${err.message}` +
-      `${closed ? '' : `; its empty tab ${tabId} could not be closed`}`), { startFailed: true, confirmed: closed, tabRecorded: false });
+      `${closed ? '' : `; its empty tab ${tabId} could not be closed`}`), { startFailed: true, confirmed: closed, tabRecorded: false, emptyTab: !closed });
   }
   const placed = { tab_id: tabId, pane_id: pane, label: tabLabel(row) };
   try {
@@ -517,13 +521,17 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
     let closed = false;
     try { herdr(['tab', 'close', tabId]); closed = true; } catch { /* reported below */ }
     let restored = false;
+    let reopened = false;
     if (closed) {
       try {
         store.transaction(db, () => {
           store.updateSession(db, row.id, { ...restore, tab_id: null, pane_id: null, agent_name: null });
-          if (superseded) {
-            store.updateSession(db, superseded, { status: 'open' });
-            store.addEvent(db, superseded, 'supersession-undone', `S${row.id} got no worker`);
+          // Undo only a supersession that still stands: a parent its own
+          // worker resolved meanwhile keeps that.
+          const parent = superseded ? store.getSession(db, superseded) : null;
+          if (parent && parent.status === 'superseded') {
+            store.updateSession(db, parent.id, { status: 'open' });
+            reopened = true;
           }
         });
         restored = true;
@@ -531,12 +539,13 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
         err.message += `; its tab was closed, but restoring the record failed (${restoreErr.message})`;
       }
     }
+    if (reopened) logEvent(db, superseded, 'supersession-undone', `S${row.id} got no worker`);
     logEvent(db, row.id, restored ? 'start-failed' : 'start-uncertain',
       `${err.message}${closed ? '' : `; tab ${tabId} could not be closed`}`);
     const failure = new CliError(`${err.message}${closed ? '' : `; its tab ${tabId} could not be closed and stays recorded`}`);
     // A record that could not be restored is treated as uncertain: it stays
     // recorded and blocks another launch until it is checked.
-    Object.assign(failure, { startFailed: true, confirmed: restored, tabRecorded: !restored });
+    Object.assign(failure, { startFailed: true, confirmed: restored, tabRecorded: !restored, tabClosed: closed && !restored });
     throw failure;
   }
   // The worker is running from here on: a failure now never reads as a start
@@ -645,11 +654,11 @@ function decided(db, decision, run) {
 
 // No worker can have started: herdr confirmed the failure, or never confirmed
 // creating the tab, so no agent start ran in it.
-const noWorker = err => err.confirmed || !err.tabRecorded;
+const noWorker = err => err.confirmed || !err.tabRecorded || !!err.tabClosed;
 
 // The orchestrator's message for a failed launch, keeping what the outcome needs.
 const fromLaunch = (err, message) => Object.assign(new CliError(message),
-  { startFailed: true, confirmed: err.confirmed, tabRecorded: err.tabRecorded });
+  { startFailed: true, confirmed: err.confirmed, tabRecorded: err.tabRecorded, tabClosed: err.tabClosed, emptyTab: err.emptyTab });
 
 // History is not routing state: an event that cannot be written warns and
 // never replaces the result or the error of the step it describes.
@@ -787,7 +796,7 @@ const commands = {
           throw fromLaunch(err, `S${id} is recorded with its brief held, but ${noWorker(err) ? 'no agent started' : 'whether its agent started is uncertain'}: ` +
             `${err.message}. ${err.confirmed ? `Retry with ${retry}`
               : err.tabRecorded ? `${uncertainNote(err)}; then ${retry}`
-                : `herdr timed out creating its tab, so an empty tab may be open: close it if so, then ${retry}`}`);
+                : `${emptyTabCause(err)}, so an empty tab may be open: close it if so, then ${retry}`}`);
         }
         return launchResult(id, 'new', launched, { tracked: TRACKED.has(harness) });
       });
@@ -944,7 +953,11 @@ const commands = {
           ? `a prompt may or may not have arrived: check its tab, then settle S${id} --resend or --drop`
           : `${store.pendingOf(store.getSession(db, id)).length} prompt(s) still held, run deliver again once it settles`}`);
       }
-      store.updateSession(db, id, { last_active_at: store.now() });
+      try {
+        store.updateSession(db, id, { last_active_at: store.now() });
+      } catch (err) {
+        process.stderr.write(`orchestrator: warning: S${id}'s activity time was not recorded (${err.message})\n`);
+      }
       logEvent(db, id, 'delivered', row.pane_id);
       print({ session: `S${id}`, action: 'delivered', pane_id: row.pane_id }, opts);
     });

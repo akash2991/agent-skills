@@ -53,6 +53,7 @@ if (group === 'pane' && verb === 'get') {
   const pane = s.panes[args[args.indexOf('--pane') + 1]];
   const rest = args.slice(args.indexOf('--') + 1);
   pane.args = rest;
+  if (s.onStart) { save(); execSync(s.onStart, { stdio: 'ignore' }); }
   if (s.failStart) fail(s.failStart, 'agent start failed (' + s.failStart + ')');
   const at = Math.max(rest.indexOf('--session-id'), rest.indexOf('--resume'));
   const native = at >= 0 ? rest[at + 1] : 'untracked';
@@ -629,6 +630,105 @@ test('a parent reopened after its child started stays open through the child\'s 
     assert.ok(t.events(2).includes('relaunched'), 'the relaunch that placed a worker says so');
     assert.strictEqual(t.row(1).status, 'open');
     assert.strictEqual(t.events(1).filter(k => k === 'superseded').length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a rolled-back first launch restores its parent even when the rollback event cannot be written', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    failEvent(t, 'supersession-undone');
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    assert.match(r.stderr, /warning: S1's supersession-undone event was not recorded[\s\S]*no agent started[\s\S]*Retry with resume S2, without --request/);
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.row(2).launches, 0);
+    assert.strictEqual(t.row(2).pane_id, null);
+    assert.ok(store.pendingOf(t.row(2)).length > 0, 'its brief is held');
+    const d = t.open();
+    assert.match(store.recentDecisions(d, 2, 1)[0].outcome, /^failed: /);
+    d.close();
+  } finally { t.cleanup(); }
+});
+
+test('a rolled-back first launch leaves a parent its own worker resolved meanwhile resolved', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    // S1's worker reports itself done while S2's agent is starting, then S2's start fails.
+    t.patchHerdr(s => {
+      s.onStart = `ORCHESTRATOR_SESSION=1 "${process.execPath}" "${CLI}" report --summary done --resolved`;
+      s.failStart = 'failed';
+    });
+    t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    t.patchHerdr(s => { s.onStart = null; s.failStart = null; });
+    assert.strictEqual(t.row(1).status, 'resolved');
+    assert.ok(t.row(1).resolved_at);
+    assert.ok(!t.events(1).includes('supersession-undone'));
+    assert.match(t.run(['send', 'S1', '--request', 'x', '--reason', 'r']).stderr, /S1 is resolved/);
+    assert.strictEqual(t.row(2).launches, 0);
+    assert.strictEqual(t.row(2).pane_id, null);
+  } finally { t.cleanup(); }
+});
+
+test('a delivery whose activity time cannot be written still reports delivered, once', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    t.patchHerdr(s => { s.blockStart = true; });
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => { s.blockStart = false; s.panes[first.pane_id].agent_status = 'idle'; });
+    const d = t.open();
+    d.exec("CREATE TRIGGER no_activity BEFORE UPDATE OF last_active_at ON sessions BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.close();
+    const r = ok(t.run(['deliver', 'S1', '--json']));
+    assert.strictEqual(JSON.parse(r.stdout).action, 'delivered');
+    assert.strictEqual(JSON.parse(r.stdout).pane_id, first.pane_id);
+    assert.match(r.stderr, /warning: S1's activity time was not recorded \(injected\)/);
+    assert.strictEqual(t.row(1).pending, null);
+    assert.match(t.run(['deliver', 'S1']).stderr, /has no held prompt/);
+    assert.strictEqual(t.herdrState().prompts.filter(p => /fix the login/.test(p.text)).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a launch whose record cannot be restored after its tab closed says so, and resume clears it', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const d = t.open();
+    d.exec("CREATE TRIGGER no_clear BEFORE UPDATE OF pane_id ON sessions WHEN NEW.pane_id IS NULL BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.close();
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    const r = t.run(['new', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']);
+    assert.match(r.stderr, /no agent started[\s\S]*restoring the record failed \(injected\)[\s\S]*No agent is running: its tab was closed[\s\S]*then resume S1, without --request/);
+    assert.doesNotMatch(r.stderr, /Its tab is kept/);
+    assert.ok(t.row(1).pane_id, 'the record still holds the launch');
+    const d2 = t.open();
+    assert.match(store.recentDecisions(d2, 1, 1)[0].outcome, /^failed: /);
+    d2.exec('DROP TRIGGER no_clear');
+    d2.close();
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S1', '--reason', 'retry']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /fix the login/.test(p.text)).length, 1);
+    assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent && p.pane_id !== 'w1:p0').length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('an empty tab that could not be closed after its record failed is named for what happened', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_supersede BEFORE UPDATE OF status ON sessions WHEN NEW.status = 'superseded'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    t.patchHerdr(s => { s.failClose = true; });
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    assert.match(r.stderr, /no agent started[\s\S]*its tab could not be closed after recording it failed, so an empty tab may be open: close it if so, then resume S2/);
+    assert.doesNotMatch(r.stderr, /timed out/);
   } finally { t.cleanup(); }
 });
 
