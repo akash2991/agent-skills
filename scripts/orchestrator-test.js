@@ -55,14 +55,16 @@ if (group === 'pane' && verb === 'get') {
   pane.args = rest;
   if (s.onStart) {
     // Another command runs while this agent starts; it may change the state.
+    // During the hook, starts fail as innerFailStart says; this one as failStart.
     const hook = s.onStart;
-    const failing = s.failStart;
+    const outer = s.failStart;
     s.onStart = null;
-    if (s.failStartOnce) s.failStart = null;
+    s.failStart = s.innerFailStart || null;
     save();
-    execSync(hook, { stdio: 'ignore' });
+    try { execSync(hook, { stdio: 'ignore' }); } catch { /* the other command may fail; the test checks it */ }
     Object.assign(s, JSON.parse(fs.readFileSync(file, 'utf8')));
-    if (s.failStartOnce) { s.failStart = failing; s.failStartOnce = false; }
+    s.failStart = outer;
+    s.innerFailStart = null;
     pane = s.panes[args[args.indexOf('--pane') + 1]];
   }
   if (s.failStart) fail(s.failStart, 'agent start failed (' + s.failStart + ')');
@@ -697,7 +699,6 @@ test('a rolled-back first launch leaves its parent with a sibling that supersede
     t.patchHerdr(s => {
       s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
       s.failStart = 'failed';
-      s.failStartOnce = true;
     });
     const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
     assert.match(r.stderr, /no agent started/);
@@ -705,6 +706,35 @@ test('a rolled-back first launch leaves its parent with a sibling that supersede
     assert.strictEqual(t.row(2).pane_id, null);
     assert.strictEqual(t.row(1).status, 'superseded', 'S3 still supersedes S1');
     assert.ok(!t.events(1).includes('supersession-undone'));
+  } finally { t.cleanup(); }
+});
+
+test('a failed launch of a later sibling leaves its parent with the earlier successor, in either order', () => {
+  // In sequence: S2 took over S1; S3 from S1 then fails.
+  let t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']).stderr, /no agent started/);
+    assert.strictEqual(t.row(1).status, 'superseded', 'S2 still supersedes S1');
+    assert.match(t.run(['send', 'S1', '--request', 'x', '--reason', 'r']).stderr, /S1 is superseded/);
+  } finally { t.cleanup(); }
+
+  // Overlapping: S2 is placed; while its agent starts, S3 is placed and fails; then S2 starts.
+  t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => {
+      s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
+      s.innerFailStart = 'failed';
+    });
+    json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    assert.strictEqual(t.row(3).pane_id, null, 'S3 got no worker');
+    assert.ok(t.row(2).pane_id, 'S2 did');
+    assert.strictEqual(t.row(1).status, 'superseded', 'S2 still supersedes S1');
   } finally { t.cleanup(); }
 });
 

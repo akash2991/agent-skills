@@ -239,8 +239,18 @@ function setOutcome(db, decisionId, outcome) {
   db.prepare('UPDATE decisions SET outcome = ?, outcome_at = ? WHERE id = ?').run(String(outcome), now(), Number(decisionId));
 }
 
-function lastEvent(db, sessionId, kind) {
-  return db.prepare('SELECT * FROM events WHERE session_id = ? AND kind = ? ORDER BY id DESC LIMIT 1').get(Number(sessionId), kind) || null;
+// Whether a session other than `exceptId` has superseded `parentId` since the
+// parent was last reopened, and has, or may have, a worker (launches or a
+// recorded tab). A claim whose own launch was rolled back has neither.
+function otherSuccessor(db, parentId, exceptId) {
+  const reopened = db.prepare("SELECT MAX(id) AS id FROM events WHERE session_id = ? AND kind = 'reopened'").get(Number(parentId)).id || 0;
+  const claims = db.prepare("SELECT detail FROM events WHERE session_id = ? AND kind = 'superseded' AND id > ?").all(Number(parentId), reopened);
+  return claims.some(({ detail }) => {
+    const id = Number((/^by S(\d+)$/.exec(detail || '') || [])[1]);
+    if (!id || id === Number(exceptId)) return false;
+    const child = getSession(db, id);
+    return !!child && (child.launches > 0 || !!child.pane_id);
+  });
 }
 
 function recentDecisions(db, sessionId, limit = 3) {
@@ -369,6 +379,6 @@ function recordHookEvent(db, sessionId, event) {
 
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
-  addEvent, addPrompt, addDecision, setOutcome, recentDecisions, lastEvent, recentPrompts, promptCount, recentEvents, recordHookEvent,
+  addEvent, addPrompt, addDecision, setOutcome, recentDecisions, otherSuccessor, recentPrompts, promptCount, recentEvents, recordHookEvent,
   pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, MIGRATIONS, setProbe,
 };

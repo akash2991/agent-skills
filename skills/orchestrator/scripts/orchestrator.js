@@ -494,7 +494,7 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       store.addEvent(db, row.id, 'tab-created', `${pane} launch ${generation}`);
       if (commitEvent) store.addEvent(db, row.id, commitEvent.kind, commitEvent.detail);
       // A parent another new session already superseded records this one
-      // too, so the rollback of either leaves the parent with the other.
+      // too, so a rollback of either leaves the parent with the other.
       const parent = before.launches === 0 && before.parent_id ? store.getSession(db, before.parent_id) : null;
       if (parent && (parent.status === 'open' || parent.status === 'superseded')) {
         if (parent.status === 'open') store.updateSession(db, parent.id, { status: 'superseded' });
@@ -530,10 +530,10 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
           store.updateSession(db, row.id, { ...restore, tab_id: null, pane_id: null, agent_name: null });
           // Undo only a supersession that still stands: not for a parent its
           // own worker resolved meanwhile,
-          // nor one whose latest supersession is by another session.
+          // nor one another session it was superseded by since its last
+          // reopen has, or may have, a worker for.
           const parent = superseded ? store.getSession(db, superseded) : null;
-          const latest = parent ? store.lastEvent(db, parent.id, 'superseded') : null;
-          if (parent && parent.status === 'superseded' && latest && latest.detail === `by S${row.id}`) {
+          if (parent && parent.status === 'superseded' && !store.otherSuccessor(db, parent.id, row.id)) {
             store.updateSession(db, parent.id, { status: 'open' });
             reopened = true;
           }
@@ -556,8 +556,13 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       // so only relaunch can start it; otherwise resume reopens the old one.
       // Only a resume reopens a conversation that was written before; every
       // other launch recorded one that never was, which only relaunch replaces.
+      let parentNote = '';
+      try {
+        const parent = superseded ? store.getSession(db, superseded) : null;
+        if (parent && parent.status === 'superseded') parentNote = `, and S${parent.id} stays superseded`;
+      } catch { /* the note is only a hint */ }
       failure.recovery = 'No agent is running: its tab was closed, but restoring the record failed, so it still holds that launch ' +
-        `and its prompts, including this request${superseded ? `, and S${superseded} stays superseded by it` : ''}. Do not send the request again; ` +
+        `and its prompts, including this request${parentNote}. Do not send the request again; ` +
         (resume
           ? `resume S${row.id} without --request: it delivers the held prompts`
           : `relaunch S${row.id} with a --request asking it to continue: its held prompts go into the brief`);
