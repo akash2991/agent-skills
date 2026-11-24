@@ -1818,6 +1818,47 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
   } finally { t.cleanup(); }
 });
 
+test('a worker launched in its own linked worktree can report it, from there or a subdirectory; the main checkout is refused', () => {
+  const t = setup();
+  const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+  try {
+    const main = path.join(fs.realpathSync(t.dir), 'repo');
+    fs.mkdirSync(main);
+    g(main, 'init', '-q');
+    g(main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const linked = path.join(path.dirname(main), 'FAC-41-login-fix');
+    g(main, 'worktree', 'add', '-q', linked);
+    fs.mkdirSync(path.join(linked, 'src'));
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--cwd', linked, '--title', 'Fix login', '--request', 'fix it', '--reason', 'r', '--persona', 'web-engineer']));
+    const report = (where, value) => t.run(['report', '--summary', 'working', '--worktree', value], { ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: where });
+    ok(report(linked, '.'));
+    assert.strictEqual(fs.realpathSync(t.row(1).worktree), fs.realpathSync(linked));
+    ok(report(path.join(linked, 'src'), '..'));
+    assert.strictEqual(fs.realpathSync(t.row(1).worktree), fs.realpathSync(linked));
+    const refused = report(linked, main);
+    assert.strictEqual(refused.status, 2);
+    assert.match(refused.stderr, /is the project checkout, not a worktree/);
+  } finally { t.cleanup(); }
+});
+
+test('a fresh start of a session that never had a worker states its worktree', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    t.run(['new', '--title', 'Fix login', '--request', 'fix it', '--reason', 'r']);
+    t.patchHerdr(s => { s.failStart = null; });
+    const worktree = path.join(t.dir, 'FAC-41-login-fix');
+    fs.mkdirSync(worktree);
+    t.patchRow(1, { pending: null, worktree });
+    assert.strictEqual(t.row(1).launches, 0);
+    assert.strictEqual(json(t.run(['resume', 'S1', '--json', '--request', 'start over', '--reason', 'r'])).action, 'started');
+    const text = t.herdrState().prompts.at(-1).text;
+    assert.ok(text.includes(`Its worktree is ${worktree}: continue there, and do not create another.`));
+  } finally { t.cleanup(); }
+});
+
 test('stop closes a settled worker, refuses a mid-turn or permission-blocked one, and keeps the record', () => {
   const t = setup();
   try {

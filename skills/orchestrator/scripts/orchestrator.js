@@ -1140,9 +1140,12 @@ const commands = {
       if (opts.worktree !== undefined) {
         const dir = String(opts.worktree).trim();
         if (!dir || !path.basename(path.resolve(dir))) throw usageError('--worktree needs the path of your worktree');
-        // The project checkout itself is never a worker's worktree (DS1, DS2).
+        // The project's main checkout is never a worker's worktree (DS1, DS2).
+        // The launch directory may itself be a worktree, so compare with the
+        // main checkout found from it, and from where the worker runs this.
         const row = store.getSession(db, id);
-        if ([row.cwd, projectRoot()].some(p => p && path.resolve(p) === path.resolve(dir))) {
+        const real = p => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+        if ([projectRoot(row.cwd), projectRoot()].some(p => p && real(p) === real(dir))) {
           throw usageError(`${path.resolve(dir)} is the project checkout, not a worktree: create your own worktree beside it and report that`);
         }
         fields.worktree = path.resolve(dir);
