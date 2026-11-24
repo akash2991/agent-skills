@@ -88,6 +88,22 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 }
 
+const realPath = p => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+
+// The git working tree that holds `dir`: its top level (a real path), and
+// whether it is a main working tree rather than a linked worktree. Null when
+// `dir` is in none, or is gone.
+function workingTree(dir) {
+  try {
+    const top = git(['rev-parse', '--show-toplevel'], dir);
+    const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], dir);
+    const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], dir);
+    return { top: realPath(top), main: realPath(gitDir) === realPath(common) };
+  } catch {
+    return null;
+  }
+}
+
 // The project's main working tree: shared by its linked worktrees, and right
 // for submodules and separate git directories, where the git directory is not
 // inside the working tree.
@@ -380,7 +396,8 @@ function brief(row, request, { context } = {}) {
   // A session that already has a worktree continues there; one that was
   // removed (after its PR opened, say) is made again for the same branch.
   if (row.worktree) {
-    lines.push('', fs.existsSync(row.worktree)
+    const tree = workingTree(row.worktree);
+    lines.push('', tree && !tree.main && tree.top === realPath(row.worktree)
       ? `Its worktree is ${row.worktree}: continue there, and do not create another.`
       : `Its worktree ${row.worktree} is gone: create it again for the same branch, and report it with --worktree.`);
   }
@@ -1131,24 +1148,23 @@ const commands = {
     const opts = parseArgs(argv, ['resolved', 'open', 'json']);
     const id = sessionArg(opts, { fromEnv: true });
     if (opts.resolved && opts.open) throw usageError('--resolved and --open are exclusive');
-    return withDb(opts, db => {
+    return withDb(opts, (db, file) => {
       getRow(db, id);
       const fields = {};
       if (opts.summary) Object.assign(fields, { summary: opts.summary.trim(), summary_at: store.now() });
       if (opts.title) fields.title = opts.title.trim();
       if (opts.ticket) fields.ticket = opts.ticket.trim();
       if (opts.worktree !== undefined) {
+        // Git decides: the path's working tree is recorded by its top level, and
+        // a main working tree, or the checkout that holds this record, is never
+        // a worker's worktree (DS1, DS2).
         const dir = String(opts.worktree).trim();
-        if (!dir || !path.basename(path.resolve(dir))) throw usageError('--worktree needs the path of your worktree');
-        // The project's main checkout is never a worker's worktree (DS1, DS2).
-        // The launch directory may itself be a worktree, so compare with the
-        // main checkout found from it, and from where the worker runs this.
-        const row = store.getSession(db, id);
-        const real = p => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-        if ([projectRoot(row.cwd), projectRoot()].some(p => p && real(p) === real(dir))) {
-          throw usageError(`${path.resolve(dir)} is the project checkout, not a worktree: create your own worktree beside it and report that`);
+        const tree = dir ? workingTree(path.resolve(dir)) : null;
+        if (!tree) throw usageError(`--worktree needs the path of your git worktree${dir ? `; ${path.resolve(dir)} is in none` : ''}`);
+        if (tree.main || tree.top === realPath(path.dirname(path.dirname(file)))) {
+          throw usageError(`${tree.top} is the project checkout, not a worktree: create your own worktree beside it and report that`);
         }
-        fields.worktree = path.resolve(dir);
+        fields.worktree = tree.top;
       }
       if (opts.resolved) Object.assign(fields, { status: 'resolved', resolved_at: store.now() });
       if (opts.open) Object.assign(fields, { status: 'open', resolved_at: null });

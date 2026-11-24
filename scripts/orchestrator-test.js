@@ -1769,6 +1769,21 @@ test('status --ask is a best-effort request that never claims the summary is fre
   } finally { t.cleanup(); }
 });
 
+// A real git main checkout under the fixture, with a linked worktree `name`
+// beside it; returns both real paths.
+function gitWorktree(t, name) {
+  const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+  const main = path.join(fs.realpathSync(t.dir), 'repo');
+  if (!fs.existsSync(main)) {
+    fs.mkdirSync(main);
+    g(main, 'init', '-q');
+    g(main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  }
+  const linked = path.join(path.dirname(main), name);
+  g(main, 'worktree', 'add', '-q', '-b', name, linked);
+  return { main, linked };
+}
+
 test('a worker that reports its worktree is relabelled <worktree> (<persona>), and keeps that label on resume', () => {
   const t = setup();
   try {
@@ -1776,8 +1791,7 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     const first = json(t.run(['new', '--json', '--title', 'Fix login', '--request', 'fix it', '--reason', 'r', '--persona', 'web-engineer', '--ticket', 'FAC-41']));
     assert.strictEqual(first.label, 'FAC-41 S1 fix-login (web-engineer)');
     assert.match(t.herdrState().prompts.at(-1).text, /report --worktree <path>|--worktree <path>/);
-    const worktree = path.join(t.dir, 'FAC-41-login-fix');
-    fs.mkdirSync(worktree);
+    const { main, linked: worktree } = gitWorktree(t, 'FAC-41-login-fix');
     ok(t.run(['report', '--worktree', worktree], { ORCHESTRATOR_SESSION: '1' }));
     assert.strictEqual(t.row(1).worktree, worktree);
     assert.deepStrictEqual(t.herdrState().renames.at(-1), [first.tab_id, 'FAC-41-login-fix (web-engineer)']);
@@ -1797,7 +1811,8 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     assert.strictEqual(relaunchBrief.split(worktree).length - 1, 1, 'stated once');
 
     // Removed after its PR opened: a fresh conversation (transcript gone) is told to make it again.
-    fs.rmSync(worktree, { recursive: true });
+    execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: main, stdio: 'ignore' });
+    fs.mkdirSync(worktree); // a directory left behind is not a worktree
     const transcript = path.join(t.dir, 'gone.jsonl');
     t.patchRow(1, { transcript_path: transcript });
     t.patchHerdr(s => { for (const p of Object.values(s.panes)) if (p.pane_id !== 'w1:p0') delete s.panes[p.pane_id]; });
@@ -1810,7 +1825,8 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     assert.doesNotMatch(t.herdrState().prompts.at(-1).text, /Its worktree is/);
 
     // A report that names no usable worktree, or the project checkout, is refused and writes nothing.
-    for (const bad of [' ', '/', t.row(1).cwd]) {
+    fs.mkdirSync(path.join(main, 'sub'), { recursive: true });
+    for (const bad of [' ', '/', t.dir, main, path.join(main, 'sub')]) {
       assert.strictEqual(t.run(['report', '--summary', 'should not land', '--worktree', bad], { ORCHESTRATOR_SESSION: '1' }).status, 2, JSON.stringify(bad));
     }
     assert.strictEqual(t.row(1).worktree, worktree);
@@ -1820,14 +1836,8 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
 
 test('a worker launched in its own linked worktree can report it, from there or a subdirectory; the main checkout is refused', () => {
   const t = setup();
-  const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
   try {
-    const main = path.join(fs.realpathSync(t.dir), 'repo');
-    fs.mkdirSync(main);
-    g(main, 'init', '-q');
-    g(main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
-    const linked = path.join(path.dirname(main), 'FAC-41-login-fix');
-    g(main, 'worktree', 'add', '-q', linked);
+    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
     fs.mkdirSync(path.join(linked, 'src'));
     ok(t.run(['start']));
     json(t.run(['new', '--json', '--cwd', linked, '--title', 'Fix login', '--request', 'fix it', '--reason', 'r', '--persona', 'web-engineer']));
@@ -1836,9 +1846,44 @@ test('a worker launched in its own linked worktree can report it, from there or 
     assert.strictEqual(fs.realpathSync(t.row(1).worktree), fs.realpathSync(linked));
     ok(report(path.join(linked, 'src'), '..'));
     assert.strictEqual(fs.realpathSync(t.row(1).worktree), fs.realpathSync(linked));
+    // A subdirectory, or another spelling, records the worktree's top level.
+    ok(report(path.join(linked, 'src'), '.'));
+    assert.strictEqual(t.row(1).worktree, fs.realpathSync(linked));
+    fs.symlinkSync(linked, path.join(t.dir, 'alias'));
+    ok(report(linked, path.join(t.dir, 'alias', 'src')));
+    assert.strictEqual(t.row(1).worktree, fs.realpathSync(linked));
     const refused = report(linked, main);
     assert.strictEqual(refused.status, 2);
     assert.match(refused.stderr, /is the project checkout, not a worktree/);
+  } finally { t.cleanup(); }
+});
+
+test('in a bare-repository layout, the checkout that holds the record is refused and a worker worktree is accepted', () => {
+  const t = setup();
+  const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+  try {
+    const root = fs.realpathSync(t.dir);
+    const seed = path.join(root, 'seed');
+    fs.mkdirSync(seed);
+    g(seed, 'init', '-q', '-b', 'main');
+    g(seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    g(root, 'clone', '-q', '--bare', seed, 'B.git');
+    const bare = path.join(root, 'B.git');
+    const checkout = path.join(root, 'B-main');
+    const worker = path.join(root, 'FAC-2-y');
+    g(bare, 'worktree', 'add', '-q', checkout, 'main');
+    g(bare, 'worktree', 'add', '-q', '-b', 'FAC-2-y', worker);
+    const env = { ORCHESTRATOR_DB: path.join(checkout, '.agent-brain', 'orchestrator.db') };
+    ok(t.run(['start'], env));
+    json(t.run(['new', '--json', '--cwd', checkout, '--title', 'Y', '--request', 'y', '--reason', 'r'], env));
+    const report = (where, value) => t.run(['report', '--worktree', value], { ...env, ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: where });
+    const refused = report(worker, checkout);
+    assert.strictEqual(refused.status, 2);
+    assert.match(refused.stderr, /is the project checkout/);
+    ok(report(worker, '.'));
+    const d = store.open(env.ORCHESTRATOR_DB);
+    assert.strictEqual(store.getSession(d, 1).worktree, worker);
+    d.close();
   } finally { t.cleanup(); }
 });
 
@@ -1849,8 +1894,7 @@ test('a fresh start of a session that never had a worker states its worktree', (
     t.patchHerdr(s => { s.failStart = 'failed'; });
     t.run(['new', '--title', 'Fix login', '--request', 'fix it', '--reason', 'r']);
     t.patchHerdr(s => { s.failStart = null; });
-    const worktree = path.join(t.dir, 'FAC-41-login-fix');
-    fs.mkdirSync(worktree);
+    const { linked: worktree } = gitWorktree(t, 'FAC-41-login-fix');
     t.patchRow(1, { pending: null, worktree });
     assert.strictEqual(t.row(1).launches, 0);
     assert.strictEqual(json(t.run(['resume', 'S1', '--json', '--request', 'start over', '--reason', 'r'])).action, 'started');
