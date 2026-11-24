@@ -101,6 +101,14 @@ const UPDATABLE = new Set([
 ]);
 
 const now = () => new Date().toISOString();
+
+// Test seam: a named point a test can stop at, to force an interleaving with
+// another writer. Nothing is registered outside the tests, so it is a no-op.
+// The one point is `write-lock`, just before a write transaction takes the
+// lock, so every read a writer makes before its lock comes before it.
+const probes = new Map();
+const probe = name => { const fn = probes.get(name); if (fn) fn(); };
+const setProbe = (name, fn) => (fn ? probes.set(name, fn) : probes.delete(name));
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 function retryBusy(fn, budgetMs) {
@@ -145,6 +153,7 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
 }
 
 function transaction(db, fn) {
+  probe('write-lock');
   db.exec('BEGIN IMMEDIATE');
   try {
     const result = fn();
@@ -321,5 +330,5 @@ function recordHookEvent(db, sessionId, event) {
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
   addEvent, addPrompt, addDecision, recentPrompts, promptCount, recentEvents, recordHookEvent,
-  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION,
+  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, setProbe,
 };
