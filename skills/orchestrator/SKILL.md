@@ -75,7 +75,7 @@ orch new --title "<short, distinct name>" --intent "<one sentence: what this ses
 - **Persona**: pick one from the persona table in `AGENTS.md`. The worker opens with `/brain <persona>` and follows the project's rules, including ticket-first.
 - **Harness, model, effort**: leave them to the script's defaults (`orch --help` prints them). Pass `--harness pi`, `--model`, or `--effort` only when the user names them. Claude and Pi are tracked; any other Herdr agent kind launches untracked, with no prompt record and no resume.
 - **Ticket**: pass `--ticket` when the user gave one. Otherwise the worker files it and reports it back.
-- **Worktree**: the worker starts in the project root and makes its own worktree under the project's rules. Pass `--cwd` only to start it elsewhere.
+- **Worktree**: the worker starts in the project root and makes its own worktree under the project's rules. Pass `--cwd` only to start it elsewhere; a linked worktree given as `--cwd` is the session's worktree from the start. A worker reports its worktree by any path inside it; the project checkout the orchestrator started in, and any main working tree, are refused.
 
 If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why some prompts are still held:
 

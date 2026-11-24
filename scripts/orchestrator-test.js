@@ -1812,12 +1812,21 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
 
     // Removed after its PR opened: a fresh conversation (transcript gone) is told to make it again.
     execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: main, stdio: 'ignore' });
-    fs.mkdirSync(worktree); // a directory left behind is not a worktree
     const transcript = path.join(t.dir, 'gone.jsonl');
     t.patchRow(1, { transcript_path: transcript });
-    t.patchHerdr(s => { for (const p of Object.values(s.panes)) if (p.pane_id !== 'w1:p0') delete s.panes[p.pane_id]; });
-    json(t.run(['resume', 'S1', '--json', '--request', 'review feedback', '--reason', 'its tab was closed']));
-    assert.match(t.herdrState().prompts.at(-1).text, new RegExp(`Its worktree ${esc(worktree)} is gone: create it again for the same branch, and report it with --worktree`));
+    const restart = () => {
+      t.patchHerdr(s => { for (const p of Object.values(s.panes)) if (p.pane_id !== 'w1:p0') delete s.panes[p.pane_id]; });
+      json(t.run(['resume', 'S1', '--json', '--request', 'review feedback', '--reason', 'its tab was closed']));
+      return t.herdrState().prompts.at(-1).text;
+    };
+    assert.match(restart(), new RegExp(`Its worktree ${esc(worktree)} is gone: create it again for the same branch, and report it with --worktree`));
+    // A directory left behind is not a worktree, and may hold work.
+    fs.mkdirSync(worktree);
+    assert.match(restart(), new RegExp(`Its worktree ${esc(worktree)} is no longer a git worktree: check what is in it[\\s\\S]*do not delete it unasked`));
+    // Nor is a main checkout made at that path.
+    execFileSync('git', ['init', '-q'], { cwd: worktree, stdio: 'ignore' });
+    assert.match(restart(), /is no longer a git worktree/);
+    fs.rmSync(path.join(worktree, '.git'), { recursive: true });
 
     // A session made from it sees the worktree as the earlier session's.
     json(t.run(['new', '--json', '--from', 'S1', '--title', 'Login follow-up', '--request', 'the footer', '--reason', 'r']));
@@ -1858,32 +1867,79 @@ test('a worker launched in its own linked worktree can report it, from there or 
   } finally { t.cleanup(); }
 });
 
-test('in a bare-repository layout, the checkout that holds the record is refused and a worker worktree is accepted', () => {
-  const t = setup();
+test('in a bare-repository layout, the checkout the orchestrator started in is refused wherever the record lives', () => {
   const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+  for (const where of ['in the checkout', 'outside it', 'under the worker worktree']) {
+    const t = setup();
+    try {
+      const root = fs.realpathSync(t.dir);
+      const seed = path.join(root, 'seed');
+      fs.mkdirSync(seed);
+      g(seed, 'init', '-q', '-b', 'main');
+      g(seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+      g(root, 'clone', '-q', '--bare', seed, 'B.git');
+      const bare = path.join(root, 'B.git');
+      const checkout = path.join(root, 'B-main');
+      const worker = path.join(root, 'FAC-2-y');
+      g(bare, 'worktree', 'add', '-q', checkout, 'main');
+      g(bare, 'worktree', 'add', '-q', '-b', 'FAC-2-y', worker);
+      const db = { 'in the checkout': path.join(checkout, 'orchestrator.db'), 'outside it': path.join(root, 'records', 'project.db'),
+        'under the worker worktree': path.join(worker, 'state', 'project.db') }[where];
+      const env = { ORCHESTRATOR_DB: db };
+      ok(t.run(['start'], env, undefined, { cwd: checkout }));
+      json(t.run(['new', '--json', '--title', 'Y', '--request', 'y', '--reason', 'r'], env, undefined, { cwd: checkout }));
+      const report = value => t.run(['report', '--worktree', value], { ...env, ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: worker });
+      const refused = report(checkout);
+      assert.strictEqual(refused.status, 2, where);
+      assert.match(refused.stderr, /is the project checkout/, where);
+      ok(report('.'));
+      const d = store.open(db);
+      assert.strictEqual(store.getSession(d, 1).worktree, worker, where);
+      d.close();
+    } finally { t.cleanup(); }
+  }
+});
+
+test('a report from a submodule inside the worker worktree records the worktree; the checkout\'s own submodule is refused', () => {
+  const t = setup();
+  const g = (cwd, ...args) => execFileSync('git', ['-c', 'protocol.file.allow=always', '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, stdio: 'ignore' });
   try {
     const root = fs.realpathSync(t.dir);
-    const seed = path.join(root, 'seed');
-    fs.mkdirSync(seed);
-    g(seed, 'init', '-q', '-b', 'main');
-    g(seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
-    g(root, 'clone', '-q', '--bare', seed, 'B.git');
-    const bare = path.join(root, 'B.git');
-    const checkout = path.join(root, 'B-main');
-    const worker = path.join(root, 'FAC-2-y');
-    g(bare, 'worktree', 'add', '-q', checkout, 'main');
-    g(bare, 'worktree', 'add', '-q', '-b', 'FAC-2-y', worker);
-    const env = { ORCHESTRATOR_DB: path.join(checkout, '.agent-brain', 'orchestrator.db') };
-    ok(t.run(['start'], env));
-    json(t.run(['new', '--json', '--cwd', checkout, '--title', 'Y', '--request', 'y', '--reason', 'r'], env));
-    const report = (where, value) => t.run(['report', '--worktree', value], { ...env, ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: where });
-    const refused = report(worker, checkout);
+    const lib = path.join(root, 'libsrc');
+    fs.mkdirSync(lib);
+    g(lib, 'init', '-q');
+    g(lib, 'commit', '-q', '--allow-empty', '-m', 'lib');
+    const main = path.join(root, 'repo');
+    fs.mkdirSync(main);
+    g(main, 'init', '-q');
+    g(main, 'submodule', 'add', '-q', lib, 'lib');
+    g(main, 'commit', '-q', '-m', 'with lib');
+    const linked = path.join(root, 'FAC-1-x');
+    g(main, 'worktree', 'add', '-q', '-b', 'FAC-1-x', linked);
+    g(linked, 'submodule', 'update', '-q', '--init');
+    ok(t.run(['start'], {}, undefined, { cwd: main }));
+    json(t.run(['new', '--json', '--title', 'X', '--request', 'x', '--reason', 'r'], {}, undefined, { cwd: main }));
+    const report = (where, value) => t.run(['report', '--worktree', value], { ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: where });
+    ok(report(path.join(linked, 'lib'), '.'));
+    assert.strictEqual(t.row(1).worktree, linked);
+    const refused = report(path.join(main, 'lib'), '.');
     assert.strictEqual(refused.status, 2);
-    assert.match(refused.stderr, /is the project checkout/);
-    ok(report(worker, '.'));
-    const d = store.open(env.ORCHESTRATOR_DB);
-    assert.strictEqual(store.getSession(d, 1).worktree, worker);
-    d.close();
+    assert.match(refused.stderr, /is the project checkout, not a worktree: report your own worktree, and create one beside the checkout only if you have none/);
+  } finally { t.cleanup(); }
+});
+
+test('a session started in a linked worktree with --cwd has it as its worktree from the start', () => {
+  const t = setup();
+  try {
+    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
+    ok(t.run(['start'], {}, undefined, { cwd: main }));
+    const made = json(t.run(['new', '--json', '--cwd', linked, '--title', 'Fix login', '--request', 'fix it', '--reason', 'r', '--persona', 'web-engineer'], {}, undefined, { cwd: main }));
+    assert.strictEqual(t.row(1).worktree, linked);
+    assert.strictEqual(made.label, 'FAC-41-login-fix (web-engineer)');
+    assert.ok(t.herdrState().prompts.at(-1).text.includes(`Its worktree is ${linked}: continue there`));
+    // The project checkout given as --cwd is not a worktree.
+    json(t.run(['new', '--json', '--cwd', main, '--title', 'Other', '--request', 'y', '--reason', 'r'], {}, undefined, { cwd: main }));
+    assert.strictEqual(t.row(2).worktree, null);
   } finally { t.cleanup(); }
 });
 

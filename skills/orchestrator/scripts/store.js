@@ -109,6 +109,9 @@ UPDATE sessions SET parent_generation = 0
   WHERE parent_id IN (SELECT id FROM sessions WHERE status = 'superseded');
 `, `
 ALTER TABLE sessions ADD COLUMN worktree TEXT;
+-- The project's own checkout, recorded by the orchestrator where it starts:
+-- where the record is stored says nothing about it.
+CREATE TABLE project (id INTEGER PRIMARY KEY CHECK (id = 1), root TEXT NOT NULL);
 `];
 
 const UPDATABLE = new Set([
@@ -326,6 +329,15 @@ function claimOwner(db, me, holderAlive) {
   }, 'claim');
 }
 
+function setProjectRoot(db, root) {
+  db.prepare('INSERT INTO project (id, root) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET root = excluded.root').run(String(root));
+}
+
+function getProjectRoot(db) {
+  const row = db.prepare('SELECT root FROM project WHERE id = 1').get();
+  return row ? row.root : null;
+}
+
 function releaseOwner(db, paneId) {
   return db.prepare('DELETE FROM owner WHERE id = 1 AND pane_id = ?').run(paneId).changes > 0;
 }
@@ -387,5 +399,5 @@ function recordHookEvent(db, sessionId, event) {
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
   addEvent, addPrompt, addDecision, setOutcome, recentDecisions, otherSuccessor, recentPrompts, promptCount, recentEvents, recordHookEvent,
-  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, MIGRATIONS, setProbe,
+  pendingOf, setPending, getOwner, claimOwner, releaseOwner, setProjectRoot, getProjectRoot, SCHEMA_VERSION, MIGRATIONS, setProbe,
 };
