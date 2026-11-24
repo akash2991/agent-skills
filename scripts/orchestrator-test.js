@@ -1809,31 +1809,14 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     json(t.run(['relaunch', 'S1', '--json', '--request', 'and the logo', '--reason', 'stale context']));
     const relaunchBrief = t.herdrState().prompts.at(-1).text;
     const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    assert.match(relaunchBrief, new RegExp(`Its worktree is ${esc(worktree)}: continue there, and do not create another`));
+    assert.ok(relaunchBrief.includes(`This session last reported its worktree at ${worktree}. Check that it still exists and is this session's before working there; if it is gone, create it again for the same branch.`));
     assert.strictEqual(relaunchBrief.split(worktree).length - 1, 1, 'stated once');
-
-    // Removed after its PR opened: a fresh conversation (transcript gone) is told to make it again.
-    execFileSync('git', ['worktree', 'remove', '--force', worktree], { cwd: main, stdio: 'ignore' });
-    const transcript = path.join(t.dir, 'gone.jsonl');
-    t.patchRow(1, { transcript_path: transcript });
-    const restart = () => {
-      t.patchHerdr(s => { for (const p of Object.values(s.panes)) if (p.pane_id !== 'w1:p0') delete s.panes[p.pane_id]; });
-      json(t.run(['resume', 'S1', '--json', '--request', 'review feedback', '--reason', 'its tab was closed']));
-      return t.herdrState().prompts.at(-1).text;
-    };
-    assert.match(restart(), new RegExp(`Its worktree ${esc(worktree)} is gone: create it again for the same branch, and report it with --worktree`));
-    // A directory left behind is not a worktree, and may hold work.
-    fs.mkdirSync(worktree);
-    assert.match(restart(), new RegExp(`Its worktree ${esc(worktree)} is no longer a git worktree: check what is in it[\\s\\S]*do not delete it unasked`));
-    // Nor is a main checkout made at that path.
-    execFileSync('git', ['init', '-q'], { cwd: worktree, stdio: 'ignore' });
-    assert.match(restart(), /is no longer a git worktree/);
-    fs.rmSync(path.join(worktree, '.git'), { recursive: true });
+    assert.doesNotMatch(relaunchBrief, /do not create another/);
 
     // A session made from it sees the worktree as the earlier session's.
     json(t.run(['new', '--json', '--from', 'S1', '--title', 'Login follow-up', '--request', 'the footer', '--reason', 'r']));
     assert.match(t.herdrState().prompts.at(-1).text, new RegExp(`- worktree: ${esc(worktree)} \\(the earlier session's; create your own unless the user said to continue it\\)`));
-    assert.doesNotMatch(t.herdrState().prompts.at(-1).text, /Its worktree is/);
+    assert.doesNotMatch(t.herdrState().prompts.at(-1).text, /This session last reported its worktree/);
 
     // A report that names no usable worktree, or the project checkout, is refused and writes nothing.
     fs.mkdirSync(path.join(main, 'sub'), { recursive: true });
@@ -1935,21 +1918,6 @@ test('a report from a submodule inside the worker worktree records the worktree;
   } finally { t.cleanup(); }
 });
 
-test('a session started in a linked worktree with --cwd has it as its worktree from the start', () => {
-  const t = setup();
-  try {
-    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
-    ok(t.run(['start'], {}, undefined, { cwd: main }));
-    const made = json(t.run(['new', '--json', '--cwd', linked, '--title', 'Fix login', '--request', 'fix it', '--reason', 'r', '--persona', 'web-engineer'], {}, undefined, { cwd: main }));
-    assert.strictEqual(t.row(1).worktree, linked);
-    assert.strictEqual(made.label, 'FAC-41-login-fix (web-engineer)');
-    assert.ok(t.herdrState().prompts.at(-1).text.includes(`Its worktree is ${linked}: continue there`));
-    // The project checkout given as --cwd is not a worktree.
-    json(t.run(['new', '--json', '--cwd', main, '--title', 'Other', '--request', 'y', '--reason', 'r'], {}, undefined, { cwd: main }));
-    assert.strictEqual(t.row(2).worktree, null);
-  } finally { t.cleanup(); }
-});
-
 test('an orchestrator started in a linked checkout protects that checkout, not the main tree only', () => {
   const t = setup();
   try {
@@ -1967,39 +1935,12 @@ test('an orchestrator started in a linked checkout protects that checkout, not t
   } finally { t.cleanup(); }
 });
 
-test('a session started in a worktree that was later removed relaunches from the project checkout and makes it again', () => {
-  const t = setup();
-  try {
-    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
-    ok(t.run(['start'], {}, undefined, { cwd: main }));
-    const first = json(t.run(['new', '--json', '--cwd', linked, '--title', 'Fix login', '--request', 'fix it', '--reason', 'r'], {}, undefined, { cwd: main }));
-    execFileSync('git', ['worktree', 'remove', '--force', linked], { cwd: main, stdio: 'ignore' });
-    t.patchHerdr(s => { delete s.panes[first.pane_id]; });
-    const out = json(t.run(['relaunch', 'S1', '--json', '--request', 'review feedback', '--reason', 'stale'], {}, undefined, { cwd: main }));
-    assert.strictEqual(t.herdrState().panes[out.pane_id].cwd, main);
-    assert.ok(t.events(1).includes('cwd-missing'));
-    assert.match(t.herdrState().prompts.at(-1).text, /is gone: create it again for the same branch/);
-    assert.strictEqual(t.herdrState().prompts.filter(p => /review feedback/.test(p.text)).length, 1);
-  } finally { t.cleanup(); }
-});
-
-test('a worktree is held by one open session; start says which checkout it protects', () => {
+test('start says which checkout it protects', () => {
   const t = setup();
   try {
     assert.match(ok(t.run(['start'])).stdout, /protected_checkout: none: .* is in no git working tree/);
-    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
+    const { main } = gitWorktree(t, 'FAC-41-login-fix');
     assert.match(ok(t.run(['start'], {}, undefined, { cwd: main })).stdout, new RegExp(`protected_checkout: ${main.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-    json(t.run(['new', '--json', '--cwd', linked, '--title', 'A', '--request', 'a', '--reason', 'r'], {}, undefined, { cwd: main }));
-    assert.strictEqual(t.row(1).worktree, linked);
-    const second = t.run(['new', '--json', '--cwd', linked, '--title', 'B', '--request', 'b', '--reason', 'r'], {}, undefined, { cwd: main });
-    assert.match(second.stderr, /is S1's worktree and S1 is open; S2 is not given it/);
-    assert.strictEqual(t.row(2).worktree, null);
-    const refused = t.run(['report', '--worktree', linked], { ORCHESTRATOR_SESSION: '2' }, undefined, { cwd: linked });
-    assert.strictEqual(refused.status, 2);
-    assert.match(refused.stderr, /is already S1's worktree, and S1 is open/);
-    ok(t.run(['resolve', 'S1']));
-    ok(t.run(['report', '--worktree', linked], { ORCHESTRATOR_SESSION: '2' }, undefined, { cwd: linked }));
-    assert.strictEqual(t.row(2).worktree, linked);
   } finally { t.cleanup(); }
 });
 
@@ -2033,7 +1974,7 @@ test('a fresh start of a session that never had a worker states its worktree', (
     assert.strictEqual(t.row(1).launches, 0);
     assert.strictEqual(json(t.run(['resume', 'S1', '--json', '--request', 'start over', '--reason', 'r'])).action, 'started');
     const text = t.herdrState().prompts.at(-1).text;
-    assert.ok(text.includes(`Its worktree is ${worktree}: continue there, and do not create another.`));
+    assert.ok(text.includes(`This session last reported its worktree at ${worktree}. Check that it still exists and is this session's before working there`));
   } finally { t.cleanup(); }
 });
 

@@ -404,16 +404,11 @@ function brief(row, request, { context } = {}) {
       '`--worktree <path>` once you have created your worktree (or when it changes), and `--resolved` when ' +
       'its ticket is Done or its PR is merged. Never close this tab yourself.',
   ];
-  // A session that already has a worktree continues there; one that was
-  // removed (after its PR opened, say) is made again for the same branch.
+  // Only a hint: the record cannot know whether that worktree still exists or
+  // whether another session uses it now.
   if (row.worktree) {
-    const tree = workingTree(row.worktree);
-    lines.push('', tree && !tree.main && tree.top === realPath(row.worktree)
-      ? `Its worktree is ${row.worktree}: continue there, and do not create another.`
-      : fs.existsSync(row.worktree)
-        ? `Its worktree ${row.worktree} is no longer a git worktree: check what is in it before making the worktree again ` +
-          'for the same branch, and do not delete it unasked; report the worktree you use with --worktree.'
-        : `Its worktree ${row.worktree} is gone: create it again for the same branch, and report it with --worktree.`);
+    lines.push('', `This session last reported its worktree at ${row.worktree}. Check that it still exists and is this ` +
+      "session's before working there; if it is gone, create it again for the same branch.");
   }
   if (context) lines.push('', context);
   const text = lines.join('\n');
@@ -502,16 +497,6 @@ const IDENTITY = ['native_session_id', 'transcript_path', 'launches', 'identity_
 // it is committed with the tab. When the agent is known not to have started
 // (no tab, or its tab confirmed closed), the session is restored exactly as it
 // was; when that is uncertain, the tab and the new state stay recorded.
-// Where a worker's tab opens: its recorded directory, or, when that is gone
-// (a worktree removed after its PR opened), the project checkout, from where
-// the brief has it make the worktree again.
-function launchDir(db, row) {
-  if (fs.existsSync(row.cwd)) return row.cwd;
-  const fallback = store.getProjectRoot(db) || projectRoot();
-  logEvent(db, row.id, 'cwd-missing', `${row.cwd}; opened in ${fallback}`);
-  return fallback;
-}
-
 function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
   const before = store.getSession(db, row.id);
   const restore = Object.fromEntries(IDENTITY.map(k => [k, before[k]]));
@@ -519,7 +504,7 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
   const token = crypto.randomUUID();
   let tab;
   try {
-    tab = herdr(['tab', 'create', '--workspace', process.env.HERDR_WORKSPACE_ID, '--cwd', launchDir(db, row),
+    tab = herdr(['tab', 'create', '--workspace', process.env.HERDR_WORKSPACE_ID, '--cwd', row.cwd,
       '--label', tabLabel(row), '--no-focus',
       '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`, '--env', `ORCHESTRATOR_LAUNCH=${token}`,
       '--env', `ORCHESTRATOR_CLI=${CLI}`, '--env', `ORCHESTRATOR_NODE=${process.execPath}`]);
@@ -864,15 +849,6 @@ const commands = {
         cwd: path.resolve(opts.cwd || projectRoot()),
         parent_id: parent ? parent.id : null,
       });
-      // Started in a linked worktree (--cwd) other than the project's checkout:
-      // that is its worktree from the start (DS2).
-      if (opts.cwd) {
-        const tree = workingTree(path.resolve(opts.cwd));
-        const root = store.getProjectRoot(db);
-        const holder = tree && store.listSessions(db).find(r => r.id !== id && r.status === 'open' && r.worktree === tree.top);
-        if (holder) process.stderr.write(`orchestrator: warning: ${tree.top} is S${holder.id}'s worktree and S${holder.id} is open; S${id} is not given it\n`);
-        else if (tree && !tree.main && !(root && tree.top === realPath(root))) store.updateSession(db, id, { worktree: tree.top });
-      }
       const row = store.getSession(db, id);
       const context = parent ? priorContext(db, parent, 'Related earlier session', { related: true }) : null;
       const prompts = brief(row, request, { context });
@@ -1205,8 +1181,6 @@ const commands = {
         if (tree.main || (root && tree.top === realPath(root))) {
           throw usageError(`${shown} is the project checkout, not a worktree: report your own worktree, and create one beside the checkout only if you have none`);
         }
-        const holder = store.listSessions(db).find(r => r.id !== Number(id) && r.status === 'open' && r.worktree === tree.top);
-        if (holder) throw usageError(`${tree.top} is already S${holder.id}'s worktree, and S${holder.id} is open: report your own worktree`);
         fields.worktree = tree.top;
       }
       if (opts.resolved) Object.assign(fields, { status: 'resolved', resolved_at: store.now() });
