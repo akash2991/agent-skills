@@ -29,6 +29,7 @@ const fail = (code, message) => { save(); process.stdout.write(JSON.stringify({ 
 const [group, verb] = args;
 const agents = () => Object.values(s.panes).filter(p => p.agent);
 if (group === 'pane' && verb === 'get') {
+  if (s.failPaneGet && args[2] !== 'w1:p0') { process.stdout.write(JSON.stringify({ id: 'fake', error: { code: 'failed', message: 'socket error' } })); process.exit(1); }
   const pane = s.panes[args[2]];
   pane ? okRead({ pane }) : (process.stdout.write(JSON.stringify({ id: 'fake', error: { code: 'pane_not_found', message: 'pane ' + args[2] + ' not found' } })), process.exit(1));
 } else if (group === 'agent' && verb === 'list') {
@@ -406,6 +407,105 @@ test('new --from supersedes its parent only once the new session has a worker', 
     t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
     assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 4', '--request', 'the logo', '--reason', 'r']).stderr, /uncertain/);
     assert.strictEqual(t.row(1).status, 'superseded');
+  } finally { t.cleanup(); }
+});
+
+test('a parent the user reopened stays open when its child is resumed or relaunched later', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const child = json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'S1 is stale']));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    ok(t.run(['reopen', 'S1', '--reason', 'the user wants S1 back']));
+    t.patchHerdr(s => { delete s.panes[child.pane_id]; });
+    const resumed = json(t.run(['resume', 'S2', '--json', '--request', 'and the header', '--reason', 'its tab was closed']));
+    t.patchHerdr(s => { delete s.panes[resumed.pane_id]; });
+    ok(t.run(['relaunch', 'S2', '--request', 'and the logo', '--reason', 'stale context']));
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.events(1).filter(k => k === 'superseded').length, 1);
+    ok(t.run(['send', 'S1', '--request', 'one more thing', '--reason', 'r']));
+  } finally { t.cleanup(); }
+});
+
+test('an outcome that cannot be written never changes the route\'s result or its error', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const d = t.open();
+    d.exec("CREATE TRIGGER no_outcome BEFORE UPDATE OF outcome ON decisions BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.close();
+    const count = re => t.herdrState().prompts.filter(p => re.test(p.text)).length;
+
+    const sent = ok(t.run(['send', 'S1', '--json', '--request', 'also the footer', '--reason', 'r']));
+    assert.strictEqual(JSON.parse(sent.stdout).action, 'sent');
+    assert.match(sent.stderr, /warning: the outcome of decision \d+ was not recorded \(injected\)/);
+    assert.strictEqual(count(/also the footer/), 1);
+
+    const made = JSON.parse(ok(t.run(['new', '--json', '--title', 'Docs', '--request', 'write the docs', '--reason', 'r'])).stdout);
+    assert.strictEqual(made.session, 'S2');
+    assert.ok(made.pane_id);
+    assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent && p.pane_id !== 'w1:p0').length, 2, 'one worker each');
+
+    t.patchHerdr(s => { s.promptPlan = ['reject']; });
+    const held = t.run(['send', 'S1', '--request', 'then the header', '--reason', 'r']);
+    assert.strictEqual(held.status, 1);
+    assert.match(held.stderr, /the request is held: run deliver S1/);
+    assert.strictEqual(store.pendingOf(t.row(1)).length, 1);
+
+    t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
+    const uncertain = t.run(['new', '--title', 'Logo', '--request', 'the logo', '--reason', 'r']);
+    assert.match(uncertain.stderr, /whether its agent started is uncertain[\s\S]*Its tab is kept/);
+    assert.ok(t.row(3).pane_id, 'the uncertain tab stays recorded');
+  } finally { t.cleanup(); }
+});
+
+test('a failure after the worker started is never a refusal: it keeps the worker, held work, and supersession', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const outcome = id => { const d = t.open(); try { return store.recentDecisions(d, id, 1)[0].outcome; } finally { d.close(); } };
+
+    // Herdr cannot say where Pi keeps its session: the launch goes on without it.
+    t.patchHerdr(s => { s.failPaneGet = true; });
+    const pi = json(t.run(['new', '--json', '--from', 'S1', '--harness', 'pi', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.failPaneGet = false; });
+    assert.strictEqual(pi.action, 'new');
+    assert.ok(t.events(2).includes('transcript-unknown'));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    assert.strictEqual(outcome(2), 'new');
+
+    // The record fails right after the agent started: the outcome says so, the
+    // brief stays held for deliver, and the parent is superseded once.
+    ok(t.run(['reopen', 'S1']));
+    const d = t.open();
+    d.exec("CREATE TRIGGER no_launched BEFORE INSERT ON events WHEN NEW.kind = 'launched' BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.close();
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
+    assert.strictEqual(r.status, 1);
+    assert.match(r.stderr, /S3's worker started in pane \S+, but recording or delivering to it failed: [\s\S]*deliver S3/);
+    assert.match(outcome(3), /^started-then-failed: /);
+    assert.ok(t.row(3).pane_id, 'the running worker stays recorded');
+    assert.ok(store.pendingOf(t.row(3)).length > 0, 'its brief is still held');
+    assert.strictEqual(t.row(1).status, 'superseded');
+    const workers = Object.values(t.herdrState().panes).filter(p => p.agent).length;
+    ok(t.run(['deliver', 'S3']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /the header/.test(p.text)).length, 1);
+    assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent).length, workers, 'no second worker');
+  } finally { t.cleanup(); }
+});
+
+test('a launch waiting on the user records which wait', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    t.patchHerdr(s => { s.blockStart = true; });
+    assert.strictEqual(json(t.run(['new', '--json', '--title', 'New folder', '--request', 'x', '--reason', 'r'])).waiting, 'user');
+    const d = t.open();
+    assert.strictEqual(store.recentDecisions(d, 1, 1)[0].outcome, 'waiting: user');
+    d.close();
   } finally { t.cleanup(); }
 });
 
@@ -1031,11 +1131,13 @@ test('records opened at the same moment for the first time all succeed', async (
 // ─── Forced interleavings ────────────────────────────────────────────────────
 // Another writer takes the record's write lock, makes its change, and holds it
 // uncommitted. The code under test reads the old state, then reaches the
-// store's `write-lock` probe just before its own write transaction; the probe
-// signals the writer, which commits only then, while the code under test waits
-// on the lock. Nothing hangs: if the probe never fires, the code under test
-// fails with "database is locked" at its 5 s busy timeout, and a watchdog
-// commits after 10 s; a run whose probe never signalled fails.
+// store's `write-lock` probe just before the write transaction the test names
+// (its site); the probe signals the writer, which commits only then, while the
+// code under test waits on the lock. A write at any other site comes first only
+// by waiting on the held lock, so it fails rather than releasing the writer.
+// Nothing hangs: if the named write never comes, the code under test fails with
+// "database is locked" at its 5 s busy timeout and the writer is killed; a 10 s
+// watchdog commits only if the code under test makes no write at all.
 
 const LOCK_HOLDER = `
 const crypto = require('node:crypto');
@@ -1075,17 +1177,19 @@ function holdLock(t, sql) {
   return { locked, done, release: () => fs.writeFileSync(signal, ''), kill: () => child.kill() };
 }
 
-// Run `fn` with the write-lock probe releasing the writer; always stop the
-// writer and wait for it before the caller removes the fixture.
-async function raced(t, sql, fn) {
+// Run `fn` with the write-lock probe releasing the writer at `site`; always
+// stop the writer and wait for it before the caller removes the fixture.
+async function raced(t, sql, site, fn) {
   const writer = holdLock(t, sql);
+  const sites = [];
   try {
     await writer.locked;
-    store.setProbe('write-lock', writer.release);
+    store.setProbe('write-lock', at => { sites.push(at); if (at === site) writer.release(); });
     const result = fn();
     const done = await writer.done;
     assert.strictEqual(done.status, 0, done.stderr);
-    assert.ok(done.signalled, 'the write-lock probe never released the writer');
+    assert.strictEqual(sites[0], site, `the first write was at ${sites[0]}, not ${site}`);
+    assert.ok(done.signalled, `the ${site} write never released the writer`);
     return result;
   } finally {
     store.setProbe('write-lock', null);
@@ -1102,7 +1206,7 @@ for (const [name, previous] of [['no owner', null], ['an owner that is gone', 'w
       if (previous) d.prepare("INSERT INTO owner (id, pane_id, at) VALUES (1, ?, '2026-01-01T00:00:00Z')").run(previous);
       const judged = [];
       const first = await raced(t, "INSERT INTO owner (id, pane_id, at) VALUES (1, 'w1:rival', '2026-11-23T00:00:00Z') " +
-        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at',
+        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at', 'claim',
       () => store.claimOwner(d, { pane_id: 'w1:me' }, held => { judged.push(held.pane_id); return false; }));
       assert.deepStrictEqual(judged, previous ? [previous] : [], 'judged the state from before the rival committed');
       assert.strictEqual(first.claimed, false);
@@ -1120,7 +1224,7 @@ test('a compaction that waits on another writer counts both', async () => {
   const d = t.open();
   try {
     const id = store.createSession(d, { title: 'busy', intent: 'i', harness: 'claude', native_session_id: 'c-1', cwd: t.dir });
-    await raced(t, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`, () => {
+    await raced(t, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`, 'hook', () => {
       assert.strictEqual(store.getSession(d, id).compactions, 0, 'the other compaction is not visible yet');
       store.recordHookEvent(d, id, { kind: 'compact', detail: 'auto' });
     });
@@ -1134,10 +1238,69 @@ test('an opener that read version 0 while another created the schema does not cr
   try {
     fs.mkdirSync(path.dirname(t.db), { recursive: true });
     // The connection is kept as soon as it opens, so a failed check still closes it.
-    await raced(t, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`,
+    await raced(t, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`, 'open',
       () => { d = store.open(t.db); });
     assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
   } finally { if (d) d.close(); t.cleanup(); }
+});
+
+// A version-1 record, as PR #38 wrote it, with one session.
+function writeVersion1(t) {
+  const { DatabaseSync } = require('node:sqlite');
+  fs.mkdirSync(path.dirname(t.db), { recursive: true });
+  const old = new DatabaseSync(t.db);
+  old.exec(store.MIGRATIONS[1]);
+  old.exec('PRAGMA journal_mode = WAL; PRAGMA user_version = 1');
+  old.prepare("INSERT INTO sessions (title, intent, harness, native_session_id, cwd, started_at, last_active_at) VALUES ('t', 'i', 'claude', 'c-1', '/x', 'a', 'a')").run();
+  old.close();
+}
+
+test('an opener that read version 1 while another migrated it does not migrate it again', async () => {
+  const t = setup();
+  let d = null;
+  try {
+    writeVersion1(t);
+    const migrate = `${store.MIGRATIONS.slice(2).join('\n')}; PRAGMA user_version = ${store.SCHEMA_VERSION}`;
+    await raced(t, migrate, 'open', () => { d = store.open(t.db); });
+    assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+    assert.strictEqual(store.getSession(d, 1).title, 't');
+  } finally { if (d) d.close(); t.cleanup(); }
+});
+
+test('an opener that read version 1 while a newer brain migrated past it refuses, and leaves the version alone', async () => {
+  const t = setup();
+  try {
+    writeVersion1(t);
+    const newer = store.SCHEMA_VERSION + 1;
+    let refused = null;
+    await raced(t, `PRAGMA user_version = ${newer}`, 'open', () => {
+      try { store.open(t.db).close(); } catch (err) { refused = err; }
+    });
+    assert.match(String(refused && refused.message), new RegExp(`has schema ${newer}; this orchestrator knows ${store.SCHEMA_VERSION}`));
+    const { DatabaseSync } = require('node:sqlite');
+    const check = new DatabaseSync(t.db);
+    assert.strictEqual(check.prepare('PRAGMA user_version').get().user_version, newer);
+    check.close();
+  } finally { t.cleanup(); }
+});
+
+test('a recorder migrates a version-1 record it opens, and stays silent on a newer one', () => {
+  const t = setup();
+  try {
+    writeVersion1(t);
+    const prompt = JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'c-1', prompt: 'hello from the worker' });
+    const r = ok(t.run(['hook', 'claude'], { ORCHESTRATOR_SESSION: '1' }, prompt));
+    assert.strictEqual(r.stdout + r.stderr, '');
+    const d = t.open();
+    assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+    assert.deepStrictEqual(store.recentPrompts(d, 1, 5).map(p => p.text), ['hello from the worker']);
+    d.exec(`PRAGMA user_version = ${store.SCHEMA_VERSION + 1}`);
+    d.close();
+    const newer = ok(t.run(['hook', 'claude'], { ORCHESTRATOR_SESSION: '1' }, prompt));
+    assert.strictEqual(newer.stdout + newer.stderr, '', 'a recorder never prints');
+    assert.match(fs.readFileSync(`${t.db}.hook.log`, 'utf8'), /claude prompt: .*Update the brain/);
+    assert.match(t.run(['find']).stderr, /Update the brain/);
+  } finally { t.cleanup(); }
 });
 
 // ─── Status, stop, report ────────────────────────────────────────────────────

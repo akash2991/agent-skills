@@ -54,7 +54,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 | An open session with a live tab covers this work | send | `orch send S<id> --request … --reason …` |
 | An open session covers it, its tab is closed, and it is not stale | resume | `orch resume S<id> --request … --reason …` |
 | `resume` failed, or the old conversation is not worth its context | a new conversation for the same session | `orch relaunch S<id> --request … --reason …` |
-| An open session covers it but is stale | new, seeded from it | `orch new --from S<id> …` (the old one becomes superseded once the new one has a worker) |
+| An open session covers it but is stale | new, seeded from it | `orch new --from S<id> …` (the old one becomes superseded when the new one gets its first worker, or may have one) |
 | Only a resolved session covers it | new, seeded from it | `orch new --from S<id> …` (a resolved session is never resumed) |
 | Nothing covers it | new | `orch new …` |
 
@@ -62,7 +62,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 
 When one message holds unrelated asks, split it and route each part separately. Mixing them in one session is the failure this skill exists to prevent. When two open sessions fit equally well, ask the user one question naming both.
 
-Every route records a decision, and the decision records its outcome once the route has run (`new`, `resumed`, `sent`, `held`, `failed: …`, `uncertain: …`); a retry is a new decision. A command refused before it routes anything records none. Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
+Every route records a decision, and the decision records its outcome once the route has run: the action printed (for example `new`, `resumed`, `relaunched`, `sent`, or `waiting: user`), or what went wrong (for example `held: …`, `unknown: …`, `failed: …` when no worker started, `uncertain: …` when one may have, `started-then-failed: …` when one started but recording or delivering failed). A retry is a new decision. A command refused before it routes anything records none. If `new --from` fails before any worker started, both sessions stay open and `find` shows both: retry the new one as its error says (`resume S<new>`), rather than choosing between them again. Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
 
 ### 4. Start a new session
 

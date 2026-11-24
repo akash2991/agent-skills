@@ -114,9 +114,11 @@ const now = () => new Date().toISOString();
 // Test seam: a named point a test can stop at, to force an interleaving with
 // another writer. Nothing is registered outside the tests, so it is a no-op.
 // The one point is `write-lock`, just before a write transaction takes the
-// lock, so every read a writer makes before its lock comes before it.
+// lock, so every read a writer makes before its lock comes before it. It is
+// called with the transaction's site, so a test releases only at the write it
+// means to race.
 const probes = new Map();
-const probe = name => { const fn = probes.get(name); if (fn) fn(); };
+const probe = (name, site) => { const fn = probes.get(name); if (fn) fn(site); };
 const setProbe = (name, fn) => (fn ? probes.set(name, fn) : probes.delete(name));
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
@@ -146,10 +148,13 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
     const version = () => db.prepare('PRAGMA user_version').get().user_version;
     if (version() < SCHEMA_VERSION) {
       transaction(db, () => {
-        // Read again under the lock: another opener may have moved it on.
-        for (let v = version(); v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v + 1]);
+        // Read again under the lock: another opener may have moved it on,
+        // even past this version (a newer brain); then it is refused below.
+        const current = version();
+        if (current >= SCHEMA_VERSION) return;
+        for (let v = current; v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v + 1]);
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-      });
+      }, 'open');
     }
     if (version() > SCHEMA_VERSION) {
       throw new Error(`${dbPath} has schema ${version()}; this orchestrator knows ${SCHEMA_VERSION}. Update the brain.`);
@@ -161,8 +166,8 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
   }
 }
 
-function transaction(db, fn) {
-  probe('write-lock');
+function transaction(db, fn, site = null) {
+  probe('write-lock', site);
   db.exec('BEGIN IMMEDIATE');
   try {
     const result = fn();
@@ -297,7 +302,7 @@ function claimOwner(db, me, holderAlive) {
       workspace_id = excluded.workspace_id, agent_session = excluded.agent_session, at = excluded.at`)
       .run(me.pane_id, me.tab_id ?? null, me.workspace_id ?? null, me.agent_session ?? null, now());
     return { claimed: true, tookOver: !!held && held.pane_id !== me.pane_id, held };
-  });
+  }, 'claim');
 }
 
 function releaseOwner(db, paneId) {
@@ -355,7 +360,7 @@ function recordHookEvent(db, sessionId, event) {
     }
     updateSession(db, row.id, { last_active_at: at });
     return true;
-  });
+  }, 'hook');
 }
 
 module.exports = {
