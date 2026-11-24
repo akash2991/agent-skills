@@ -66,6 +66,8 @@ if (group === 'pane' && verb === 'get') {
   const step = (s.promptPlan || []).shift() || 'ok';
   const wait = args.includes('--wait');
   if (step === 'reject') fail('agent_blocked', 'agent is blocked');
+  // Hangs before the worker accepts the prompt, so it never arrives.
+  if (step.startsWith('lost')) { save(); const end = Date.now() + Number(step.split(':')[1]); while (Date.now() < end) {} process.exit(0); }
   s.prompts.push({ pane: args[2], text: args[3], wait });
   if (step.startsWith('hang')) { save(); const end = Date.now() + Number(step.split(':')[1]); while (Date.now() < end) {} process.exit(0); }
   if (step === 'stall') fail('agent_prompt_stalled', 'no working state observed');
@@ -579,7 +581,7 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
 
     // No live tab: resume --request carries the request.
     t.patchHerdr(s => { delete s.panes[first.pane_id]; });
-    assert.match(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']).stderr, /no live tab; use resume/);
+    assert.match(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']).stderr, /no live tab; use resume S1 --request with this request[\s\S]*nothing was kept/);
     assert.strictEqual(t.row(1).pending, null);
     ok(t.run(['resume', 'S1', '--request', 'also the footer', '--reason', 'its tab was closed']));
     assert.strictEqual(count(/also the footer/), 1);
@@ -593,6 +595,53 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     ok(t.run(['send', 'S1', '--request', 'and the sidebar', '--reason', 'r']));
     assert.strictEqual(count(/then the header/), 1);
     assert.strictEqual(count(/and the sidebar/), 1);
+
+    // Holds a prompt of unknown delivery that never arrived: settle --resend holds it again, so deliver, then send.
+    t.patchHerdr(s => { s.promptPlan = ['lost:2500']; });
+    assert.match(t.run(['send', 'S1', '--request', 'then the banner', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' }).stderr, /may or may not have arrived/);
+    sleep(2000);
+    assert.strictEqual(count(/then the banner/), 0, 'it never reached the worker');
+    assert.match(t.run(['send', 'S1', '--request', 'and the logo', '--reason', 'r']).stderr, /delivery is unknown/);
+    assert.match(t.run(['settle', 'S1', '--resend']).stdout, /held to resend: run deliver S1/);
+    assert.match(t.run(['send', 'S1', '--request', 'and the logo', '--reason', 'r']).stderr, /still holds prompts/);
+    ok(t.run(['deliver', 'S1']));
+    ok(t.run(['send', 'S1', '--request', 'and the logo', '--reason', 'r']));
+    assert.strictEqual(count(/then the banner/), 1);
+    assert.strictEqual(count(/and the logo/), 1);
+    assert.strictEqual(t.row(1).pending, null);
+
+    // One that did arrive: settle --drop, then send.
+    t.patchHerdr(s => { s.promptPlan = ['hang:2500']; });
+    t.run(['send', 'S1', '--request', 'then the menu', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    sleep(2000);
+    assert.strictEqual(count(/then the menu/), 1, 'it reached the worker');
+    assert.match(t.run(['send', 'S1', '--request', 'and the colours', '--reason', 'r']).stderr, /delivery is unknown/);
+    ok(t.run(['settle', 'S1', '--drop']));
+    ok(t.run(['send', 'S1', '--request', 'and the colours', '--reason', 'r']));
+    assert.strictEqual(count(/then the menu/), 1);
+    assert.strictEqual(count(/and the colours/), 1);
+
+    // Its tab is gone: the resume the send refusal names is refused until the
+    // unknown prompt is settled, and keeps nothing; settle, then resume --request
+    // carries the held prompt and the request.
+    t.patchHerdr(s => { s.promptPlan = ['lost:2500']; });
+    t.run(['send', 'S1', '--request', 'then the icons', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    sleep(2000);
+    // The worker's agent exited but its tab is still open: no live worker, a tab the user may check.
+    const worker = t.row(1).pane_id;
+    t.patchHerdr(s => { s.panes[worker].agent = null; });
+    assert.match(t.run(['send', 'S1', '--request', 'and the fonts', '--reason', 'r']).stderr, /no live tab/);
+    const decisions = () => { const d = t.open(); try { return d.prepare('SELECT COUNT(*) AS n FROM decisions').get().n; } finally { d.close(); } };
+    const before = { row: t.row(1), events: t.events(1), decisions: decisions() };
+    assert.match(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'r']).stderr, /delivery is unknown/);
+    assert.deepStrictEqual({ row: t.row(1), events: t.events(1), decisions: decisions() }, before, 'the refused resume changed nothing');
+    assert.ok(t.herdrState().panes[worker], 'nor closed the tab the user is told to check');
+    assert.strictEqual(count(/and the fonts/), 0);
+    assert.match(t.run(['settle', 'S1', '--resend']).stdout, /or resume S1 if its tab is gone \(with --request if a new request is waiting\)/);
+    ok(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'its tab was closed']));
+    assert.strictEqual(count(/then the icons/), 1);
+    assert.strictEqual(count(/and the fonts/), 1);
+    assert.strictEqual(t.row(1).pending, null);
 
     // Not open: new --from carries the request to a new session.
     ok(t.run(['resolve', 'S1']));
