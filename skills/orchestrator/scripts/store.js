@@ -103,6 +103,10 @@ ALTER TABLE decisions ADD COLUMN outcome_at TEXT;
 ALTER TABLE prompts ADD COLUMN seq INTEGER;
 ALTER TABLE sessions ADD COLUMN succession INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN parent_generation INTEGER;
+-- A child's claim still stands where its parent is still superseded; a parent
+-- reopened or resolved before this version keeps no claim from that time.
+UPDATE sessions SET parent_generation = 0
+  WHERE parent_id IN (SELECT id FROM sessions WHERE status = 'superseded');
 `];
 
 const UPDATABLE = new Set([

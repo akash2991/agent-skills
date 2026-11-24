@@ -1690,6 +1690,31 @@ test('an opener that read version 1 while a newer brain migrated past it refuses
   } finally { t.cleanup(); }
 });
 
+test('a migrated record keeps a standing successor, and not one from before a reopen', () => {
+  for (const parentStatus of ['superseded', 'open']) {
+    const t = setup();
+    try {
+      // As PR #38 left it: S1 was superseded by S2, whose worker is live; or S1 was reopened since.
+      const { DatabaseSync } = require('node:sqlite');
+      fs.mkdirSync(path.dirname(t.db), { recursive: true });
+      const old = new DatabaseSync(t.db);
+      old.exec(store.MIGRATIONS[1]);
+      old.exec('PRAGMA journal_mode = WAL; PRAGMA user_version = 1');
+      const insert = old.prepare(`INSERT INTO sessions (title, intent, harness, native_session_id, cwd, started_at, last_active_at, status, parent_id, launches, tab_id, pane_id)
+        VALUES (?, 'i', 'claude', ?, '/x', 'a', 'a', ?, ?, ?, ?, ?)`);
+      insert.run('Site', 'c-1', parentStatus, null, 1, null, null);
+      insert.run('Site 2', 'c-2', 'open', 1, 1, 'w1:t50', 'w1:p50');
+      old.close();
+      ok(t.run(['start']));
+      t.patchHerdr(s => { s.panes['w1:p50'] = { pane_id: 'w1:p50', tab_id: 'w1:t50', agent: 'claude', agent_status: 'idle', agent_session: { kind: 'id', value: 'c-2' }, env: [] }; });
+      t.patchHerdr(s => { s.failStart = 'failed'; });
+      assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']).stderr, /no agent started/);
+      assert.strictEqual(t.row(1).status, parentStatus, parentStatus === 'superseded'
+        ? 'S2 still supersedes S1 after the upgrade' : 'a parent reopened before the upgrade is left open');
+    } finally { t.cleanup(); }
+  }
+});
+
 test('a recorder migrates a version-1 record it opens, and stays silent on a newer one', () => {
   const t = setup();
   try {
