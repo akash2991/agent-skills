@@ -493,9 +493,11 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       });
       store.addEvent(db, row.id, 'tab-created', `${pane} launch ${generation}`);
       if (commitEvent) store.addEvent(db, row.id, commitEvent.kind, commitEvent.detail);
+      // A parent another new session already superseded records this one
+      // too, so the rollback of either leaves the parent with the other.
       const parent = before.launches === 0 && before.parent_id ? store.getSession(db, before.parent_id) : null;
-      if (parent && parent.status === 'open') {
-        store.updateSession(db, parent.id, { status: 'superseded' });
+      if (parent && (parent.status === 'open' || parent.status === 'superseded')) {
+        if (parent.status === 'open') store.updateSession(db, parent.id, { status: 'superseded' });
         store.addEvent(db, parent.id, 'superseded', `by S${row.id}`);
         superseded = parent.id;
       }
@@ -526,10 +528,12 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       try {
         store.transaction(db, () => {
           store.updateSession(db, row.id, { ...restore, tab_id: null, pane_id: null, agent_name: null });
-          // Undo only a supersession that still stands: a parent its own
-          // worker resolved meanwhile keeps that.
+          // Undo only a supersession that still stands: not for a parent its
+          // own worker resolved meanwhile,
+          // nor one whose latest supersession is by another session.
           const parent = superseded ? store.getSession(db, superseded) : null;
-          if (parent && parent.status === 'superseded') {
+          const latest = parent ? store.lastEvent(db, parent.id, 'superseded') : null;
+          if (parent && parent.status === 'superseded' && latest && latest.detail === `by S${row.id}`) {
             store.updateSession(db, parent.id, { status: 'open' });
             reopened = true;
           }
@@ -540,8 +544,8 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
       }
     }
     if (reopened) logEvent(db, superseded, 'supersession-undone', `S${row.id} got no worker`);
-    logEvent(db, row.id, restored ? 'start-failed' : 'start-uncertain',
-      `${err.message}${closed ? '' : `; tab ${tabId} could not be closed`}`);
+    logEvent(db, row.id, closed ? 'start-failed' : 'start-uncertain',
+      `${err.message}${closed ? (restored ? '' : '; the record was not restored') : `; tab ${tabId} could not be closed`}`);
     const failure = new CliError(`${err.message}${closed ? '' : `; its tab ${tabId} could not be closed and stays recorded`}`);
     // A record that could not be restored is treated as uncertain: it stays
     // recorded and blocks another launch until it is checked. It also still
@@ -550,11 +554,13 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
     if (failure.tabClosed) {
       // No conversation was written for a first launch or a relaunch's new id,
       // so only relaunch can start it; otherwise resume reopens the old one.
-      const neverWritten = before.launches === 0 || !!commitEvent;
+      // Only a resume reopens a conversation that was written before; every
+      // other launch recorded one that never was, which only relaunch replaces.
       failure.recovery = 'No agent is running: its tab was closed, but restoring the record failed, so it still holds that launch ' +
-        'and its prompts, including this request. Do not send the request again; ' + (neverWritten
-        ? `relaunch S${row.id} with a --request asking it to continue: its held prompts go into the brief`
-        : `resume S${row.id} without --request: it delivers the held prompts`);
+        `and its prompts, including this request${superseded ? `, and S${superseded} stays superseded by it` : ''}. Do not send the request again; ` +
+        (resume
+          ? `resume S${row.id} without --request: it delivers the held prompts`
+          : `relaunch S${row.id} with a --request asking it to continue: its held prompts go into the brief`);
     }
     throw failure;
   }

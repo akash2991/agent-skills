@@ -50,13 +50,28 @@ if (group === 'pane' && verb === 'get') {
   s.panes[pane.pane_id] = pane;
   ok({ tab: { tab_id: pane.tab_id }, root_pane: { pane_id: pane.pane_id, tab_id: pane.tab_id } });
 } else if (group === 'agent' && verb === 'start') {
-  const pane = s.panes[args[args.indexOf('--pane') + 1]];
+  let pane = s.panes[args[args.indexOf('--pane') + 1]];
   const rest = args.slice(args.indexOf('--') + 1);
   pane.args = rest;
-  if (s.onStart) { save(); execSync(s.onStart, { stdio: 'ignore' }); }
+  if (s.onStart) {
+    // Another command runs while this agent starts; it may change the state.
+    const hook = s.onStart;
+    const failing = s.failStart;
+    s.onStart = null;
+    if (s.failStartOnce) s.failStart = null;
+    save();
+    execSync(hook, { stdio: 'ignore' });
+    Object.assign(s, JSON.parse(fs.readFileSync(file, 'utf8')));
+    if (s.failStartOnce) { s.failStart = failing; s.failStartOnce = false; }
+    pane = s.panes[args[args.indexOf('--pane') + 1]];
+  }
   if (s.failStart) fail(s.failStart, 'agent start failed (' + s.failStart + ')');
   const at = Math.max(rest.indexOf('--session-id'), rest.indexOf('--resume'));
   const native = at >= 0 ? rest[at + 1] : 'untracked';
+  // As Claude does: --resume opens only a conversation that was written.
+  s.written = s.written || [];
+  if (rest.includes('--resume') && !s.written.includes(native) && !s.anyResume) fail('failed', 'No conversation found with session ID: ' + native);
+  if (native !== 'untracked') s.written.push(native);
   pane.agent = args[args.indexOf('--kind') + 1];
   pane.agent_status = 'idle';
   // As real Herdr does: Claude's session is its id, Pi's is its session file path.
@@ -673,6 +688,26 @@ test('a rolled-back first launch leaves a parent its own worker resolved meanwhi
   } finally { t.cleanup(); }
 });
 
+test('a rolled-back first launch leaves its parent with a sibling that superseded it meanwhile', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    // While S2's agent starts, S3 is made from S1 and starts; then S2's start fails.
+    t.patchHerdr(s => {
+      s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
+      s.failStart = 'failed';
+      s.failStartOnce = true;
+    });
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    assert.match(r.stderr, /no agent started/);
+    assert.ok(t.row(3).pane_id, 'S3 has a worker');
+    assert.strictEqual(t.row(2).pane_id, null);
+    assert.strictEqual(t.row(1).status, 'superseded', 'S3 still supersedes S1');
+    assert.ok(!t.events(1).includes('supersession-undone'));
+  } finally { t.cleanup(); }
+});
+
 test('a delivery whose activity time cannot be written still reports delivered, once', () => {
   const t = setup();
   try {
@@ -713,6 +748,7 @@ for (const harness of ['claude', 'pi']) {
       const r = t.run(['new', '--harness', harness, '--title', 'Site', '--request', 'fix the login', '--reason', 'r']);
       assert.match(r.stderr, /no agent started[\s\S]*restoring the record failed \(injected\)[\s\S]*No agent is running[\s\S]*including this request\. Do not send the request again; relaunch S1 with a --request asking it to continue/);
       assert.doesNotMatch(r.stderr, /Its tab is kept|then resume/);
+      assert.ok(t.events(1).includes('start-failed') && !t.events(1).includes('start-uncertain'), 'the history agrees with the outcome');
       const d = t.open();
       assert.match(store.recentDecisions(d, 1, 1)[0].outcome, /^failed: /);
       d.close();
@@ -1061,7 +1097,8 @@ test('a start failure whose cleanup fails keeps the tab recorded and blocks a du
     assert.match(r.stderr, /uncertain[\s\S]*could not be closed and stays recorded/);
     const kept = t.row(1);
     assert.ok(kept.pane_id && t.herdrState().panes[kept.pane_id], 'the orphan is recorded, not forgotten');
-    t.patchHerdr(s => { s.failStart = null; });
+    // The uncertain start did write its conversation; this test is about the leftover tab.
+    t.patchHerdr(s => { s.failStart = null; s.anyResume = true; });
     assert.match(t.run(['resume', 'S1', '--reason', 'r']).stderr, /still open and could not be closed/);
     assert.strictEqual(Object.keys(t.herdrState().panes).length, 2, 'no second worker');
     t.patchHerdr(s => { s.failClose = false; });

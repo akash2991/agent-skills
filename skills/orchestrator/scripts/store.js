@@ -239,6 +239,10 @@ function setOutcome(db, decisionId, outcome) {
   db.prepare('UPDATE decisions SET outcome = ?, outcome_at = ? WHERE id = ?').run(String(outcome), now(), Number(decisionId));
 }
 
+function lastEvent(db, sessionId, kind) {
+  return db.prepare('SELECT * FROM events WHERE session_id = ? AND kind = ? ORDER BY id DESC LIMIT 1').get(Number(sessionId), kind) || null;
+}
+
 function recentDecisions(db, sessionId, limit = 3) {
   return db.prepare('SELECT * FROM decisions WHERE session_id = ? ORDER BY id DESC LIMIT ?')
     .all(Number(sessionId), limit).reverse();
@@ -365,6 +369,6 @@ function recordHookEvent(db, sessionId, event) {
 
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
-  addEvent, addPrompt, addDecision, setOutcome, recentDecisions, recentPrompts, promptCount, recentEvents, recordHookEvent,
+  addEvent, addPrompt, addDecision, setOutcome, recentDecisions, lastEvent, recentPrompts, promptCount, recentEvents, recordHookEvent,
   pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, MIGRATIONS, setProbe,
 };
