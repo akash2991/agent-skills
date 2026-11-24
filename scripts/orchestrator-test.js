@@ -477,11 +477,13 @@ test('a failure after the worker started is never a refusal: it keeps the worker
     assert.strictEqual(t.row(1).status, 'superseded');
     assert.strictEqual(outcome(2), 'new');
 
-    // The record fails right after the agent started: the outcome says so, the
-    // brief stays held for deliver, and the parent is superseded once.
+    // The record fails right after the agent started, before the first prompt
+    // goes: the outcome says so, the brief stays held for deliver, and the
+    // parent is superseded once, with the placement.
     ok(t.run(['reopen', 'S1']));
     const d = t.open();
-    d.exec("CREATE TRIGGER no_launched BEFORE INSERT ON events WHEN NEW.kind = 'launched' BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.exec(`CREATE TRIGGER no_sending BEFORE UPDATE OF pending ON sessions WHEN NEW.pending LIKE '%"sending"%'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
     d.close();
     const r = t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
     assert.strictEqual(r.status, 1);
@@ -491,9 +493,142 @@ test('a failure after the worker started is never a refusal: it keeps the worker
     assert.ok(store.pendingOf(t.row(3)).length > 0, 'its brief is still held');
     assert.strictEqual(t.row(1).status, 'superseded');
     const workers = Object.values(t.herdrState().panes).filter(p => p.agent).length;
+    const d2 = t.open();
+    d2.exec('DROP TRIGGER no_sending');
+    d2.close();
     ok(t.run(['deliver', 'S3']));
     assert.strictEqual(t.herdrState().prompts.filter(p => /the header/.test(p.text)).length, 1);
     assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent).length, workers, 'no second worker');
+  } finally { t.cleanup(); }
+});
+
+// A trigger that aborts one kind of event insert, to show history never
+// decides a route's result.
+const failEvent = (t, kind) => {
+  const d = t.open();
+  d.exec(`CREATE TRIGGER no_${kind.replace(/-/g, '_')} BEFORE INSERT ON events WHEN NEW.kind = '${kind}' BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+  d.close();
+};
+
+test('a relaunch whose relaunched event cannot be written still reports its result, and delivers once', () => {
+  for (const [plan, expect] of [[[], 'relaunched'], [['reject'], 'waiting'], [['hang:2500'], 'waiting']]) {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+      t.patchHerdr(s => { delete s.panes[first.pane_id]; });
+      failEvent(t, 'relaunched');
+      // The brief goes in one prompt, so the plan applies to it.
+      t.patchHerdr(s => { s.promptPlan = plan.slice(); });
+      const r = ok(t.run(['relaunch', 'S1', '--json', '--request', 'and the logo', '--reason', 'stale'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' }));
+      const out = JSON.parse(r.stdout);
+      assert.strictEqual(out.action, expect, plan.join());
+      assert.ok(out.pane_id);
+      assert.match(r.stderr, /warning: S1's relaunched event was not recorded \(injected\)/);
+      if (plan[0] === 'reject') { assert.strictEqual(out.waiting, 'busy'); assert.match(out.note, /deliver S1/); }
+      if (plan[0] === 'hang:2500') { assert.strictEqual(out.waiting, 'unknown'); assert.match(out.note, /settle S1/); sleep(2000); }
+      if (!plan.length) {
+        assert.strictEqual(t.herdrState().prompts.filter(p => /and the logo/.test(p.text)).length, 1);
+        assert.strictEqual(t.run(['relaunch', 'S1', '--request', 'and the logo', '--reason', 'r']).status, 1, 'a retry is refused: the worker is live');
+      }
+    } finally { t.cleanup(); }
+  }
+});
+
+test('startup bookkeeping that cannot be written keeps the worker phase, its guidance, and supersession', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const outcome = id => { const d = t.open(); try { return store.recentDecisions(d, id, 1)[0].outcome; } finally { d.close(); } };
+
+    // A worker waiting on the user: the brief is held, and the parent superseded.
+    failEvent(t, 'waiting-for-user');
+    t.patchHerdr(s => { s.blockStart = true; });
+    const waiting = json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.blockStart = false; s.panes[waiting.pane_id].agent_status = 'idle'; });
+    assert.strictEqual(waiting.waiting, 'user');
+    assert.strictEqual(outcome(2), 'waiting: user');
+    assert.strictEqual(t.row(1).status, 'superseded');
+    ok(t.run(['deliver', 'S2']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /the footer/.test(p.text)).length, 1);
+
+    // A start that may have left a worker: its uncertainty guidance survives.
+    ok(t.run(['reopen', 'S1']));
+    failEvent(t, 'start-uncertain');
+    t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
+    const uncertain = t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
+    assert.match(uncertain.stderr, /whether its agent started is uncertain[\s\S]*Its tab is kept/);
+    assert.match(outcome(3), /^uncertain: /);
+    assert.ok(t.row(3).pane_id);
+    assert.strictEqual(t.row(1).status, 'superseded');
+
+    // A confirmed failure: the parent's supersession is undone with the launch.
+    ok(t.run(['reopen', 'S1']));
+    failEvent(t, 'start-failed');
+    t.patchHerdr(s => { s.failClose = false; });
+    const failed = t.run(['new', '--from', 'S1', '--title', 'Site 4', '--request', 'the logo', '--reason', 'r']);
+    assert.match(failed.stderr, /no agent started[\s\S]*resume S4, without --request/);
+    assert.match(outcome(4), /^failed: /);
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.row(4).launches, 0);
+    assert.ok(t.events(1).includes('supersession-undone'));
+
+    // An uncertain relaunch whose relaunch-failed event cannot be written.
+    failEvent(t, 'relaunch-failed');
+    t.patchHerdr(s => { s.failClose = true; });
+    const relaunch = t.run(['relaunch', 'S4', '--request', 'the logo', '--reason', 'r']);
+    assert.match(relaunch.stderr, /may have started; check it before anything else/);
+    assert.match(outcome(4), /^uncertain: /);
+  } finally { t.cleanup(); }
+});
+
+test('a supersession that cannot be written leaves no worker, and the retry completes it', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_supersede BEFORE UPDATE OF status ON sessions WHEN NEW.status = 'superseded'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    const workers = () => Object.values(t.herdrState().panes).filter(p => p.pane_id !== 'w1:p0').length;
+    const before = workers();
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'S1 is stale']);
+    assert.match(r.stderr, /no agent started: recording S2's new tab failed: injected\. Retry with resume S2, without --request/);
+    assert.strictEqual(workers(), before, 'its tab was closed and no agent started');
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.row(2).pane_id, null);
+    const d2 = t.open();
+    d2.exec('DROP TRIGGER no_supersede');
+    d2.close();
+    ok(t.run(['resume', 'S2', '--reason', 'retry the failed start']));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    assert.strictEqual(t.herdrState().prompts.filter(p => /the footer/.test(p.text)).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a parent reopened after its child started stays open through the child\'s later uncertain or started-then-failed launches', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const child = json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    ok(t.run(['reopen', 'S1']));
+    t.patchHerdr(s => { delete s.panes[child.pane_id]; s.failStart = 'failed'; s.failClose = true; });
+    assert.match(t.run(['relaunch', 'S2', '--request', 'again', '--reason', 'r']).stderr, /may have started/);
+    assert.strictEqual(t.row(1).status, 'open');
+    const placed = t.row(2).pane_id;
+    t.patchHerdr(s => { delete s.panes[placed]; s.failStart = null; s.failClose = false; });
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_sending BEFORE UPDATE OF pending ON sessions WHEN NEW.pending LIKE '%"sending"%'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    const started = t.run(['relaunch', 'S2', '--request', 'again', '--reason', 'r']);
+    assert.match(started.stderr, /S2's worker started in pane/);
+    assert.ok(t.events(2).includes('relaunched'), 'the relaunch that placed a worker says so');
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.events(1).filter(k => k === 'superseded').length, 1);
   } finally { t.cleanup(); }
 });
 

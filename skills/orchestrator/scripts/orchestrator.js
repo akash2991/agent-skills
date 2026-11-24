@@ -476,15 +476,33 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
     throw failure;
   }
   const agentName = `orch-s${row.id}-${crypto.randomBytes(2).toString('hex')}`;
-  store.transaction(db, () => {
-    store.updateSession(db, row.id, {
-      native_session_id: row.native_session_id, transcript_path: row.transcript_path,
-      tab_id: tabId, pane_id: pane, agent_name: agentName, launches: generation, identity_seq: 0, launch_token: token,
-      pending: JSON.stringify(prompts.map(text => ({ text, state: 'pending' }))), last_active_at: store.now(),
-    });
-    store.addEvent(db, row.id, 'tab-created', `${pane} launch ${generation}`);
-    if (commitEvent) store.addEvent(db, row.id, commitEvent.kind, commitEvent.detail);
-  }, 'launch');
+  // Recorded with the tab, as one routing change: the new placement, and for a
+  // session's first worker, its parent's supersession (new --from). A launch
+  // rolled back below restores both.
+  let superseded = null;
+  try {
+    store.transaction(db, () => {
+      store.updateSession(db, row.id, {
+        native_session_id: row.native_session_id, transcript_path: row.transcript_path,
+        tab_id: tabId, pane_id: pane, agent_name: agentName, launches: generation, identity_seq: 0, launch_token: token,
+        pending: JSON.stringify(prompts.map(text => ({ text, state: 'pending' }))), last_active_at: store.now(),
+      });
+      store.addEvent(db, row.id, 'tab-created', `${pane} launch ${generation}`);
+      if (commitEvent) store.addEvent(db, row.id, commitEvent.kind, commitEvent.detail);
+      const parent = before.launches === 0 && before.parent_id ? store.getSession(db, before.parent_id) : null;
+      if (parent && parent.status === 'open') {
+        store.updateSession(db, parent.id, { status: 'superseded' });
+        store.addEvent(db, parent.id, 'superseded', `by S${row.id}`);
+        superseded = parent.id;
+      }
+    }, 'launch');
+  } catch (err) {
+    // Nothing was recorded and no agent was started; close the tab it made.
+    let closed = false;
+    try { herdr(['tab', 'close', tabId]); closed = true; } catch { /* reported below */ }
+    throw Object.assign(new CliError(`recording S${row.id}'s new tab failed: ${err.message}` +
+      `${closed ? '' : `; its empty tab ${tabId} could not be closed`}`), { startFailed: true, confirmed: closed, tabRecorded: false });
+  }
   const placed = { tab_id: tabId, pane_id: pane, label: tabLabel(row) };
   try {
     const args = harnessArgs(row, resume, { settingsFile: row.harness === 'claude' ? claudeSettingsFile(dbFile) : undefined });
@@ -493,31 +511,44 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
     if (err.herdrCode === 'agent_not_ready') {
       // The agent is up but asking the user something first, such as whether
       // to trust the folder. That answer is the user's, never the orchestrator's.
-      store.addEvent(db, row.id, 'waiting-for-user', err.message);
+      logEvent(db, row.id, 'waiting-for-user', err.message);
       return { ...placed, waiting: 'user' };
     }
     let closed = false;
     try { herdr(['tab', 'close', tabId]); closed = true; } catch { /* reported below */ }
+    let restored = false;
     if (closed) {
-      store.updateSession(db, row.id, { ...restore, tab_id: null, pane_id: null, agent_name: null });
-      store.addEvent(db, row.id, 'start-failed', err.message);
-    } else {
-      store.addEvent(db, row.id, 'start-uncertain', `${err.message}; tab ${tabId} could not be closed`);
+      try {
+        store.transaction(db, () => {
+          store.updateSession(db, row.id, { ...restore, tab_id: null, pane_id: null, agent_name: null });
+          if (superseded) {
+            store.updateSession(db, superseded, { status: 'open' });
+            store.addEvent(db, superseded, 'supersession-undone', `S${row.id} got no worker`);
+          }
+        });
+        restored = true;
+      } catch (restoreErr) {
+        err.message += `; its tab was closed, but restoring the record failed (${restoreErr.message})`;
+      }
     }
+    logEvent(db, row.id, restored ? 'start-failed' : 'start-uncertain',
+      `${err.message}${closed ? '' : `; tab ${tabId} could not be closed`}`);
     const failure = new CliError(`${err.message}${closed ? '' : `; its tab ${tabId} could not be closed and stays recorded`}`);
-    Object.assign(failure, { startFailed: true, confirmed: closed, tabRecorded: !closed });
+    // A record that could not be restored is treated as uncertain: it stays
+    // recorded and blocks another launch until it is checked.
+    Object.assign(failure, { startFailed: true, confirmed: restored, tabRecorded: !restored });
     throw failure;
   }
   // The worker is running from here on: a failure now never reads as a start
   // that failed, and the prompts it did not take stay held.
   try {
-    store.addEvent(db, row.id, resume ? 'resumed' : 'launched', `${row.harness} pane ${pane}`);
+    logEvent(db, row.id, resume ? 'resumed' : 'launched', `${row.harness} pane ${pane}`);
     if (row.harness === 'pi') {
       let session = null;
       try {
         session = (paneInfo(pane) || {}).agent_session;
       } catch (err) {
-        store.addEvent(db, row.id, 'transcript-unknown', err.message);
+        logEvent(db, row.id, 'transcript-unknown', err.message);
       }
       if (session && session.kind === 'path') store.updateSession(db, row.id, { transcript_path: session.value });
     }
@@ -620,36 +651,14 @@ const noWorker = err => err.confirmed || !err.tabRecorded;
 const fromLaunch = (err, message) => Object.assign(new CliError(message),
   { startFailed: true, confirmed: err.confirmed, tabRecorded: err.tabRecorded });
 
-// A session started from an earlier one (new --from) supersedes it once it has
-// a worker, or may have one; until then the earlier one stays open.
-function supersedeParent(db, sessionId) {
-  const row = store.getSession(db, sessionId);
-  const parent = row && row.parent_id ? store.getSession(db, row.parent_id) : null;
-  if (!parent || parent.status !== 'open') return;
-  store.updateSession(db, parent.id, { status: 'superseded' });
-  store.addEvent(db, parent.id, 'superseded', `by S${sessionId}`);
-}
-
-// Only the launch that gives a session its first worker supersedes its parent:
-// a parent the user reopened later stays open. A confirmed failure restores
-// `launches`, so its retry still counts as the first.
-function launchFor(db, file, row, options) {
-  const first = store.getSession(db, row.id).launches === 0;
-  let launched;
+// History is not routing state: an event that cannot be written warns and
+// never replaces the result or the error of the step it describes.
+function logEvent(db, id, kind, detail) {
   try {
-    launched = launch(db, file, row, options);
+    store.addEvent(db, id, kind, detail);
   } catch (err) {
-    if (first && (err.workerStarted || (err.startFailed && !err.confirmed && err.tabRecorded))) {
-      try { supersedeParent(db, row.id); } catch { /* the launch's own error is the one to report */ }
-    }
-    throw err;
+    process.stderr.write(`orchestrator: warning: S${id}'s ${kind} event was not recorded (${err.message})\n`);
   }
-  if (first) {
-    try { supersedeParent(db, row.id); } catch (err) {
-      process.stderr.write(`orchestrator: warning: S${row.id}'s parent was not marked superseded (${err.message})\n`);
-    }
-  }
-  return launched;
 }
 
 // ─── Reconcile ────────────────────────────────────────────────────────────────
@@ -770,7 +779,7 @@ const commands = {
       const result = decided(db, { request, action: 'new', sessionId: id, considered: opts.considered, reason }, () => {
         let launched;
         try {
-          launched = launchFor(db, file, store.getSession(db, id), { resume: false, prompts });
+          launched = launch(db, file, store.getSession(db, id), { resume: false, prompts });
         } catch (err) {
           if (!err.startFailed) throw err;
           // A tab that herdr never confirmed creating ran no agent start, so no agent started.
@@ -824,7 +833,7 @@ const commands = {
           // held brief, or a new one when there is none.
           const prompts = held.length ? asks : brief(row, request, { context: priorContext(db, row, 'This continues the work of session') });
           let launched;
-          try { launched = launchFor(db, file, row, { resume: false, prompts }); } catch (err) { throw fail(err, 'starting'); }
+          try { launched = launch(db, file, row, { resume: false, prompts }); } catch (err) { throw fail(err, 'starting'); }
           return launchResult(id, 'started', launched);
         }
         if (row.transcript_path && !fs.existsSync(row.transcript_path)) {
@@ -832,7 +841,7 @@ const commands = {
           // brief and everything the record knows.
           let launched;
           try {
-            launched = launchFor(db, file, row, { resume: false, prompts: brief(row, request, { context: priorContext(db, row, 'This continues the work of session') }) });
+            launched = launch(db, file, row, { resume: false, prompts: brief(row, request, { context: priorContext(db, row, 'This continues the work of session') }) });
           } catch (err) { throw fail(err, 'restarting'); }
           return launchResult(id, 'restarted', launched, { why: `its transcript ${row.transcript_path} is gone` });
         }
@@ -840,9 +849,9 @@ const commands = {
         // (where the transcript lives is Claude's to find).
         let launched;
         try {
-          launched = launchFor(db, file, row, { resume: true, prompts: asks });
+          launched = launch(db, file, row, { resume: true, prompts: asks });
         } catch (err) {
-          const unknownPlace = !row.transcript_path ? ' Its transcript location was never recorded; if its conversation was never written (its tab closed while waiting for the user), relaunch it.' : '';
+          const unknownPlace = err.startFailed && !row.transcript_path ? ' Its transcript location was never recorded; if its conversation was never written (its tab closed while waiting for the user), relaunch it.' : '';
           const out = fail(err, 'resuming');
           out.message += unknownPlace;
           throw out;
@@ -873,7 +882,7 @@ const commands = {
       print(decided(db, { request, action: 'relaunch', sessionId: id, considered: opts.considered, reason }, () => {
         let launched;
         try {
-          launched = launchFor(db, file, replacement, {
+          launched = launch(db, file, replacement, {
             resume: false,
             prompts: brief(replacement, request, { context: priorContext(db, row, 'This continues the work of the earlier conversation of session') }),
             // Written with the new identity, so the old one is never unrecorded;
@@ -881,17 +890,15 @@ const commands = {
             commitEvent: { kind: 'relaunch-staged', detail: previousText },
           });
         } catch (err) {
-          if (err.workerStarted) {
-            try { store.addEvent(db, id, 'relaunched', previousText); } catch { /* reported by the error below */ }
-          }
+          if (err.workerStarted) logEvent(db, id, 'relaunched', previousText);
           if (!err.startFailed) throw err;
           const kept = !err.confirmed && err.tabRecorded;
-          store.addEvent(db, id, 'relaunch-failed', `${kept ? 'kept the new conversation; the' : 'restored the'} ${previousText} (${err.message})`);
+          logEvent(db, id, 'relaunch-failed', `${kept ? 'kept the new conversation; the' : 'restored the'} ${previousText} (${err.message})`);
           throw fromLaunch(err, `relaunching S${id} failed: ${err.message}. ${err.confirmed
             ? 'Its previous conversation is still the recorded one'
             : `${uncertainNote(err, 'the new agent')}${kept ? '. The previous conversation is in its events' : ''}`}`);
         }
-        store.addEvent(db, id, 'relaunched', previousText);
+        logEvent(db, id, 'relaunched', previousText);
         return launchResult(id, 'relaunched', launched, { previous: previous.native_session_id });
       }), opts);
     });
@@ -912,7 +919,7 @@ const commands = {
       store.setPending(db, id, opts.resend
         ? entries.map(e => (e.state === 'unknown' ? { ...e, state: 'pending' } : e))
         : entries.filter(e => e.state !== 'unknown'));
-      store.addEvent(db, id, opts.resend ? 'settled-resend' : 'settled-drop', `${unknown.length} prompt(s)`);
+      logEvent(db, id, opts.resend ? 'settled-resend' : 'settled-drop', `${unknown.length} prompt(s)`);
       print({ session: `S${id}`, settled: `${unknown.length} prompt(s) ${opts.resend ? `held to resend: run deliver S${id}, or resume S${id} if its tab is gone (with --request if a new request is waiting)` : 'dropped as delivered'}` }, opts);
     });
   },
@@ -938,7 +945,7 @@ const commands = {
           : `${store.pendingOf(store.getSession(db, id)).length} prompt(s) still held, run deliver again once it settles`}`);
       }
       store.updateSession(db, id, { last_active_at: store.now() });
-      store.addEvent(db, id, 'delivered', row.pane_id);
+      logEvent(db, id, 'delivered', row.pane_id);
       print({ session: `S${id}`, action: 'delivered', pane_id: row.pane_id }, opts);
     });
   },
@@ -1039,7 +1046,7 @@ const commands = {
       }
       herdr(['tab', 'close', row.tab_id || pane.tab_id]);
       clearPlacement(db, id);
-      store.addEvent(db, id, 'stopped', opts.force ? `forced while ${pane.agent_status}` : pane.agent_status || 'no agent');
+      logEvent(db, id, 'stopped', opts.force ? `forced while ${pane.agent_status}` : pane.agent_status || 'no agent');
       print({ session: `S${id}`, action: 'closed', status: row.status }, opts);
     });
   },
@@ -1051,7 +1058,7 @@ const commands = {
       requireOwner(db);
       getRow(db, id);
       store.updateSession(db, id, { status: 'resolved', resolved_at: store.now() });
-      store.addEvent(db, id, 'resolved', opts.reason || 'orchestrator');
+      logEvent(db, id, 'resolved', opts.reason || 'orchestrator');
       print({ session: `S${id}`, status: 'resolved' }, opts);
     });
   },
@@ -1063,7 +1070,7 @@ const commands = {
       requireOwner(db);
       getRow(db, id);
       store.updateSession(db, id, { status: 'open', resolved_at: null });
-      store.addEvent(db, id, 'reopened', opts.reason || 'orchestrator');
+      logEvent(db, id, 'reopened', opts.reason || 'orchestrator');
       print({ session: `S${id}`, status: 'open' }, opts);
     });
   },
@@ -1083,7 +1090,7 @@ const commands = {
       if (opts.open) Object.assign(fields, { status: 'open', resolved_at: null });
       if (!Object.keys(fields).length) throw usageError('nothing to report: pass --summary, --title, --ticket, --resolved, or --open');
       store.updateSession(db, id, { ...fields, last_active_at: store.now() });
-      store.addEvent(db, id, 'report', Object.keys(fields).filter(k => k !== 'summary_at').join(','));
+      logEvent(db, id, 'report', Object.keys(fields).filter(k => k !== 'summary_at').join(','));
       const updated = store.getSession(db, id);
       if ((fields.ticket || fields.title) && updated.tab_id && process.env.HERDR_ENV === '1') {
         try { herdr(['tab', 'rename', updated.tab_id, tabLabel(updated)]); } catch { /* the label is cosmetic */ }
