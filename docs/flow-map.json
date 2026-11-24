@@ -777,7 +777,7 @@
           ""
         ],
         [
-          "Worker keeps its summary, ticket, and resolution current",
+          "Worker keeps its summary, ticket, worktree, and resolution current",
           "judgment",
           null,
           ""

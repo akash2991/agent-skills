@@ -1786,6 +1786,19 @@ test('a worker that reports its worktree is relabelled <worktree> (<persona>), a
     const resumed = json(t.run(['resume', 'S1', '--json', '--request', 'and the footer', '--reason', 'its tab was closed']));
     assert.strictEqual(resumed.label, 'FAC-41-login-fix (web-engineer)');
     assert.strictEqual(t.herdrState().panes[resumed.pane_id].label, 'FAC-41-login-fix (web-engineer)');
+
+    // A new conversation of the session continues in that worktree, and is not asked to make one.
+    t.patchHerdr(s => { delete s.panes[resumed.pane_id]; });
+    json(t.run(['relaunch', 'S1', '--json', '--request', 'and the logo', '--reason', 'stale context']));
+    const relaunchBrief = t.herdrState().prompts.at(-1).text;
+    assert.match(relaunchBrief, new RegExp(`Its worktree is ${worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: continue there, and do not create another`));
+    assert.doesNotMatch(relaunchBrief, /--worktree <path>/);
+
+    // A report that names no usable worktree is refused, and changes nothing.
+    for (const bad of [' ', '/']) {
+      assert.strictEqual(t.run(['report', '--worktree', bad], { ORCHESTRATOR_SESSION: '1' }).status, 2, JSON.stringify(bad));
+    }
+    assert.strictEqual(t.row(1).worktree, worktree);
   } finally { t.cleanup(); }
 });
 

@@ -245,7 +245,6 @@ const oneLine = (text, max = 160) => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
 
-// `<ticket> <scope> (<persona>)` (development-setup DS2); the session id keeps the tab findable.
 // DS2: a worker with a worktree is named after it, `<worktree> (<persona>)`;
 // until it reports one, `<ticket> <scope> (<persona>)`, its scope carrying the
 // session id.
@@ -374,10 +373,12 @@ function brief(row, request, { context } = {}) {
     '',
     `The orchestrator started you as the worker for session S${row.id}: "${row.title}".`,
     'Keep its record current: run `node "$ORCHESTRATOR_CLI" report --summary "<what this session is for, what is done, what remains>"` ' +
-      'when that changes and before you stop for the user. Add `--ticket <id>` once the work has a ticket, `--worktree <path>` once ' +
-      'you have created your worktree, and `--resolved` when ' +
+      'when that changes and before you stop for the user. Add `--ticket <id>` once the work has a ticket, ' +
+      `${row.worktree ? '' : '`--worktree <path>` once you have created your worktree, '}and \`--resolved\` when ` +
       'its ticket is Done or its PR is merged. Never close this tab yourself.',
   ];
+  // A session that already has a worktree continues there.
+  if (row.worktree) lines.push('', `Its worktree is ${row.worktree}: continue there, and do not create another.`);
   if (context) lines.push('', context);
   const text = lines.join('\n');
   // A multi-line prompt arrives as pasted text, and a slash command inside a
@@ -394,6 +395,7 @@ function priorContext(db, row, heading) {
     `${heading} S${row.id} ("${row.title}")${row.ticket ? `, ticket ${row.ticket}` : ''}:`,
     `- intent: ${oneLine(row.intent, 400)}`,
     row.summary ? `- where it stood: ${oneLine(row.summary, 800)}` : '- no summary was recorded',
+    ...(row.worktree ? [`- worktree: ${row.worktree}`] : []),
     ...prompts.map(p => `- asked ${ago(p.at)}: ${oneLine(p.text, 300)}`),
     ...(held.length ? ['Messages that were held for this session and never reached a worker:', ...held.map(t => `---\n${t}\n---`)] : []),
     'Read the ticket, its PR, and the code for the current state before acting; this summary may be stale.',
@@ -1128,7 +1130,11 @@ const commands = {
       if (opts.summary) Object.assign(fields, { summary: opts.summary.trim(), summary_at: store.now() });
       if (opts.title) fields.title = opts.title.trim();
       if (opts.ticket) fields.ticket = opts.ticket.trim();
-      if (opts.worktree) fields.worktree = path.resolve(opts.worktree.trim());
+      if (opts.worktree !== undefined) {
+        const dir = String(opts.worktree).trim();
+        if (!dir || !path.basename(path.resolve(dir))) throw usageError('--worktree needs the path of your worktree');
+        fields.worktree = path.resolve(dir);
+      }
       if (opts.resolved) Object.assign(fields, { status: 'resolved', resolved_at: store.now() });
       if (opts.open) Object.assign(fields, { status: 'open', resolved_at: null });
       if (!Object.keys(fields).length) throw usageError('nothing to report: pass --summary, --title, --ticket, --worktree, --resolved, or --open');

@@ -140,4 +140,4 @@ When a launch fails and no worker started, the session is left exactly as it was
 ## Interaction with other skills
 
 - `herdr-fanout`: a working agent's parallel subagents for one task. The orchestrator starts long-lived workers instead, and those workers may fan out themselves.
-- `development-setup` DS1 and DS2: a worker makes its own worktree and reports it with `report --worktree`; its tab label is then `<worktree> (<persona>)`, and `<ticket> <scope> (<persona>)` until then, the scope carrying the session id.
+- `development-setup` DS1 and DS2: a worker makes its own worktree and reports it with `report --worktree`; its tab label is then `<worktree> (<persona>)`, and `<ticket> <scope> (<persona>)` until then, the scope carrying the session id. The report renames the tab at once; the harness's own session name follows at the session's next launch, and a later conversation of the session is told to continue in that worktree.
