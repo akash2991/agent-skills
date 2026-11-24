@@ -493,6 +493,16 @@ const IDENTITY = ['native_session_id', 'transcript_path', 'launches', 'identity_
 // it is committed with the tab. When the agent is known not to have started
 // (no tab, or its tab confirmed closed), the session is restored exactly as it
 // was; when that is uncertain, the tab and the new state stay recorded.
+// Where a worker's tab opens: its recorded directory, or, when that is gone
+// (a worktree removed after its PR opened), the project checkout, from where
+// the brief has it make the worktree again.
+function launchDir(db, row) {
+  if (fs.existsSync(row.cwd)) return row.cwd;
+  const fallback = store.getProjectRoot(db) || projectRoot();
+  logEvent(db, row.id, 'cwd-missing', `${row.cwd}; opened in ${fallback}`);
+  return fallback;
+}
+
 function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
   const before = store.getSession(db, row.id);
   const restore = Object.fromEntries(IDENTITY.map(k => [k, before[k]]));
@@ -500,7 +510,7 @@ function launch(db, dbFile, row, { resume, prompts, commitEvent }) {
   const token = crypto.randomUUID();
   let tab;
   try {
-    tab = herdr(['tab', 'create', '--workspace', process.env.HERDR_WORKSPACE_ID, '--cwd', row.cwd,
+    tab = herdr(['tab', 'create', '--workspace', process.env.HERDR_WORKSPACE_ID, '--cwd', launchDir(db, row),
       '--label', tabLabel(row), '--no-focus',
       '--env', `ORCHESTRATOR_DB=${dbFile}`, '--env', `ORCHESTRATOR_SESSION=${row.id}`, '--env', `ORCHESTRATOR_LAUNCH=${token}`,
       '--env', `ORCHESTRATOR_CLI=${CLI}`, '--env', `ORCHESTRATOR_NODE=${process.execPath}`]);
@@ -786,9 +796,10 @@ const commands = {
     return withDb(opts, (db, file) => {
       excludeFromGit(projectRoot(), file);
       const { me, tookOver } = claimOwnership(db);
-      // The orchestrator runs in the project's checkout: that is the one no
-      // worker may report as its worktree.
-      store.setProjectRoot(db, realPath(projectRoot()));
+      // The orchestrator runs in the project's checkout, which may itself be a
+      // linked worktree: that working tree is the one no worker may report.
+      const here = workingTree(process.cwd());
+      store.setProjectRoot(db, here ? here.top : realPath(process.cwd()));
       const changes = reconcile(db);
       const open = store.listSessions(db).filter(r => r.status === 'open');
       print({

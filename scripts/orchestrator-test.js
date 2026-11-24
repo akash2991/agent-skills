@@ -47,6 +47,8 @@ if (group === 'pane' && verb === 'get') {
     if (args[i] === '--label') pane.label = args[i + 1];
     if (args[i] === '--cwd') pane.cwd = args[i + 1];
   }
+  // As Herdr does: a tab cannot open in a directory that does not exist.
+  if (pane.cwd && !fs.existsSync(pane.cwd)) fail('failed', 'no such directory: ' + pane.cwd);
   s.panes[pane.pane_id] = pane;
   ok({ tab: { tab_id: pane.tab_id }, root_pane: { pane_id: pane.pane_id, tab_id: pane.tab_id } });
 } else if (group === 'agent' && verb === 'start') {
@@ -1940,6 +1942,39 @@ test('a session started in a linked worktree with --cwd has it as its worktree f
     // The project checkout given as --cwd is not a worktree.
     json(t.run(['new', '--json', '--cwd', main, '--title', 'Other', '--request', 'y', '--reason', 'r'], {}, undefined, { cwd: main }));
     assert.strictEqual(t.row(2).worktree, null);
+  } finally { t.cleanup(); }
+});
+
+test('an orchestrator started in a linked checkout protects that checkout, not the main tree only', () => {
+  const t = setup();
+  try {
+    const { main, linked: userCheckout } = gitWorktree(t, 'user-checkout');
+    const { linked: assigned } = gitWorktree(t, 'FAC-9-z');
+    ok(t.run(['start'], {}, undefined, { cwd: userCheckout }));
+    json(t.run(['new', '--json', '--cwd', userCheckout, '--title', 'Z', '--request', 'z', '--reason', 'r'], {}, undefined, { cwd: userCheckout }));
+    assert.strictEqual(t.row(1).worktree, null, '--cwd in the user checkout is not adopted');
+    const report = (where, value) => t.run(['report', '--worktree', value], { ORCHESTRATOR_SESSION: '1' }, undefined, { cwd: where });
+    for (const bad of [userCheckout, main]) {
+      assert.match(report(assigned, bad).stderr, /is the project checkout/, bad);
+    }
+    ok(report(assigned, '.'));
+    assert.strictEqual(t.row(1).worktree, assigned);
+  } finally { t.cleanup(); }
+});
+
+test('a session started in a worktree that was later removed relaunches from the project checkout and makes it again', () => {
+  const t = setup();
+  try {
+    const { main, linked } = gitWorktree(t, 'FAC-41-login-fix');
+    ok(t.run(['start'], {}, undefined, { cwd: main }));
+    const first = json(t.run(['new', '--json', '--cwd', linked, '--title', 'Fix login', '--request', 'fix it', '--reason', 'r'], {}, undefined, { cwd: main }));
+    execFileSync('git', ['worktree', 'remove', '--force', linked], { cwd: main, stdio: 'ignore' });
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; });
+    const out = json(t.run(['relaunch', 'S1', '--json', '--request', 'review feedback', '--reason', 'stale'], {}, undefined, { cwd: main }));
+    assert.strictEqual(t.herdrState().panes[out.pane_id].cwd, main);
+    assert.ok(t.events(1).includes('cwd-missing'));
+    assert.match(t.herdrState().prompts.at(-1).text, /is gone: create it again for the same branch/);
+    assert.strictEqual(t.herdrState().prompts.filter(p => /review feedback/.test(p.text)).length, 1);
   } finally { t.cleanup(); }
 });
 
