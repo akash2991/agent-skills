@@ -747,7 +747,7 @@
           ""
         ],
         [
-          "Record the decision and its reason",
+          "Record the decision and its reason, then its outcome once the route has run",
           "det",
           "skills/orchestrator/scripts/orchestrator.js",
           ""

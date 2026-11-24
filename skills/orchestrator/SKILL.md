@@ -54,7 +54,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 | An open session with a live tab covers this work | send | `orch send S<id> --request … --reason …` |
 | An open session covers it, its tab is closed, and it is not stale | resume | `orch resume S<id> --request … --reason …` |
 | `resume` failed, or the old conversation is not worth its context | a new conversation for the same session | `orch relaunch S<id> --request … --reason …` |
-| An open session covers it but is stale | new, seeded from it | `orch new --from S<id> …` (the old one becomes superseded) |
+| An open session covers it but is stale | new, seeded from it | `orch new --from S<id> …` (the old one becomes superseded when the new one gets its first worker, or may have one) |
 | Only a resolved session covers it | new, seeded from it | `orch new --from S<id> …` (a resolved session is never resumed) |
 | Nothing covers it | new | `orch new …` |
 
@@ -62,7 +62,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 
 When one message holds unrelated asks, split it and route each part separately. Mixing them in one session is the failure this skill exists to prevent. When two open sessions fit equally well, ask the user one question naming both.
 
-Every route records a decision. Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
+Every route records a decision, and the decision records its outcome once the route has run: the action printed (for example `new`, `resumed`, `relaunched`, `sent`, or `waiting: user`), or what went wrong (for example `held: …`, `unknown: …`, `failed: …` when no worker started, `uncertain: …` when one may have, `started-then-failed: …` when one started but recording or delivering failed). A retry is a new decision. A command refused before it routes anything records none. Outcomes, and events written after an action (a launch, a delivery, a stop), are history: one that cannot be written prints a warning and never changes a command's result or its guidance. Events committed with a routing change, such as a new tab and its parent's supersession, belong to that change and are written or rolled back with it. If `new --from` fails before any worker started, the parent is left as it was (open, unless another session already superseded it), and `find` shows both: retry the new one as its error says (`resume S<new>`), rather than choosing between them again. The exception is a failure whose record could not be restored: the parent stays superseded, and the error names the retry (`relaunch S<new>`). Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
 
 ### 4. Start a new session
 
@@ -106,9 +106,9 @@ A worker marks its session resolved when its ticket is Done or its PR is merged 
 
 Every worker's tab carries `ORCHESTRATOR_DB`, `ORCHESTRATOR_SESSION`, and `ORCHESTRATOR_CLI`. Its first prompt tells it to keep its record current with `node "$ORCHESTRATOR_CLI" report --summary …`, adding `--ticket <id>` and finally `--resolved`. Hooks loaded only into these workers (Claude through `--settings`, Pi through `-e`) record every prompt, whether you sent it or the user typed it in the tab, along with each compaction and a `/clear`. A session the user starts by hand has none of this and is never touched.
 
-A session keeps its conversation id for life; only `relaunch` replaces it, recording the old one. `resume` reopens the conversation by what is certain: Pi by its recorded session file, Claude by its id. It starts the same id fresh, with the brief, the summary, the ticket, the last prompts, and any held prompts, only when the recorded transcript is known to be gone. A session that never had a worker (its first launch failed) starts with its held brief: `orch resume S<id>` without `--request`.
+A session keeps its conversation id for life; only `relaunch` replaces it, recording the old one in a `relaunch-staged` event, and `relaunched` follows once the new worker is placed. `resume` reopens the conversation by what is certain: Pi by its recorded session file, Claude by its id. It starts the same id fresh, with the brief, the summary, the ticket, the last prompts, and any held prompts, only when the recorded transcript is known to be gone. A session that never had a worker (its first launch failed) starts with its held brief: `orch resume S<id>` without `--request`.
 
-When a launch fails and no worker started, the session is left exactly as it was, so retrying the same command sends the request once. When it is uncertain whether a worker started, its tab stays recorded and another launch is refused until that tab is gone or adopted. A resume or relaunch also refuses when Herdr cannot list the running agents, rather than risk a second worker on the same conversation; `start` then reports reconciliation as skipped.
+When a launch fails and no worker started, the session is left exactly as it was, so retrying the same command sends the request once. The one exception is a launch whose tab was closed but whose record could not be restored: its error says the record still holds that launch's prompts, including the request, so never send the request again and follow the retry the error names (`resume` without `--request` when the failed launch was itself a resume, `relaunch` otherwise, because the conversation it recorded was never written). When it is uncertain whether a worker started, its tab stays recorded and another launch is refused until that tab is gone or adopted. A resume or relaunch also refuses when Herdr cannot list the running agents, rather than risk a second worker on the same conversation; `start` then reports reconciliation as skipped.
 
 ## Common Rationalizations
 
@@ -133,7 +133,7 @@ When a launch fails and no worker started, the session is left exactly as it was
 ## Verification
 
 - [ ] `orch start` succeeded in this session, or you told the user it is read-only.
-- [ ] Every work request ran `find` first, and its route has a decision with a reason (`orch status` shows the session's prompts and events).
+- [ ] Every work request ran `find` first, and its route has a decision with a reason (`orch status` shows the session's prompts, events, and recent decisions with their outcomes).
 - [ ] Each reply names the session id and tab label.
 - [ ] You changed no project file, ticket, or PR yourself.
 

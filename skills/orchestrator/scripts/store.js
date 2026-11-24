@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const PROMPT_LIMIT = 4000;
 const ORCHESTRATOR_MARK = /\[orchestrator S\d+\]/;
 
@@ -94,10 +94,25 @@ CREATE INDEX prompts_by_session ON prompts(session_id, id);
 CREATE INDEX events_by_session ON events(session_id, id);
 `;
 
+// MIGRATIONS[v] takes a record from version v - 1 to v. Version 1 is the
+// schema above; every later change is a step here, so a new record and an
+// old one end at the same shape.
+const MIGRATIONS = [null, SCHEMA, `
+ALTER TABLE decisions ADD COLUMN outcome TEXT;
+ALTER TABLE decisions ADD COLUMN outcome_at TEXT;
+ALTER TABLE prompts ADD COLUMN seq INTEGER;
+ALTER TABLE sessions ADD COLUMN succession INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN parent_generation INTEGER;
+-- A child's claim still stands where its parent is still superseded; a parent
+-- reopened or resolved before this version keeps no claim from that time.
+UPDATE sessions SET parent_generation = 0
+  WHERE parent_id IN (SELECT id FROM sessions WHERE status = 'superseded');
+`];
+
 const UPDATABLE = new Set([
   'title', 'intent', 'summary', 'status', 'model', 'effort', 'persona', 'ticket', 'native_session_id',
   'transcript_path', 'cwd', 'tab_id', 'pane_id', 'agent_name', 'last_active_at', 'resolved_at',
-  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending',
+  'last_compacted_at', 'launches', 'identity_seq', 'launch_token', 'summary_at', 'pending', 'parent_generation',
 ]);
 
 const now = () => new Date().toISOString();
@@ -105,9 +120,11 @@ const now = () => new Date().toISOString();
 // Test seam: a named point a test can stop at, to force an interleaving with
 // another writer. Nothing is registered outside the tests, so it is a no-op.
 // The one point is `write-lock`, just before a write transaction takes the
-// lock, so every read a writer makes before its lock comes before it.
+// lock, so every read a writer makes before its lock comes before it. It is
+// called with the transaction's site, so a test releases only at the write it
+// means to race.
 const probes = new Map();
-const probe = name => { const fn = probes.get(name); if (fn) fn(); };
+const probe = (name, site) => { const fn = probes.get(name); if (fn) fn(site); };
 const setProbe = (name, fn) => (fn ? probes.set(name, fn) : probes.delete(name));
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
@@ -135,12 +152,15 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
     // Switching to WAL takes an exclusive lock that does not honour busy_timeout.
     retryBusy(() => db.exec('PRAGMA journal_mode = WAL'), busyTimeout);
     const version = () => db.prepare('PRAGMA user_version').get().user_version;
-    if (version() === 0) {
+    if (version() < SCHEMA_VERSION) {
       transaction(db, () => {
-        if (version() !== 0) return; // another opener initialised it first
-        db.exec(SCHEMA);
+        // Read again under the lock: another opener may have moved it on,
+        // even past this version (a newer brain); then it is refused below.
+        const current = version();
+        if (current >= SCHEMA_VERSION) return;
+        for (let v = current; v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v + 1]);
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-      });
+      }, 'open');
     }
     if (version() > SCHEMA_VERSION) {
       throw new Error(`${dbPath} has schema ${version()}; this orchestrator knows ${SCHEMA_VERSION}. Update the brain.`);
@@ -152,8 +172,8 @@ function open(dbPath, { create = true, busyTimeout = 5000 } = {}) {
   }
 }
 
-function transaction(db, fn) {
-  probe('write-lock');
+function transaction(db, fn, site = null) {
+  probe('write-lock', site);
   db.exec('BEGIN IMMEDIATE');
   try {
     const result = fn();
@@ -184,11 +204,16 @@ function listSessions(db) {
   return db.prepare('SELECT * FROM sessions ORDER BY last_active_at DESC').all();
 }
 
+// Opening a session (a reopen, a worker's report --open, or a rolled-back
+// supersession) starts a new succession in the same statement: sessions that
+// superseded it before no longer count as its successors.
 function updateSession(db, id, fields) {
   const keys = Object.keys(fields);
   for (const key of keys) if (!UPDATABLE.has(key)) throw new Error(`not an updatable session field: ${key}`);
   if (!keys.length) return;
-  db.prepare(`UPDATE sessions SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`)
+  const sets = keys.map(k => `${k} = ?`);
+  if (fields.status === 'open') sets.push('succession = succession + 1');
+  db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`)
     .run(...keys.map(k => fields[k] ?? null), Number(id));
 }
 
@@ -197,21 +222,51 @@ function addEvent(db, sessionId, kind, detail) {
     .run(Number(sessionId), now(), kind, detail == null ? null : String(detail));
 }
 
-function addPrompt(db, sessionId, text) {
+// A time the recorder stamped when the user typed, or now when it gave none.
+function stampOf(at) {
+  const ms = typeof at === 'string' ? Date.parse(at) : NaN;
+  return Number.isNaN(ms) ? now() : new Date(ms).toISOString();
+}
+
+// `at` and `seq` are when, and in what order, the recorder saw the prompt.
+// Pi's writers race, so the order they commit in is not the order typed.
+function addPrompt(db, sessionId, text, { at, seq } = {}) {
   const body = String(text);
   const source = ORCHESTRATOR_MARK.test(body.slice(0, 400)) ? 'orchestrator' : 'direct';
-  db.prepare('INSERT INTO prompts (session_id, at, source, text) VALUES (?, ?, ?, ?)')
-    .run(Number(sessionId), now(), source, body.length > PROMPT_LIMIT ? `${body.slice(0, PROMPT_LIMIT)}…` : body);
+  db.prepare('INSERT INTO prompts (session_id, at, seq, source, text) VALUES (?, ?, ?, ?, ?)')
+    .run(Number(sessionId), stampOf(at), Number.isInteger(seq) ? seq : null, source,
+      body.length > PROMPT_LIMIT ? `${body.slice(0, PROMPT_LIMIT)}…` : body);
   return source;
 }
 
+// A decision is the route chosen; its outcome, written once the route has
+// run, is what happened. A retry is a new decision with its own outcome.
 function addDecision(db, { request, action, sessionId, considered, reason }) {
-  db.prepare('INSERT INTO decisions (at, request, action, session_id, considered, reason) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(now(), request, action, sessionId == null ? null : Number(sessionId), considered || null, reason);
+  return Number(db.prepare('INSERT INTO decisions (at, request, action, session_id, considered, reason) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(now(), request, action, sessionId == null ? null : Number(sessionId), considered || null, reason).lastInsertRowid);
 }
 
+function setOutcome(db, decisionId, outcome) {
+  db.prepare('UPDATE decisions SET outcome = ?, outcome_at = ? WHERE id = ?').run(String(outcome), now(), Number(decisionId));
+}
+
+// Whether a session other than `exceptId` superseded `parent` in its current
+// succession and has, or may have, a worker (launches or a recorded tab). A
+// claim whose own launch was rolled back has neither. Both are routing state.
+function otherSuccessor(db, parent, exceptId) {
+  return !!db.prepare('SELECT 1 FROM sessions WHERE parent_id = ? AND id != ? AND parent_generation = ? AND (launches > 0 OR pane_id IS NOT NULL) LIMIT 1')
+    .get(Number(parent.id), Number(exceptId), Number(parent.succession));
+}
+
+function recentDecisions(db, sessionId, limit = 3) {
+  return db.prepare('SELECT * FROM decisions WHERE session_id = ? ORDER BY id DESC LIMIT ?')
+    .all(Number(sessionId), limit).reverse();
+}
+
+const PROMPT_ORDER = 'at DESC, COALESCE(seq, 0) DESC, id DESC';
+
 function recentPrompts(db, sessionId, limit = 5) {
-  return db.prepare('SELECT * FROM prompts WHERE session_id = ? ORDER BY id DESC LIMIT ?')
+  return db.prepare(`SELECT * FROM prompts WHERE session_id = ? ORDER BY ${PROMPT_ORDER} LIMIT ?`)
     .all(Number(sessionId), limit).reverse();
 }
 
@@ -266,7 +321,7 @@ function claimOwner(db, me, holderAlive) {
       workspace_id = excluded.workspace_id, agent_session = excluded.agent_session, at = excluded.at`)
       .run(me.pane_id, me.tab_id ?? null, me.workspace_id ?? null, me.agent_session ?? null, now());
     return { claimed: true, tookOver: !!held && held.pane_id !== me.pane_id, held };
-  });
+  }, 'claim');
 }
 
 function releaseOwner(db, paneId) {
@@ -307,7 +362,7 @@ function recordHookEvent(db, sessionId, event) {
         break;
       }
       case 'prompt':
-        if (event.text) addPrompt(db, row.id, event.text);
+        if (event.text) addPrompt(db, row.id, event.text, { at: event.at, seq: event.seq == null ? undefined : Number(event.seq) });
         break;
       case 'compact':
         if (!current) break;
@@ -324,11 +379,11 @@ function recordHookEvent(db, sessionId, event) {
     }
     updateSession(db, row.id, { last_active_at: at });
     return true;
-  });
+  }, 'hook');
 }
 
 module.exports = {
   open, transaction, now, createSession, getSession, listSessions, updateSession,
-  addEvent, addPrompt, addDecision, recentPrompts, promptCount, recentEvents, recordHookEvent,
-  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, setProbe,
+  addEvent, addPrompt, addDecision, setOutcome, recentDecisions, otherSuccessor, recentPrompts, promptCount, recentEvents, recordHookEvent,
+  pendingOf, setPending, getOwner, claimOwner, releaseOwner, SCHEMA_VERSION, MIGRATIONS, setProbe,
 };

@@ -29,6 +29,7 @@ const fail = (code, message) => { save(); process.stdout.write(JSON.stringify({ 
 const [group, verb] = args;
 const agents = () => Object.values(s.panes).filter(p => p.agent);
 if (group === 'pane' && verb === 'get') {
+  if (s.failPaneGet && args[2] !== 'w1:p0') { process.stdout.write(JSON.stringify({ id: 'fake', error: { code: 'failed', message: 'socket error' } })); process.exit(1); }
   const pane = s.panes[args[2]];
   pane ? okRead({ pane }) : (process.stdout.write(JSON.stringify({ id: 'fake', error: { code: 'pane_not_found', message: 'pane ' + args[2] + ' not found' } })), process.exit(1));
 } else if (group === 'agent' && verb === 'list') {
@@ -49,12 +50,30 @@ if (group === 'pane' && verb === 'get') {
   s.panes[pane.pane_id] = pane;
   ok({ tab: { tab_id: pane.tab_id }, root_pane: { pane_id: pane.pane_id, tab_id: pane.tab_id } });
 } else if (group === 'agent' && verb === 'start') {
-  const pane = s.panes[args[args.indexOf('--pane') + 1]];
+  let pane = s.panes[args[args.indexOf('--pane') + 1]];
   const rest = args.slice(args.indexOf('--') + 1);
   pane.args = rest;
+  if (s.onStart) {
+    // Another command runs while this agent starts; it may change the state.
+    // During the hook, starts fail as innerFailStart says; this one as failStart.
+    const hook = s.onStart;
+    const outer = s.failStart;
+    s.onStart = null;
+    s.failStart = s.innerFailStart || null;
+    save();
+    try { execSync(hook, { stdio: 'ignore' }); } catch { /* the other command may fail; the test checks it */ }
+    Object.assign(s, JSON.parse(fs.readFileSync(file, 'utf8')));
+    s.failStart = outer;
+    s.innerFailStart = null;
+    pane = s.panes[args[args.indexOf('--pane') + 1]];
+  }
   if (s.failStart) fail(s.failStart, 'agent start failed (' + s.failStart + ')');
   const at = Math.max(rest.indexOf('--session-id'), rest.indexOf('--resume'));
   const native = at >= 0 ? rest[at + 1] : 'untracked';
+  // As Claude does: --resume opens only a conversation that was written.
+  s.written = s.written || [];
+  if (rest.includes('--resume') && !s.written.includes(native) && !s.anyResume) fail('failed', 'No conversation found with session ID: ' + native);
+  if (native !== 'untracked') s.written.push(native);
   pane.agent = args[args.indexOf('--kind') + 1];
   pane.agent_status = 'idle';
   // As real Herdr does: Claude's session is its id, Pi's is its session file path.
@@ -330,7 +349,11 @@ test('relaunch replaces the conversation only when a worker may have started, an
     t.patchHerdr(s => { s.hangTabCreate = 0; });
     const d0 = t.open();
     assert.match(store.recentEvents(d0, 1, 50).filter(e => e.kind === 'relaunch-failed').at(-1).detail, /^restored the previous conversation/);
+    // Each attempt is its own decision, and none claims a relaunch that did not happen.
+    assert.deepStrictEqual(store.recentDecisions(d0, 1, 4).map(x => x.outcome.split(':')[0]), ['failed', 'failed', 'failed', 'failed']);
     d0.close();
+    assert.ok(!t.events(1).includes('relaunched'));
+    assert.strictEqual(t.events(1).filter(k => k === 'relaunch-staged').length, 1, 'only the agent-start failure staged a replacement');
 
     const out = json(t.run(['relaunch', 'S1', '--json', '--request', 'now the footer', '--reason', 'resume keeps failing']));
     assert.strictEqual(out.action, 'relaunched');
@@ -340,7 +363,593 @@ test('relaunch replaces the conversation only when a worker may have started, an
     assert.match(t.herdrState().prompts.at(-1).text, /now the footer[\s\S]*ticket FAC-31[\s\S]*Button fixed; footer remains/);
     const d = t.open();
     assert.match(store.recentEvents(d, 1, 50).find(e => e.kind === 'relaunched').detail, new RegExp(`previous conversation ${id} at `));
+    assert.strictEqual(store.recentDecisions(d, 1, 1)[0].outcome, 'relaunched');
     d.close();
+  } finally { t.cleanup(); }
+});
+
+test('every decision records how its route ended; a refused route records none', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const outcomes = () => { const d = t.open(); try { return store.recentDecisions(d, 1, 20).map(x => `${x.action} ${x.outcome}`); } finally { d.close(); } };
+    assert.deepStrictEqual(outcomes(), ['new new']);
+    ok(t.run(['send', 'S1', '--request', 'also the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.promptPlan = ['reject']; });
+    t.run(['send', 'S1', '--request', 'then the header', '--reason', 'r']);
+    ok(t.run(['deliver', 'S1']));
+    t.patchHerdr(s => { s.promptPlan = ['hang:2500']; });
+    t.run(['send', 'S1', '--request', 'then the banner', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
+    sleep(2000);
+    ok(t.run(['settle', 'S1', '--drop']));
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; });
+    t.run(['resume', 'S1', '--request', 'and the logo', '--reason', 'r']);
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S1', '--request', 'and the logo', '--reason', 'retry']));
+    const got = outcomes();
+    assert.deepStrictEqual(got.map(x => x.split(':')[0]), ['new new', 'send sent', 'send held', 'send unknown', 'resume failed', 'resume resumed']);
+
+    // A Pi session whose file was never recorded is refused before any decision.
+    const d = t.open();
+    d.prepare("UPDATE sessions SET harness = 'pi', transcript_path = NULL, pane_id = NULL, tab_id = NULL WHERE id = 1").run();
+    d.close();
+    t.patchHerdr(s => { s.panes = {}; });
+    assert.match(t.run(['resume', 'S1', '--request', 'x', '--reason', 'r']).stderr, /never recorded/);
+    assert.strictEqual(outcomes().length, got.length);
+
+    const status = ok(t.run(['status', 'S1'])).stdout;
+    assert.match(status, /decisions:\n[\s\S]*send -> unknown: [\s\S]*resume -> failed: [\s\S]*resume -> resumed/);
+  } finally { t.cleanup(); }
+});
+
+test('new --from supersedes its parent only once the new session has a worker', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'S1 is stale']).stderr, /no agent started/);
+    assert.strictEqual(t.row(1).status, 'open', 'a confirmed failure leaves the parent open');
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S2', '--reason', 'retry the failed start']));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    assert.ok(t.events(1).includes('superseded'));
+
+    ok(t.run(['reopen', 'S1']));
+    ok(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'S1 is stale']));
+    assert.strictEqual(t.row(1).status, 'superseded', 'a launch that succeeds supersedes at once');
+
+    // A launch that may have started a worker supersedes too.
+    ok(t.run(['reopen', 'S1']));
+    t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
+    assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 4', '--request', 'the logo', '--reason', 'r']).stderr, /uncertain/);
+    assert.strictEqual(t.row(1).status, 'superseded');
+  } finally { t.cleanup(); }
+});
+
+test('a parent the user reopened stays open when its child is resumed or relaunched later', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const child = json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'S1 is stale']));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    ok(t.run(['reopen', 'S1', '--reason', 'the user wants S1 back']));
+    t.patchHerdr(s => { delete s.panes[child.pane_id]; });
+    const resumed = json(t.run(['resume', 'S2', '--json', '--request', 'and the header', '--reason', 'its tab was closed']));
+    t.patchHerdr(s => { delete s.panes[resumed.pane_id]; });
+    ok(t.run(['relaunch', 'S2', '--request', 'and the logo', '--reason', 'stale context']));
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.events(1).filter(k => k === 'superseded').length, 1);
+    ok(t.run(['send', 'S1', '--request', 'one more thing', '--reason', 'r']));
+  } finally { t.cleanup(); }
+});
+
+test('an outcome that cannot be written never changes the route\'s result or its error', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const d = t.open();
+    d.exec("CREATE TRIGGER no_outcome BEFORE UPDATE OF outcome ON decisions BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.close();
+    const count = re => t.herdrState().prompts.filter(p => re.test(p.text)).length;
+
+    const sent = ok(t.run(['send', 'S1', '--json', '--request', 'also the footer', '--reason', 'r']));
+    assert.strictEqual(JSON.parse(sent.stdout).action, 'sent');
+    assert.match(sent.stderr, /warning: the outcome of decision \d+ was not recorded \(injected\)/);
+    assert.strictEqual(count(/also the footer/), 1);
+
+    const made = JSON.parse(ok(t.run(['new', '--json', '--title', 'Docs', '--request', 'write the docs', '--reason', 'r'])).stdout);
+    assert.strictEqual(made.session, 'S2');
+    assert.ok(made.pane_id);
+    assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent && p.pane_id !== 'w1:p0').length, 2, 'one worker each');
+
+    t.patchHerdr(s => { s.promptPlan = ['reject']; });
+    const held = t.run(['send', 'S1', '--request', 'then the header', '--reason', 'r']);
+    assert.strictEqual(held.status, 1);
+    assert.match(held.stderr, /the request is held: run deliver S1/);
+    assert.strictEqual(store.pendingOf(t.row(1)).length, 1);
+
+    t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
+    const uncertain = t.run(['new', '--title', 'Logo', '--request', 'the logo', '--reason', 'r']);
+    assert.match(uncertain.stderr, /whether its agent started is uncertain[\s\S]*Its tab is kept/);
+    assert.ok(t.row(3).pane_id, 'the uncertain tab stays recorded');
+  } finally { t.cleanup(); }
+});
+
+test('a failure after the worker started is never a refusal: it keeps the worker, held work, and supersession', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const outcome = id => { const d = t.open(); try { return store.recentDecisions(d, id, 1)[0].outcome; } finally { d.close(); } };
+
+    // Herdr cannot say where Pi keeps its session: the launch goes on without it.
+    t.patchHerdr(s => { s.failPaneGet = true; });
+    const pi = json(t.run(['new', '--json', '--from', 'S1', '--harness', 'pi', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.failPaneGet = false; });
+    assert.strictEqual(pi.action, 'new');
+    assert.ok(t.events(2).includes('transcript-unknown'));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    assert.strictEqual(outcome(2), 'new');
+
+    // The record fails right after the agent started, before the first prompt
+    // goes: the outcome says so, the brief stays held for deliver, and the
+    // parent is superseded once, with the placement.
+    ok(t.run(['reopen', 'S1']));
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_sending BEFORE UPDATE OF pending ON sessions WHEN NEW.pending LIKE '%"sending"%'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
+    assert.strictEqual(r.status, 1);
+    assert.match(r.stderr, /S3's worker started in pane \S+, but recording or delivering to it failed: [\s\S]*deliver S3/);
+    assert.match(outcome(3), /^started-then-failed: /);
+    assert.ok(t.row(3).pane_id, 'the running worker stays recorded');
+    assert.ok(store.pendingOf(t.row(3)).length > 0, 'its brief is still held');
+    assert.strictEqual(t.row(1).status, 'superseded');
+    const workers = Object.values(t.herdrState().panes).filter(p => p.agent).length;
+    const d2 = t.open();
+    d2.exec('DROP TRIGGER no_sending');
+    d2.close();
+    ok(t.run(['deliver', 'S3']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /the header/.test(p.text)).length, 1);
+    assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent).length, workers, 'no second worker');
+  } finally { t.cleanup(); }
+});
+
+// A trigger that aborts one kind of event insert, to show history never
+// decides a route's result.
+const failEvent = (t, kind) => {
+  const d = t.open();
+  d.exec(`CREATE TRIGGER no_${kind.replace(/-/g, '_')} BEFORE INSERT ON events WHEN NEW.kind = '${kind}' BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+  d.close();
+};
+
+test('a relaunch whose relaunched event cannot be written still reports its result, and delivers once', () => {
+  for (const [plan, expect] of [[[], 'relaunched'], [['reject'], 'waiting'], [['hang:2500'], 'waiting']]) {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+      t.patchHerdr(s => { delete s.panes[first.pane_id]; });
+      failEvent(t, 'relaunched');
+      // The brief goes in one prompt, so the plan applies to it.
+      t.patchHerdr(s => { s.promptPlan = plan.slice(); });
+      const r = ok(t.run(['relaunch', 'S1', '--json', '--request', 'and the logo', '--reason', 'stale'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' }));
+      const out = JSON.parse(r.stdout);
+      assert.strictEqual(out.action, expect, plan.join());
+      assert.ok(out.pane_id);
+      assert.match(r.stderr, /warning: S1's relaunched event was not recorded \(injected\)/);
+      if (plan[0] === 'reject') { assert.strictEqual(out.waiting, 'busy'); assert.match(out.note, /deliver S1/); }
+      if (plan[0] === 'hang:2500') { assert.strictEqual(out.waiting, 'unknown'); assert.match(out.note, /settle S1/); sleep(2000); }
+      if (!plan.length) {
+        assert.strictEqual(t.herdrState().prompts.filter(p => /and the logo/.test(p.text)).length, 1);
+        assert.strictEqual(t.run(['relaunch', 'S1', '--request', 'and the logo', '--reason', 'r']).status, 1, 'a retry is refused: the worker is live');
+      }
+    } finally { t.cleanup(); }
+  }
+});
+
+test('startup bookkeeping that cannot be written keeps the worker phase, its guidance, and supersession', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const outcome = id => { const d = t.open(); try { return store.recentDecisions(d, id, 1)[0].outcome; } finally { d.close(); } };
+
+    // A worker waiting on the user: the brief is held, and the parent superseded.
+    failEvent(t, 'waiting-for-user');
+    t.patchHerdr(s => { s.blockStart = true; });
+    const waiting = json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.blockStart = false; s.panes[waiting.pane_id].agent_status = 'idle'; });
+    assert.strictEqual(waiting.waiting, 'user');
+    assert.strictEqual(outcome(2), 'waiting: user');
+    assert.strictEqual(t.row(1).status, 'superseded');
+    ok(t.run(['deliver', 'S2']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /the footer/.test(p.text)).length, 1);
+
+    // A start that may have left a worker: its uncertainty guidance survives.
+    ok(t.run(['reopen', 'S1']));
+    failEvent(t, 'start-uncertain');
+    t.patchHerdr(s => { s.failStart = 'failed'; s.failClose = true; });
+    const uncertain = t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
+    assert.match(uncertain.stderr, /whether its agent started is uncertain[\s\S]*Its tab is kept/);
+    assert.match(outcome(3), /^uncertain: /);
+    assert.ok(t.row(3).pane_id);
+    assert.strictEqual(t.row(1).status, 'superseded');
+
+    // A confirmed failure: the parent's supersession is undone with the launch.
+    ok(t.run(['reopen', 'S1']));
+    failEvent(t, 'start-failed');
+    t.patchHerdr(s => { s.failClose = false; });
+    const failed = t.run(['new', '--from', 'S1', '--title', 'Site 4', '--request', 'the logo', '--reason', 'r']);
+    assert.match(failed.stderr, /no agent started[\s\S]*resume S4, without --request/);
+    assert.match(outcome(4), /^failed: /);
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.row(4).launches, 0);
+    assert.ok(t.events(1).includes('supersession-undone'));
+
+    // An uncertain relaunch whose relaunch-failed event cannot be written.
+    failEvent(t, 'relaunch-failed');
+    t.patchHerdr(s => { s.failClose = true; });
+    const relaunch = t.run(['relaunch', 'S4', '--request', 'the logo', '--reason', 'r']);
+    assert.match(relaunch.stderr, /may have started; check it before anything else/);
+    assert.match(outcome(4), /^uncertain: /);
+  } finally { t.cleanup(); }
+});
+
+test('a supersession that cannot be written leaves no worker, and the retry completes it', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_supersede BEFORE UPDATE OF status ON sessions WHEN NEW.status = 'superseded'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    const workers = () => Object.values(t.herdrState().panes).filter(p => p.pane_id !== 'w1:p0').length;
+    const before = workers();
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'S1 is stale']);
+    assert.match(r.stderr, /no agent started: recording S2's new tab failed: injected\. Retry with resume S2, without --request/);
+    assert.strictEqual(workers(), before, 'its tab was closed and no agent started');
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.row(2).pane_id, null);
+    const d2 = t.open();
+    d2.exec('DROP TRIGGER no_supersede');
+    d2.close();
+    ok(t.run(['resume', 'S2', '--reason', 'retry the failed start']));
+    assert.strictEqual(t.row(1).status, 'superseded');
+    assert.strictEqual(t.herdrState().prompts.filter(p => /the footer/.test(p.text)).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a parent reopened after its child started stays open through the child\'s later uncertain or started-then-failed launches', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const child = json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    ok(t.run(['reopen', 'S1']));
+    t.patchHerdr(s => { delete s.panes[child.pane_id]; s.failStart = 'failed'; s.failClose = true; });
+    assert.match(t.run(['relaunch', 'S2', '--request', 'again', '--reason', 'r']).stderr, /may have started/);
+    assert.strictEqual(t.row(1).status, 'open');
+    const placed = t.row(2).pane_id;
+    t.patchHerdr(s => { delete s.panes[placed]; s.failStart = null; s.failClose = false; });
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_sending BEFORE UPDATE OF pending ON sessions WHEN NEW.pending LIKE '%"sending"%'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    const started = t.run(['relaunch', 'S2', '--request', 'again', '--reason', 'r']);
+    assert.match(started.stderr, /S2's worker started in pane/);
+    assert.ok(t.events(2).includes('relaunched'), 'the relaunch that placed a worker says so');
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.events(1).filter(k => k === 'superseded').length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a rolled-back first launch restores its parent even when the rollback event cannot be written', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    failEvent(t, 'supersession-undone');
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    assert.match(r.stderr, /warning: S1's supersession-undone event was not recorded[\s\S]*no agent started[\s\S]*Retry with resume S2, without --request/);
+    assert.strictEqual(t.row(1).status, 'open');
+    assert.strictEqual(t.row(2).launches, 0);
+    assert.strictEqual(t.row(2).pane_id, null);
+    assert.ok(store.pendingOf(t.row(2)).length > 0, 'its brief is held');
+    const d = t.open();
+    assert.match(store.recentDecisions(d, 2, 1)[0].outcome, /^failed: /);
+    d.close();
+  } finally { t.cleanup(); }
+});
+
+test('a rolled-back first launch leaves a parent its own worker resolved meanwhile resolved', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    // S1's worker reports itself done while S2's agent is starting, then S2's start fails.
+    t.patchHerdr(s => {
+      s.onStart = `ORCHESTRATOR_SESSION=1 "${process.execPath}" "${CLI}" report --summary done --resolved`;
+      s.failStart = 'failed';
+    });
+    t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    t.patchHerdr(s => { s.onStart = null; s.failStart = null; });
+    assert.strictEqual(t.row(1).status, 'resolved');
+    assert.ok(t.row(1).resolved_at);
+    assert.ok(!t.events(1).includes('supersession-undone'));
+    assert.match(t.run(['send', 'S1', '--request', 'x', '--reason', 'r']).stderr, /S1 is resolved/);
+    assert.strictEqual(t.row(2).launches, 0);
+    assert.strictEqual(t.row(2).pane_id, null);
+  } finally { t.cleanup(); }
+});
+
+test('a rolled-back first launch leaves its parent with a sibling that superseded it meanwhile', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    // While S2's agent starts, S3 is made from S1 and starts; then S2's start fails.
+    t.patchHerdr(s => {
+      s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
+      s.failStart = 'failed';
+    });
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    assert.match(r.stderr, /no agent started/);
+    assert.ok(t.row(3).pane_id, 'S3 has a worker');
+    assert.strictEqual(t.row(2).pane_id, null);
+    assert.strictEqual(t.row(1).status, 'superseded', 'S3 still supersedes S1');
+    assert.ok(!t.events(1).includes('supersession-undone'));
+  } finally { t.cleanup(); }
+});
+
+test('a failed launch of a later sibling leaves its parent with the earlier successor, in either order', () => {
+  // In sequence: S2 took over S1; S3 from S1 then fails.
+  let t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']).stderr, /no agent started/);
+    assert.strictEqual(t.row(1).status, 'superseded', 'S2 still supersedes S1');
+    assert.match(t.run(['send', 'S1', '--request', 'x', '--reason', 'r']).stderr, /S1 is superseded/);
+  } finally { t.cleanup(); }
+
+  // Overlapping: S2 is placed; while its agent starts, S3 is placed and fails; then S2 starts.
+  t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => {
+      s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
+      s.innerFailStart = 'failed';
+    });
+    json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+    assert.strictEqual(t.row(3).pane_id, null, 'S3 got no worker');
+    assert.ok(t.row(2).pane_id, 'S2 did');
+    assert.strictEqual(t.row(1).status, 'superseded', 'S2 still supersedes S1');
+  } finally { t.cleanup(); }
+});
+
+test('a parent reopened by any route, even with its event lost, stays open when a later child fails', () => {
+  for (const reopen of ['report --open', 'reopen without its event', 'resolve then report --open']) {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+      json(t.run(['new', '--json', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']));
+      if (reopen === 'report --open') ok(t.run(['report', '--open'], { ORCHESTRATOR_SESSION: '1' }));
+      if (reopen === 'resolve then report --open') {
+        ok(t.run(['report', '--resolved'], { ORCHESTRATOR_SESSION: '1' }));
+        ok(t.run(['report', '--open'], { ORCHESTRATOR_SESSION: '1' }));
+      }
+      if (reopen === 'reopen without its event') {
+        failEvent(t, 'reopened');
+        assert.match(ok(t.run(['reopen', 'S1'])).stderr, /warning: S1's reopened event was not recorded/);
+      }
+      assert.strictEqual(t.row(1).status, 'open', reopen);
+      t.patchHerdr(s => { s.failStart = 'failed'; });
+      assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']).stderr, /no agent started/);
+      t.patchHerdr(s => { s.failStart = null; });
+      assert.strictEqual(t.row(1).status, 'open', `${reopen}: S1 is left as it was`);
+      ok(t.run(['send', 'S1', '--request', 'one more', '--reason', 'r']));
+    } finally { t.cleanup(); }
+  }
+});
+
+test('children that fail in turn leave their parent open: a rolled-back claim is no successor', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => { s.failStart = 'failed'; });
+    t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']);
+    t.patchHerdr(s => { s.failStart = null; });
+    assert.strictEqual(t.row(1).status, 'open');
+    ok(t.run(['send', 'S1', '--request', 'one more', '--reason', 'r']));
+  } finally { t.cleanup(); }
+
+  // Overlapping, in one succession: S3 is placed and fails while S2 starts, then S2 fails too.
+  const u = setup();
+  try {
+    ok(u.run(['start']));
+    json(u.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    u.patchHerdr(s => {
+      s.onStart = `"${process.execPath}" "${CLI}" new --from S1 --title "Site 3" --request "the header" --reason r`;
+      s.innerFailStart = 'failed';
+      s.failStart = 'failed';
+    });
+    assert.match(u.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']).stderr, /no agent started/);
+    u.patchHerdr(s => { s.failStart = null; });
+    assert.strictEqual(u.row(2).pane_id, null);
+    assert.strictEqual(u.row(3).pane_id, null);
+    assert.strictEqual(u.row(1).status, 'open', 'neither rolled-back claim is a successor');
+  } finally { u.cleanup(); }
+});
+
+test('a failed restore notes that the parent stays superseded only while it is', () => {
+  for (const resolvedMeanwhile of [false, true]) {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+      blockClear(t);
+      t.patchHerdr(s => {
+        s.failStart = 'failed';
+        if (resolvedMeanwhile) s.onStart = `ORCHESTRATOR_SESSION=1 "${process.execPath}" "${CLI}" report --summary done --resolved`;
+      });
+      const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+      assert.match(r.stderr, /restoring the record failed/);
+      if (resolvedMeanwhile) assert.doesNotMatch(r.stderr, /S1 stays superseded/);
+      else assert.match(r.stderr, /including this request, and S1 stays superseded\. Do not send the request again/);
+    } finally { t.cleanup(); }
+  }
+});
+
+test('a delivery whose activity time cannot be written still reports delivered, once', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    t.patchHerdr(s => { s.blockStart = true; });
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    t.patchHerdr(s => { s.blockStart = false; s.panes[first.pane_id].agent_status = 'idle'; });
+    const d = t.open();
+    d.exec("CREATE TRIGGER no_activity BEFORE UPDATE OF last_active_at ON sessions BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    d.close();
+    const r = ok(t.run(['deliver', 'S1', '--json']));
+    assert.strictEqual(JSON.parse(r.stdout).action, 'delivered');
+    assert.strictEqual(JSON.parse(r.stdout).pane_id, first.pane_id);
+    assert.match(r.stderr, /warning: S1's activity time was not recorded \(injected\)/);
+    assert.strictEqual(t.row(1).pending, null);
+    assert.match(t.run(['deliver', 'S1']).stderr, /has no held prompt/);
+    assert.strictEqual(t.herdrState().prompts.filter(p => /fix the login/.test(p.text)).length, 1);
+  } finally { t.cleanup(); }
+});
+
+// A record that cannot be restored after its tab closed still holds that
+// launch's prompts; following the retry its error names submits each once.
+const blockClear = t => {
+  const d = t.open();
+  // Only the rollback clears the placement and lowers the launch count.
+  d.exec("CREATE TRIGGER no_clear BEFORE UPDATE OF pane_id ON sessions WHEN NEW.pane_id IS NULL AND NEW.launches < OLD.launches BEGIN SELECT RAISE(ABORT, 'injected'); END");
+  d.close();
+};
+const unblockClear = t => { const d = t.open(); d.exec('DROP TRIGGER no_clear'); d.close(); };
+
+for (const harness of ['claude', 'pi']) {
+  test(`a ${harness} first launch whose record cannot be restored names relaunch, and that sends its brief once`, () => {
+    const t = setup();
+    try {
+      ok(t.run(['start']));
+      blockClear(t);
+      t.patchHerdr(s => { s.failStart = 'failed'; });
+      const r = t.run(['new', '--harness', harness, '--title', 'Site', '--request', 'fix the login', '--reason', 'r']);
+      assert.match(r.stderr, /no agent started[\s\S]*restoring the record failed \(injected\)[\s\S]*No agent is running[\s\S]*including this request\. Do not send the request again; relaunch S1 with a --request asking it to continue/);
+      assert.doesNotMatch(r.stderr, /Its tab is kept|then resume/);
+      assert.ok(t.events(1).includes('start-failed') && !t.events(1).includes('start-uncertain'), 'the history agrees with the outcome');
+      const d = t.open();
+      assert.match(store.recentDecisions(d, 1, 1)[0].outcome, /^failed: /);
+      d.close();
+      unblockClear(t);
+      t.patchHerdr(s => { s.failStart = null; });
+      ok(t.run(['relaunch', 'S1', '--request', 'continue where the held messages leave off', '--reason', 'retry the failed start']));
+      assert.strictEqual(t.herdrState().prompts.filter(p => /fix the login/.test(p.text)).length, 1);
+      assert.strictEqual(Object.values(t.herdrState().panes).filter(p => p.agent && p.pane_id !== 'w1:p0').length, 1);
+    } finally { t.cleanup(); }
+  });
+}
+
+test('a resume --request whose record cannot be restored names resume without --request, and the request goes once', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    const first = json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    // A Claude conversation whose transcript location was never recorded.
+    t.patchHerdr(s => { delete s.panes[first.pane_id]; s.failStart = 'failed'; });
+    blockClear(t);
+    const r = t.run(['resume', 'S1', '--request', 'a unique new request', '--reason', 'its tab was closed']);
+    assert.match(r.stderr, /Do not send the request again; resume S1 without --request: it delivers the held prompts/);
+    assert.doesNotMatch(r.stderr, /relaunch it/, 'one route only');
+    unblockClear(t);
+    t.patchHerdr(s => { s.failStart = null; });
+    ok(t.run(['resume', 'S1', '--reason', 'retry the failed resume']));
+    assert.strictEqual(t.herdrState().prompts.filter(p => /a unique new request/.test(p.text)).length, 1);
+    assert.strictEqual(t.row(1).pending, null);
+  } finally { t.cleanup(); }
+});
+
+test('an empty tab that could not be closed after its record failed is named for what happened', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    json(t.run(['new', '--json', '--title', 'Site', '--request', 'fix the login', '--reason', 'r']));
+    const d = t.open();
+    d.exec(`CREATE TRIGGER no_supersede BEFORE UPDATE OF status ON sessions WHEN NEW.status = 'superseded'
+      BEGIN SELECT RAISE(ABORT, 'injected'); END`);
+    d.close();
+    t.patchHerdr(s => { s.failClose = true; });
+    const r = t.run(['new', '--from', 'S1', '--title', 'Site 2', '--request', 'the footer', '--reason', 'r']);
+    assert.match(r.stderr, /no agent started[\s\S]*its tab could not be closed after recording it failed, so an empty tab may be open: close it if so, then resume S2/);
+    assert.doesNotMatch(r.stderr, /timed out/);
+  } finally { t.cleanup(); }
+});
+
+test('a launch waiting on the user records which wait', () => {
+  const t = setup();
+  try {
+    ok(t.run(['start']));
+    t.patchHerdr(s => { s.blockStart = true; });
+    assert.strictEqual(json(t.run(['new', '--json', '--title', 'New folder', '--request', 'x', '--reason', 'r'])).waiting, 'user');
+    const d = t.open();
+    assert.strictEqual(store.recentDecisions(d, 1, 1)[0].outcome, 'waiting: user');
+    d.close();
+  } finally { t.cleanup(); }
+});
+
+test('prompts show in the order they were typed, whatever order their writers commit in', () => {
+  const t = setup();
+  try {
+    const d = t.open();
+    const id = store.createSession(d, { title: 'pi', intent: 'i', harness: 'pi', cwd: t.dir });
+    const typed = Date.now() - 60000;
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'second', at: new Date(typed + 5).toISOString(), seq: 3 });
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'first', at: new Date(typed).toISOString(), seq: 2 });
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'third', at: new Date(typed + 5).toISOString(), seq: 4 });
+    store.recordHookEvent(d, id, { kind: 'prompt', text: 'no stamp' });
+    assert.deepStrictEqual(store.recentPrompts(d, id, 10).map(p => p.text), ['first', 'second', 'third', 'no stamp']);
+    d.close();
+  } finally { t.cleanup(); }
+});
+
+test('a version-1 record is migrated on open and keeps its rows', () => {
+  const t = setup();
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    fs.mkdirSync(path.dirname(t.db), { recursive: true });
+    const old = new DatabaseSync(t.db);
+    old.exec(store.MIGRATIONS[1]);
+    old.exec('PRAGMA user_version = 1');
+    old.prepare("INSERT INTO sessions (title, intent, harness, cwd, started_at, last_active_at) VALUES ('t', 'i', 'claude', '/x', 'a', 'a')").run();
+    old.prepare("INSERT INTO decisions (at, request, action, session_id, reason) VALUES ('a', 'r', 'new', 1, 'why')").run();
+    old.prepare("INSERT INTO prompts (session_id, at, source, text) VALUES (1, 'a', 'direct', 'hello')").run();
+    old.close();
+    const d = t.open();
+    try {
+      assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+      assert.strictEqual(store.recentPrompts(d, 1, 5)[0].text, 'hello');
+      const [decision] = store.recentDecisions(d, 1, 5);
+      assert.strictEqual(decision.outcome, null);
+      store.setOutcome(d, decision.id, 'new');
+      assert.strictEqual(store.recentDecisions(d, 1, 5)[0].outcome, 'new');
+    } finally { d.close(); }
   } finally { t.cleanup(); }
 });
 
@@ -518,9 +1127,9 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     assert.strictEqual(count(/then the menu/), 1);
     assert.strictEqual(count(/and the colours/), 1);
 
-    // Its tab is gone: the resume the send refusal names is refused until the
-    // unknown prompt is settled, and keeps nothing; settle, then resume --request
-    // carries the held prompt and the request.
+    // Its agent exited (no live worker, its tab still open): the resume the send
+    // refusal names is refused until the unknown prompt is settled, and changes
+    // nothing; settle, then resume --request carries the held prompt and the request.
     t.patchHerdr(s => { s.promptPlan = ['lost:2500']; });
     t.run(['send', 'S1', '--request', 'then the icons', '--reason', 'r'], { ORCHESTRATOR_HERDR_TIMEOUT_MS: '1000' });
     sleep(2000);
@@ -535,7 +1144,7 @@ test('a send refused before writing keeps nothing; each route SKILL.md names sub
     assert.ok(t.herdrState().panes[worker], 'nor closed the tab the user is told to check');
     assert.strictEqual(count(/and the fonts/), 0);
     assert.match(t.run(['settle', 'S1', '--resend']).stdout, /or resume S1 if its tab is gone \(with --request if a new request is waiting\)/);
-    ok(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'its tab was closed']));
+    ok(t.run(['resume', 'S1', '--request', 'and the fonts', '--reason', 'its agent exited']));
     assert.strictEqual(count(/then the icons/), 1);
     assert.strictEqual(count(/and the fonts/), 1);
     assert.strictEqual(t.row(1).pending, null);
@@ -593,7 +1202,8 @@ test('a start failure whose cleanup fails keeps the tab recorded and blocks a du
     assert.match(r.stderr, /uncertain[\s\S]*could not be closed and stays recorded/);
     const kept = t.row(1);
     assert.ok(kept.pane_id && t.herdrState().panes[kept.pane_id], 'the orphan is recorded, not forgotten');
-    t.patchHerdr(s => { s.failStart = null; });
+    // The uncertain start did write its conversation; this test is about the leftover tab.
+    t.patchHerdr(s => { s.failStart = null; s.anyResume = true; });
     assert.match(t.run(['resume', 'S1', '--reason', 'r']).stderr, /still open and could not be closed/);
     assert.strictEqual(Object.keys(t.herdrState().panes).length, 2, 'no second worker');
     t.patchHerdr(s => { s.failClose = false; });
@@ -855,9 +1465,12 @@ test('an uncertain relaunch keeps its new conversation and records the previous 
     assert.notStrictEqual(row.native_session_id, a, 'the possibly-started replacement is kept');
     assert.ok(row.pane_id, 'and its tab');
     const d = t.open();
-    const relaunched = store.recentEvents(d, 1, 50).find(e => e.kind === 'relaunched');
+    const events = store.recentEvents(d, 1, 50);
+    const outcome = store.recentDecisions(d, 1, 1)[0].outcome;
     d.close();
-    assert.match(relaunched.detail, new RegExp(`previous conversation ${a} at /s/A\\.jsonl: stale context`));
+    assert.match(events.find(e => e.kind === 'relaunch-staged').detail, new RegExp(`previous conversation ${a} at /s/A\\.jsonl: stale context`));
+    assert.ok(!events.some(e => e.kind === 'relaunched'), 'no relaunch is claimed while its worker is uncertain');
+    assert.match(outcome, /^uncertain: /);
   } finally { t.cleanup(); }
 });
 
@@ -924,11 +1537,13 @@ test('records opened at the same moment for the first time all succeed', async (
 // ─── Forced interleavings ────────────────────────────────────────────────────
 // Another writer takes the record's write lock, makes its change, and holds it
 // uncommitted. The code under test reads the old state, then reaches the
-// store's `write-lock` probe just before its own write transaction; the probe
-// signals the writer, which commits only then, while the code under test waits
-// on the lock. Nothing hangs: if the probe never fires, the code under test
-// fails with "database is locked" at its 5 s busy timeout, and a watchdog
-// commits after 10 s; a run whose probe never signalled fails.
+// store's `write-lock` probe just before the write transaction the test names
+// (its site); the probe signals the writer, which commits only then, while the
+// code under test waits on the lock. A write at any other site comes first only
+// by waiting on the held lock, so it fails rather than releasing the writer.
+// Nothing hangs: if the named write never comes, the code under test fails with
+// "database is locked" at its 5 s busy timeout and the writer is killed; a 10 s
+// watchdog commits only if the code under test makes no write at all.
 
 const LOCK_HOLDER = `
 const crypto = require('node:crypto');
@@ -968,17 +1583,19 @@ function holdLock(t, sql) {
   return { locked, done, release: () => fs.writeFileSync(signal, ''), kill: () => child.kill() };
 }
 
-// Run `fn` with the write-lock probe releasing the writer; always stop the
-// writer and wait for it before the caller removes the fixture.
-async function raced(t, sql, fn) {
+// Run `fn` with the write-lock probe releasing the writer at `site`; always
+// stop the writer and wait for it before the caller removes the fixture.
+async function raced(t, sql, site, fn) {
   const writer = holdLock(t, sql);
+  const sites = [];
   try {
     await writer.locked;
-    store.setProbe('write-lock', writer.release);
+    store.setProbe('write-lock', at => { sites.push(at); if (at === site) writer.release(); });
     const result = fn();
     const done = await writer.done;
     assert.strictEqual(done.status, 0, done.stderr);
-    assert.ok(done.signalled, 'the write-lock probe never released the writer');
+    assert.strictEqual(sites[0], site, `the first write was at ${sites[0]}, not ${site}`);
+    assert.ok(done.signalled, `the ${site} write never released the writer`);
     return result;
   } finally {
     store.setProbe('write-lock', null);
@@ -995,7 +1612,7 @@ for (const [name, previous] of [['no owner', null], ['an owner that is gone', 'w
       if (previous) d.prepare("INSERT INTO owner (id, pane_id, at) VALUES (1, ?, '2026-01-01T00:00:00Z')").run(previous);
       const judged = [];
       const first = await raced(t, "INSERT INTO owner (id, pane_id, at) VALUES (1, 'w1:rival', '2026-11-23T00:00:00Z') " +
-        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at',
+        'ON CONFLICT(id) DO UPDATE SET pane_id = excluded.pane_id, at = excluded.at', 'claim',
       () => store.claimOwner(d, { pane_id: 'w1:me' }, held => { judged.push(held.pane_id); return false; }));
       assert.deepStrictEqual(judged, previous ? [previous] : [], 'judged the state from before the rival committed');
       assert.strictEqual(first.claimed, false);
@@ -1013,7 +1630,7 @@ test('a compaction that waits on another writer counts both', async () => {
   const d = t.open();
   try {
     const id = store.createSession(d, { title: 'busy', intent: 'i', harness: 'claude', native_session_id: 'c-1', cwd: t.dir });
-    await raced(t, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`, () => {
+    await raced(t, `UPDATE sessions SET compactions = compactions + 1 WHERE id = ${id}`, 'hook', () => {
       assert.strictEqual(store.getSession(d, id).compactions, 0, 'the other compaction is not visible yet');
       store.recordHookEvent(d, id, { kind: 'compact', detail: 'auto' });
     });
@@ -1027,10 +1644,94 @@ test('an opener that read version 0 while another created the schema does not cr
   try {
     fs.mkdirSync(path.dirname(t.db), { recursive: true });
     // The connection is kept as soon as it opens, so a failed check still closes it.
-    await raced(t, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`,
+    await raced(t, `CREATE TABLE sessions (id INTEGER PRIMARY KEY); PRAGMA user_version = ${store.SCHEMA_VERSION}`, 'open',
       () => { d = store.open(t.db); });
     assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
   } finally { if (d) d.close(); t.cleanup(); }
+});
+
+// A version-1 record, as PR #38 wrote it, with one session.
+function writeVersion1(t) {
+  const { DatabaseSync } = require('node:sqlite');
+  fs.mkdirSync(path.dirname(t.db), { recursive: true });
+  const old = new DatabaseSync(t.db);
+  old.exec(store.MIGRATIONS[1]);
+  old.exec('PRAGMA journal_mode = WAL; PRAGMA user_version = 1');
+  old.prepare("INSERT INTO sessions (title, intent, harness, native_session_id, cwd, started_at, last_active_at) VALUES ('t', 'i', 'claude', 'c-1', '/x', 'a', 'a')").run();
+  old.close();
+}
+
+test('an opener that read version 1 while another migrated it does not migrate it again', async () => {
+  const t = setup();
+  let d = null;
+  try {
+    writeVersion1(t);
+    const migrate = `${store.MIGRATIONS.slice(2).join('\n')}; PRAGMA user_version = ${store.SCHEMA_VERSION}`;
+    await raced(t, migrate, 'open', () => { d = store.open(t.db); });
+    assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+    assert.strictEqual(store.getSession(d, 1).title, 't');
+  } finally { if (d) d.close(); t.cleanup(); }
+});
+
+test('an opener that read version 1 while a newer brain migrated past it refuses, and leaves the version alone', async () => {
+  const t = setup();
+  try {
+    writeVersion1(t);
+    const newer = store.SCHEMA_VERSION + 1;
+    let refused = null;
+    await raced(t, `PRAGMA user_version = ${newer}`, 'open', () => {
+      try { store.open(t.db).close(); } catch (err) { refused = err; }
+    });
+    assert.match(String(refused && refused.message), new RegExp(`has schema ${newer}; this orchestrator knows ${store.SCHEMA_VERSION}`));
+    const { DatabaseSync } = require('node:sqlite');
+    const check = new DatabaseSync(t.db);
+    assert.strictEqual(check.prepare('PRAGMA user_version').get().user_version, newer);
+    check.close();
+  } finally { t.cleanup(); }
+});
+
+test('a migrated record keeps a standing successor, and not one from before a reopen', () => {
+  for (const parentStatus of ['superseded', 'open']) {
+    const t = setup();
+    try {
+      // As PR #38 left it: S1 was superseded by S2, whose worker is live; or S1 was reopened since.
+      const { DatabaseSync } = require('node:sqlite');
+      fs.mkdirSync(path.dirname(t.db), { recursive: true });
+      const old = new DatabaseSync(t.db);
+      old.exec(store.MIGRATIONS[1]);
+      old.exec('PRAGMA journal_mode = WAL; PRAGMA user_version = 1');
+      const insert = old.prepare(`INSERT INTO sessions (title, intent, harness, native_session_id, cwd, started_at, last_active_at, status, parent_id, launches, tab_id, pane_id)
+        VALUES (?, 'i', 'claude', ?, '/x', 'a', 'a', ?, ?, ?, ?, ?)`);
+      insert.run('Site', 'c-1', parentStatus, null, 1, null, null);
+      insert.run('Site 2', 'c-2', 'open', 1, 1, 'w1:t50', 'w1:p50');
+      old.close();
+      ok(t.run(['start']));
+      t.patchHerdr(s => { s.panes['w1:p50'] = { pane_id: 'w1:p50', tab_id: 'w1:t50', agent: 'claude', agent_status: 'idle', agent_session: { kind: 'id', value: 'c-2' }, env: [] }; });
+      t.patchHerdr(s => { s.failStart = 'failed'; });
+      assert.match(t.run(['new', '--from', 'S1', '--title', 'Site 3', '--request', 'the header', '--reason', 'r']).stderr, /no agent started/);
+      assert.strictEqual(t.row(1).status, parentStatus, parentStatus === 'superseded'
+        ? 'S2 still supersedes S1 after the upgrade' : 'a parent reopened before the upgrade is left open');
+    } finally { t.cleanup(); }
+  }
+});
+
+test('a recorder migrates a version-1 record it opens, and stays silent on a newer one', () => {
+  const t = setup();
+  try {
+    writeVersion1(t);
+    const prompt = JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'c-1', prompt: 'hello from the worker' });
+    const r = ok(t.run(['hook', 'claude'], { ORCHESTRATOR_SESSION: '1' }, prompt));
+    assert.strictEqual(r.stdout + r.stderr, '');
+    const d = t.open();
+    assert.strictEqual(d.prepare('PRAGMA user_version').get().user_version, store.SCHEMA_VERSION);
+    assert.deepStrictEqual(store.recentPrompts(d, 1, 5).map(p => p.text), ['hello from the worker']);
+    d.exec(`PRAGMA user_version = ${store.SCHEMA_VERSION + 1}`);
+    d.close();
+    const newer = ok(t.run(['hook', 'claude'], { ORCHESTRATOR_SESSION: '1' }, prompt));
+    assert.strictEqual(newer.stdout + newer.stderr, '', 'a recorder never prints');
+    assert.match(fs.readFileSync(`${t.db}.hook.log`, 'utf8'), /claude prompt: .*Update the brain/);
+    assert.match(t.run(['find']).stderr, /Update the brain/);
+  } finally { t.cleanup(); }
 });
 
 // ─── Status, stop, report ────────────────────────────────────────────────────
