@@ -62,7 +62,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 
 When one message holds unrelated asks, split it and route each part separately. Mixing them in one session is the failure this skill exists to prevent. When two open sessions fit equally well, ask the user one question naming both.
 
-Every route records a decision, and the decision records its outcome once the route has run: the action printed (for example `new`, `resumed`, `relaunched`, `sent`, or `waiting: user`), or what went wrong (for example `held: …`, `unknown: …`, `failed: …` when no worker started, `uncertain: …` when one may have, `started-then-failed: …` when one started but recording or delivering failed). A retry is a new decision. A command refused before it routes anything records none. Outcomes, and events written after an action (a launch, a delivery, a stop), are history: one that cannot be written prints a warning and never changes a command's result or its guidance. Events committed with a routing change, such as a new tab and its parent's supersession, belong to that change and are written or rolled back with it. If `new --from` fails before any worker started, the parent is left as it was (open, unless another session already superseded it), and `find` shows both: retry the new one as its error says (`resume S<new>`), rather than choosing between them again. The exception is a failure whose record could not be restored: the parent stays superseded, and the error names the retry (`relaunch S<new>`). Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
+Every route records a decision, and the decision records its outcome once the route has run: the action printed (for example `new`, `resumed`, `relaunched`, `sent`, or `waiting: user`), or what went wrong (for example `held: …`, `unknown: …`, `failed: …` when no worker started, `uncertain: …` when one may have, `started-then-failed: …` when one started but recording or delivering failed). A retry is a new decision. A command refused before it routes anything records none. Outcomes, and events written after an action (a launch, a delivery, a stop), are history: one that cannot be written prints a warning and never changes a command's result or its guidance. Events committed with a routing change, such as a new tab and its parent's supersession, belong to that change and are written or rolled back with it. If `new --from` fails before any worker started, the parent is left as it was (open, unless another session with a worker, or one that may have a worker, already superseded it; a parent an older record marked superseded by a session that never got a worker is reopened, since supersession needs a first worker), and `find` shows both: retry the new one as its error says (`resume S<new>`), rather than choosing between them again. The exception is a failure whose record could not be restored: the parent stays superseded, and the error names the retry (`relaunch S<new>`). Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
 
 ### 4. Start a new session
 
@@ -75,7 +75,7 @@ orch new --title "<short, distinct name>" --intent "<one sentence: what this ses
 - **Persona**: pick one from the persona table in `AGENTS.md`. The worker opens with `/brain <persona>` and follows the project's rules, including ticket-first.
 - **Harness, model, effort**: leave them to the script's defaults (`orch --help` prints them). Pass `--harness pi`, `--model`, or `--effort` only when the user names them. Claude and Pi are tracked; any other Herdr agent kind launches untracked, with no prompt record and no resume.
 - **Ticket**: pass `--ticket` when the user gave one. Otherwise the worker files it and reports it back.
-- **Worktree**: the worker starts in the project root and makes its own worktree under the project's rules. Pass `--cwd` only to start it elsewhere.
+- **Worktree**: the worker starts in the project root and makes its own worktree under the project's rules. Pass `--cwd` only to start it elsewhere. A worker reports its worktree by any path inside it; the checkout the orchestrator started in (which `start` prints as `protected_checkout`) and any main working tree are refused.
 
 If `new`, `resume`, or `relaunch` answers `action: waiting`, its `note` says why some prompts are still held:
 
@@ -94,7 +94,7 @@ Once `send` has written its request, a failure keeps it in the record: when the 
 
 ### 5. Answer the user
 
-Reply in one or two lines: what you did, the session, and the tab label (`S12 login-page-layout (web-engineer)`). Do not wait for the worker; the user can keep giving you work.
+Reply in one or two lines: what you did, the session id, and the tab label (`S12, tab FAC-31 S12 login-page-layout (web-engineer)`; once the worker reports its worktree, `S12, tab FAC-31-login-page-layout (web-engineer)`). Do not wait for the worker; the user can keep giving you work.
 
 For an update, `orch status S<id>` shows the record: its summary and how long ago it was reported, recent prompts, and compactions. `--ask` asks an idle worker to update its summary and waits for that turn; it is a request, not a guarantee. Relay the summary with its age ("as of 3h ago"), and say so when the worker did not update it. The user may also ask the worker directly in its tab; the hooks record that conversation too.
 
@@ -104,7 +104,7 @@ A worker marks its session resolved when its ticket is Done or its PR is merged 
 
 ## What the workers do
 
-Every worker's tab carries `ORCHESTRATOR_DB`, `ORCHESTRATOR_SESSION`, and `ORCHESTRATOR_CLI`. Its first prompt tells it to keep its record current with `node "$ORCHESTRATOR_CLI" report --summary …`, adding `--ticket <id>` and finally `--resolved`. Hooks loaded only into these workers (Claude through `--settings`, Pi through `-e`) record every prompt, whether you sent it or the user typed it in the tab, along with each compaction and a `/clear`. A session the user starts by hand has none of this and is never touched.
+Every worker's tab carries `ORCHESTRATOR_DB`, `ORCHESTRATOR_SESSION`, and `ORCHESTRATOR_CLI`. Its first prompt tells it to keep its record current with `node "$ORCHESTRATOR_CLI" report --summary …`, adding `--ticket <id>`, `--worktree <path>` once it has one (a later conversation of the session is told where it was last reported, as a hint to check), and finally `--resolved`. Hooks loaded only into these workers (Claude through `--settings`, Pi through `-e`) record every prompt, whether you sent it or the user typed it in the tab, along with each compaction and a `/clear`. A session the user starts by hand has none of this and is never touched.
 
 A session keeps its conversation id for life; only `relaunch` replaces it, recording the old one in a `relaunch-staged` event, and `relaunched` follows once the new worker is placed. `resume` reopens the conversation by what is certain: Pi by its recorded session file, Claude by its id. It starts the same id fresh, with the brief, the summary, the ticket, the last prompts, and any held prompts, only when the recorded transcript is known to be gone. A session that never had a worker (its first launch failed) starts with its held brief: `orch resume S<id>` without `--request`.
 
@@ -140,4 +140,4 @@ When a launch fails and no worker started, the session is left exactly as it was
 ## Interaction with other skills
 
 - `herdr-fanout`: a working agent's parallel subagents for one task. The orchestrator starts long-lived workers instead, and those workers may fan out themselves.
-- `development-setup` DS1 and DS2: a worker makes its own worktree, and its tab label follows the `<ticket> <scope> (<persona>)` form.
+- `development-setup` DS1 and DS2: a worker makes its own worktree and reports it with `report --worktree`; its tab label is then `<worktree> (<persona>)`, and `<ticket> <scope> (<persona>)` until then, the scope carrying the session id. The report renames the tab at once; the harness's own session name follows at the session's next launch. The record does not track whether that worktree still exists or which session uses it: a later conversation gets it only as a hint to check.

@@ -88,6 +88,33 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 }
 
+const realPath = p => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+
+// The git working tree that holds `dir`: its top level (a real path), and
+// whether it is a main working tree rather than a linked worktree. A
+// submodule is climbed out of, to the working tree that holds it. Null when
+// `dir` is in none, or is gone.
+function workingTree(dir) {
+  try {
+    const classify = top => {
+      const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], top);
+      const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], top);
+      return { top: realPath(top), main: realPath(gitDir) === realPath(common) };
+    };
+    // A submodule checkout is never a linked worktree, so climbing stops at one
+    // (a worktree an outer repository happens to track is still a worktree).
+    let tree = classify(git(['rev-parse', '--show-toplevel'], dir));
+    for (;;) {
+      if (!tree.main) return tree;
+      const up = git(['rev-parse', '--show-superproject-working-tree'], tree.top);
+      if (!up) return tree;
+      tree = classify(up);
+    }
+  } catch {
+    return null;
+  }
+}
+
 // The project's main working tree: shared by its linked worktrees, and right
 // for submodules and separate git directories, where the git directory is not
 // inside the working tree.
@@ -245,10 +272,13 @@ const oneLine = (text, max = 160) => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
 
-// `<ticket> <scope> (<persona>)` (development-setup DS2); the session id keeps the tab findable.
+// DS2: a worker with a worktree is named after it, `<worktree> (<persona>)`;
+// until it reports one, `<ticket> <scope> (<persona>)`, its scope carrying the
+// session id.
 function tabLabel(row) {
-  const scope = `S${row.id} ${slug(row.title)}`;
-  return `${row.ticket ? `${row.ticket} ` : ''}${scope}${row.persona ? ` (${row.persona})` : ''}`;
+  const persona = row.persona ? ` (${row.persona})` : '';
+  if (row.worktree) return `${path.basename(row.worktree)}${persona}`;
+  return `${row.ticket ? `${row.ticket} ` : ''}S${row.id} ${slug(row.title)}${persona}`;
 }
 
 // ─── Matching ─────────────────────────────────────────────────────────────────
@@ -301,6 +331,7 @@ function describe(c) {
       `${r.last_compacted_at ? ` (last ${ago(r.last_compacted_at)})` : ''}${c.score === null ? '' : ` · match ${c.score}`}`,
     `  intent: ${oneLine(r.intent)}`,
   ];
+  if (r.worktree) lines.push(`  worktree: ${r.worktree}`);
   if (r.summary) lines.push(`  summary: ${oneLine(r.summary, 400)}`);
   if (last) lines.push(`  last prompt (${last.source}, ${ago(last.at)}): ${oneLine(last.text)}`);
   if (r.status === 'resolved') lines.push(`  resolved ${ago(r.resolved_at)}: do not resume; start new with --from S${r.id} if related`);
@@ -369,9 +400,16 @@ function brief(row, request, { context } = {}) {
     '',
     `The orchestrator started you as the worker for session S${row.id}: "${row.title}".`,
     'Keep its record current: run `node "$ORCHESTRATOR_CLI" report --summary "<what this session is for, what is done, what remains>"` ' +
-      'when that changes and before you stop for the user. Add `--ticket <id>` once the work has a ticket, and `--resolved` when ' +
+      'when that changes and before you stop for the user. Add `--ticket <id>` once the work has a ticket, ' +
+      '`--worktree <path>` once you have created your worktree (or when it changes), and `--resolved` when ' +
       'its ticket is Done or its PR is merged. Never close this tab yourself.',
   ];
+  // Only a hint: the record cannot know whether that worktree still exists or
+  // whether another session uses it now.
+  if (row.worktree) {
+    lines.push('', `This session last reported its worktree at ${row.worktree}. Check that it still exists and is this ` +
+      "session's before working there; if it is gone, create it again for the same branch.");
+  }
   if (context) lines.push('', context);
   const text = lines.join('\n');
   // A multi-line prompt arrives as pasted text, and a slash command inside a
@@ -381,13 +419,16 @@ function brief(row, request, { context } = {}) {
   return [`/brain ${row.persona} [orchestrator S${row.id}] Adopt this persona and declare; the brief follows in the next message.`, text];
 }
 
-function priorContext(db, row, heading) {
+// `related`: the row is an earlier session, not the one being briefed, so its
+// worktree is shown as its own rather than stated again.
+function priorContext(db, row, heading, { related = false } = {}) {
   const prompts = store.recentPrompts(db, row.id, 5);
   const held = store.pendingOf(row).filter(e => e.state === 'pending').map(e => e.text).filter(t => !t.startsWith('/brain '));
   return [
     `${heading} S${row.id} ("${row.title}")${row.ticket ? `, ticket ${row.ticket}` : ''}:`,
     `- intent: ${oneLine(row.intent, 400)}`,
     row.summary ? `- where it stood: ${oneLine(row.summary, 800)}` : '- no summary was recorded',
+    ...(related && row.worktree ? [`- worktree: ${row.worktree} (the earlier session's; create your own unless the user said to continue it)`] : []),
     ...prompts.map(p => `- asked ${ago(p.at)}: ${oneLine(p.text, 300)}`),
     ...(held.length ? ['Messages that were held for this session and never reached a worker:', ...held.map(t => `---\n${t}\n---`)] : []),
     'Read the ticket, its PR, and the code for the current state before acting; this summary may be stale.',
@@ -749,11 +790,17 @@ const commands = {
     return withDb(opts, (db, file) => {
       excludeFromGit(projectRoot(), file);
       const { me, tookOver } = claimOwnership(db);
+      // The orchestrator runs in the project's checkout, which may itself be a
+      // linked worktree: that working tree is the one no worker may report.
+      const here = workingTree(process.cwd());
+      store.setProjectRoot(db, here ? here.top : realPath(process.cwd()));
+      const protectedCheckout = here ? here.top : `none: ${realPath(process.cwd())} is in no git working tree, so only main working trees are refused as worktrees`;
       const changes = reconcile(db);
       const open = store.listSessions(db).filter(r => r.status === 'open');
       print({
         orchestrator: `pane ${me.pane_id}${tookOver ? ' (took over from an orchestrator that is gone)' : ''}`,
         record: file,
+        protected_checkout: protectedCheckout,
         open_sessions: open.length,
         live_tabs: open.filter(r => r.pane_id).length,
         reconciled: changes.skipped ? `skipped (${changes.skipped})` : `${changes.closed.length} closed, ${changes.adopted.length} adopted`,
@@ -803,7 +850,7 @@ const commands = {
         parent_id: parent ? parent.id : null,
       });
       const row = store.getSession(db, id);
-      const context = parent ? priorContext(db, parent, 'Related earlier session') : null;
+      const context = parent ? priorContext(db, parent, 'Related earlier session', { related: true }) : null;
       const prompts = brief(row, request, { context });
       // Held before the launch, so a launch that fails keeps the brief for resume.
       store.setPending(db, id, prompts.map(text => ({ text, state: 'pending' })));
@@ -1122,13 +1169,27 @@ const commands = {
       if (opts.summary) Object.assign(fields, { summary: opts.summary.trim(), summary_at: store.now() });
       if (opts.title) fields.title = opts.title.trim();
       if (opts.ticket) fields.ticket = opts.ticket.trim();
+      if (opts.worktree !== undefined) {
+        // Git decides: the path's working tree is recorded by its top level, and
+        // a main working tree, or the project checkout the orchestrator started
+        // in, is never a worker's worktree (DS1, DS2).
+        const dir = String(opts.worktree).trim();
+        const tree = dir ? workingTree(path.resolve(dir)) : null;
+        if (!tree) throw usageError(`--worktree needs the path of your git worktree${dir ? `; ${path.resolve(dir)} is in none` : ''}`);
+        const root = store.getProjectRoot(db);
+        const shown = tree.top === realPath(path.resolve(dir)) ? tree.top : `${path.resolve(dir)} (in ${tree.top})`;
+        if (tree.main || (root && tree.top === realPath(root))) {
+          throw usageError(`${shown} is the project checkout, not a worktree: report your own worktree, and create one beside the checkout only if you have none`);
+        }
+        fields.worktree = tree.top;
+      }
       if (opts.resolved) Object.assign(fields, { status: 'resolved', resolved_at: store.now() });
       if (opts.open) Object.assign(fields, { status: 'open', resolved_at: null });
-      if (!Object.keys(fields).length) throw usageError('nothing to report: pass --summary, --title, --ticket, --resolved, or --open');
+      if (!Object.keys(fields).length) throw usageError('nothing to report: pass --summary, --title, --ticket, --worktree, --resolved, or --open');
       store.updateSession(db, id, { ...fields, last_active_at: store.now() });
       logEvent(db, id, 'report', Object.keys(fields).filter(k => k !== 'summary_at').join(','));
       const updated = store.getSession(db, id);
-      if ((fields.ticket || fields.title) && updated.tab_id && process.env.HERDR_ENV === '1') {
+      if ((fields.ticket || fields.title || fields.worktree) && updated.tab_id && process.env.HERDR_ENV === '1') {
         try { herdr(['tab', 'rename', updated.tab_id, tabLabel(updated)]); } catch { /* the label is cosmetic */ }
       }
       print({ session: `S${id}`, status: updated.status, recorded: Object.keys(fields).filter(k => k !== 'summary_at').join(', ') }, opts);
@@ -1203,7 +1264,7 @@ Orchestrator (needs ownership; run inside Herdr):
 
 Anyone:
   find [--query TEXT] [--all] [--limit N]   rank sessions against a request
-  report [S<id>] [--summary S] [--title T] [--ticket T] [--resolved|--open]   the worker's own update
+  report [S<id>] [--summary S] [--title T] [--ticket T] [--worktree DIR] [--resolved|--open]   the worker's own update
 
 Defaults: ${Object.entries(DEFAULTS).map(([h, d]) => `${h} ${[d.model || 'its own model', d.effort].join(' ')}`).join('; ')}; harness ${DEFAULT_HARNESS}.
 new, resume, relaunch, and deliver can wait minutes for an agent to start and settle; give them a long tool timeout.
