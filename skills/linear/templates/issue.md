@@ -1,9 +1,9 @@
 # Issue
 
-The body of every issue, using the scope and readiness decisions from `planning-and-task-breakdown`. Fill applicable fields and explain omissions. Estimate and cycle below mirror the native Linear fields; they do not replace them.
+The body of every issue, using the scope and readiness decisions from `planning-and-task-breakdown`. Later user prompts about the work go in comments, as `linear` M2 says. Fill applicable fields and explain omissions. Estimate and cycle below mirror the native Linear fields; they do not replace them.
 
 ```markdown
-User prompt (verbatim, when direct): "<...>"  (each later prompt: its own comment, verbatim)
+User prompt (verbatim, when direct): "<...>"
 Outcome: <one observable deliverable that is true when done>
 Out of scope: <explicit exclusions>
 Readiness: actionable | provisional (blocked on design issue <id>)

@@ -815,6 +815,12 @@
           ""
         ],
         [
+          "Pass each worker the user's whole message as quoted context, so the ticket writer records it (linear M2)",
+          "judgment",
+          null,
+          "M2"
+        ],
+        [
           "Launch, resume, or restart the worker under its session id with hooks and held prompts; message a live one",
           "det",
           "skills/orchestrator/scripts/orchestrator.js",
