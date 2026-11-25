@@ -28,9 +28,10 @@ function mergeClaude(settings) {
     throw new Error('.claude/settings.json hooks must be an object');
   }
   const hooks = structuredClone(settings.hooks || {});
-  // Ours is only the group this installer writes: no matcher, one hook, this exact command. A group with a matcher,
-  // more hooks, or another command is the project's, even when it runs the same script, and is left as it is.
-  const isOurs = e => e.matcher === undefined && e.hooks.length === 1 && e.hooks[0] && e.hooks[0].type === 'command' && e.hooks[0].command === CLAUDE_COMMAND;
+  // Ours is only the group this installer writes, exactly. Any other group, even one running the same command with a
+  // matcher, another timeout, or a status message, is the project's and is left as it is.
+  const OURS = JSON.stringify({ hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] });
+  const isOurs = e => JSON.stringify(e) === OURS; // the whole object, as this installer writes it
   for (const event of CLAUDE_EVENTS) {
     if (Object.hasOwn(hooks, event) && !Array.isArray(hooks[event])) throw new Error(`.claude/settings.json hooks.${event} must be an array`);
     const entries = hooks[event] || [];
@@ -38,7 +39,7 @@ function mergeClaude(settings) {
       throw new Error(`.claude/settings.json hooks.${event} must be an array of { hooks: [...] } entries`);
     }
     const ours = entries.filter(isOurs);
-    if (ours.length === 1 && ours[0].hooks[0].timeout === 10) continue;
+    if (ours.length === 1) continue;
     hooks[event] = [...entries.filter(e => !isOurs(e)), { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }];
   }
   return { ...settings, hooks };

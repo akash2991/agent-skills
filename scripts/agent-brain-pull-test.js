@@ -810,6 +810,13 @@ test("settings: a project's own wrapper is kept, malformed entries are refused, 
   assert.deepEqual(readJson(file).hooks.SubagentStop, [theirs, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }]);
   const again = pullInstall({ sourceRoot: ROOT, target });
   assert.deepEqual(again.plan.settings, []);
+  // An unmatched group with the same command but the project's own options is the project's too.
+  const custom = { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 60, statusMessage: 'docs' }] };
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [custom] } }));
+  pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(file).hooks.Stop, [custom, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }]);
+  pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(file).hooks.Stop, [custom, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }], 'survives a second pull');
 });
 
 test("an unmanaged models.json, or an edited review-models.json, stops the pull before anything is written", () => {

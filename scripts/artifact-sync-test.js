@@ -27,7 +27,7 @@ const CONFIG = {
   artifacts: [
     { path: 'docs/map.md', sources: ['src/**/*.js'], then: 'cp docs/map.md docs/map.html', outputs: ['docs/map.html'] },
     { path: 'docs/page.html', sources: ['web/**'] },
-    { path: 'docs/flow.json', sources: ['lib/**'], then: 'cp docs/flow.json docs/flow.html', outputs: ['docs/flow.html'] },
+    { path: 'docs/flow-map.json', sources: ['lib/**'], then: 'cp docs/flow-map.json docs/flow-map.html', outputs: ['docs/flow-map.html'] },
   ],
 };
 
@@ -42,8 +42,8 @@ function repo({ change = 'src/a.js' } = {}) {
   for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.com'], ['commit.gpgsign', 'false']]) git(['config', k, v], root);
   for (const d of ['src', 'docs', 'web', 'lib']) fs.mkdirSync(path.join(root, d));
   fs.writeFileSync(path.join(root, 'lib/x.js'), '1\n');
-  fs.writeFileSync(path.join(root, 'docs/flow.json'), '{"v":1}\n');
-  fs.writeFileSync(path.join(root, 'docs/flow.html'), '{"v":1}\n');
+  fs.writeFileSync(path.join(root, 'docs/flow-map.json'), '{"v":1}\n');
+  fs.writeFileSync(path.join(root, 'docs/flow-map.html'), '{"v":1}\n');
   fs.writeFileSync(path.join(root, 'models.json'), JSON.stringify(CONFIG));
   fs.writeFileSync(path.join(root, 'src/a.js'), '1\n');
   fs.writeFileSync(path.join(root, 'web/app.js'), '1\n');
@@ -152,7 +152,7 @@ test('a head that touches no source is recorded as synced without starting anyth
   assert.equal(readState(r.root).synced, r.head);
 });
 
-test('an unpushed branch and a running sync start nothing; a dead holder is taken over', () => {
+test('an unpushed branch, a running sync, or a stale lock start nothing; a stale lock is reported, never taken over', () => {
   const r = repo();
   git(['checkout', '-qb', 'FAC-2-local'], r.root);
   assert.match(sync.hook(r.root, {}, fakeLaunch([])), /not on origin yet/);
@@ -162,6 +162,9 @@ test('an unpushed branch and a running sync start nothing; a dead holder is take
   fs.writeFileSync(lock, String(process.pid));
   assert.match(sync.hook(r.root, {}, fakeLaunch([])), /already running/);
   fs.writeFileSync(lock, '999999999');
+  assert.match(sync.hook(r.root, {}, fakeLaunch([])), /stale lock .* remove .*\.lock to resume/);
+  assert.equal(fs.readFileSync(lock, 'utf8'), '999999999');
+  fs.rmSync(lock);
   assert.match(sync.hook(r.root, {}, fakeLaunch([])), /started/);
   assert.match(fs.readFileSync(lock, 'utf8'), /^starting:[0-9a-f]{16}$/);
 });
@@ -301,6 +304,50 @@ test('an unmerged publication is not dropped: the next sync redoes it with the n
   assert.deepEqual(after.due, []);
 });
 
+test('run computes its own baseline: a too-recent base handed to it cannot drop unmerged work', () => {
+  const r = repo();
+  runIt(r);
+  const head2 = pushChange(r.root, 'web/app.js');
+  // Handed the previous head as base, run still includes the unmerged docs/map.md work.
+  const calls = [];
+  runIt(r, { base: r.head, head: head2, calls, edit: cwd => { edit(cwd); fs.writeFileSync(path.join(cwd, 'docs/page.html'), '<p>v2</p>\n'); } });
+  assert.match(calls.find(c => c.cmd === 'claude').args[1], /docs\/map\.md[\s\S]*docs\/page\.html|docs\/page\.html[\s\S]*docs\/map\.md/);
+  git(['fetch', '-q', 'origin'], r.root);
+  assert.deepEqual(git(['diff', '--name-only', head2, remote(r.root, `${BRANCH}-artifacts`)], r.root).split('\n').sort(), ['docs/map.html', 'docs/map.md', 'docs/page.html']);
+});
+
+test('a run that edits nothing does not move the baseline past an unmerged publication', () => {
+  const r = repo();
+  runIt(r);
+  const first = remote(r.root, `${BRANCH}-artifacts`);
+  const head2 = pushChange(r.root, 'web/app.js');
+  assert.match(runIt(r, { head: head2, edit: () => {} }), /already current/);
+  const head3 = pushChange(r.root, 'web/app.js');
+  const p = sync.plan(r.root, {});
+  assert.equal(p.base, r.base, 'the baseline still precedes the unmerged publication');
+  assert.deepEqual(p.due.map(d => d.path).sort(), ['docs/map.md', 'docs/page.html']);
+  runIt(r, { head: head3, edit: cwd => { edit(cwd); fs.writeFileSync(path.join(cwd, 'docs/page.html'), '<p>v3</p>\n'); } });
+  const third = remote(r.root, `${BRANCH}-artifacts`);
+  assert.notEqual(third, first);
+  git(['fetch', '-q', 'origin'], r.root);
+  assert.ok(git(['diff', '--name-only', head3, third], r.root).split('\n').includes('docs/map.md'), 'the earlier map.md work is carried, not dropped');
+});
+
+test('a PR head that lags the push is retried before it counts as a mismatch', () => {
+  const r = repo();
+  let lists = 0;
+  const exec = (cmd, args, opts) => {
+    if (cmd === 'gh' && args[1] === 'list') {
+      lists++;
+      const head = lists < 3 ? 'f'.repeat(40) : remote(r.root, `${BRANCH}-artifacts`);
+      return { status: 0, stdout: JSON.stringify([{ url: 'u', headRefName: `${BRANCH}-artifacts`, baseRefName: BRANCH, headRefOid: head, isCrossRepository: false }]) };
+    }
+    return fakeExec([], edit)(cmd, args, opts);
+  };
+  assert.match(sync.run({ root: r.root, branch: BRANCH, base: r.base, head: r.head }, { spawnSync: exec, repo: 'o/r', sleep: () => {} }), /PR u/);
+  assert.equal(lists, 3);
+});
+
 test('a mode change is refused, and so is a code branch that moved while the agent worked', () => {
   const r = repo();
   assert.throws(() => runIt(r, { edit: cwd => { edit(cwd); fs.chmodSync(path.join(cwd, 'docs/map.md'), 0o755); } }),
@@ -313,7 +360,7 @@ test('a mode change is refused, and so is a code branch that moved while the age
 test('an open PR for the artifact branch at another commit is an error, not a match', () => {
   const r = repo();
   const list = { status: 0, stdout: JSON.stringify([{ url: 'u', headRefName: `${BRANCH}-artifacts`, baseRefName: BRANCH, headRefOid: 'f'.repeat(40), isCrossRepository: false }]) };
-  assert.throws(() => runIt(r, { gh: { list } }), /the open PR for FAC-1-feature-artifacts is at fffffff, not the pushed/);
+  assert.throws(() => runIt(r, { gh: { list }, deps: { sleep: () => {} } }), /the open PR for FAC-1-feature-artifacts is at fffffff, not the pushed/);
   assert.notEqual(readState(r.root).synced, r.head);
 });
 
@@ -329,7 +376,7 @@ test('originRepo reads owner/name from a GitHub origin and refuses anything else
 // A published sync of the JSON artifact, the one kind that may skip review.
 function publishedFlow() {
   const r = repo({ change: 'lib/x.js' });
-  runIt(r, { edit: cwd => fs.writeFileSync(path.join(cwd, 'docs/flow.json'), '{"v":2}\n') });
+  runIt(r, { edit: cwd => fs.writeFileSync(path.join(cwd, 'docs/flow-map.json'), '{"v":2}\n') });
   git(['fetch', '-q', 'origin'], r.root);
   const published = readState(r.root).published;
   const view = (over = {}) => ({ prView: () => ({ base: BRANCH, baseSha: r.head, head: `${BRANCH}-artifacts`, headSha: published, headRepo: 'o/r', baseRepo: 'o/r', state: 'open', ...over }) });
@@ -354,32 +401,59 @@ test("scope --pr: exempt only for this clone's published commit on <base>-artifa
   assert.ok(published);
 });
 
-test('scope --pr: outputs must be what the base renderer makes from the head data', () => {
-  const { r, view } = publishedFlow();
-  const sha = forge(r, { 'docs/flow.html': '<script>x</script>\n' });
-  assert.match(sync.prScope(r.root, 1, view({ headSha: sha })).reasons.join(), /outputs that their renderer does not reproduce: docs\/flow\.html/);
+test('merge --pr merges only a green, re-confirmed flow-map PR, at exactly the checked head', () => {
+  const { r, published, view } = publishedFlow();
+  const green = [{ name: 'checks', bucket: 'pass' }, { name: 'test-plugin-install', bucket: 'pass' }];
+  const merges = [];
+  const deps = (over = {}) => ({ ...view(), repo: 'o/r', checks: () => green, merge: (n, head) => { merges.push(head); return true; }, ...over });
+  assert.deepEqual(sync.mergeExempt(r.root, 1, deps()), { merged: published, reasons: [] });
+  assert.deepEqual(merges, [published]);
+  for (const [checks, re] of [
+    [[], /the checks job has not passed/],
+    [[{ name: 'checks', bucket: 'pending' }], /checks job has not passed[\s\S]*checks \(pending\)|checks not green: checks \(pending\)/],
+    [[{ name: 'checks', bucket: 'pass' }, { name: 'other', bucket: 'fail' }], /checks not green: other \(fail\)/],
+  ]) {
+    const out = sync.mergeExempt(r.root, 1, deps({ checks: () => checks }));
+    assert.equal(out.merged, null);
+    assert.match(out.reasons.join('\n'), re);
+  }
+  // The base moves between the first scope and the second, to a commit the PR still scopes cleanly against: the
+  // earlier verdict is not used.
+  git(['checkout', '-q', BRANCH], r.root);
+  const base2 = pushChange(r.root, 'src/a.js');
+  let views = 0;
+  const moving = () => ({ ...view().prView(), baseSha: ++views === 1 ? r.head : base2 });
+  const out = sync.mergeExempt(r.root, 1, deps({ prView: moving }));
+  assert.equal(out.merged, null);
+  assert.match(out.reasons.join(), /base or head changed while its checks were read/);
+  assert.equal(merges.length, 1, 'nothing else merged');
 });
 
-test('scope: only validated data artifacts are exempt; Markdown, HTML, models.json and both ends of a rename are not', () => {
+test('scope --pr: a hand-edited flow-map page on the published branch is not exempt', () => {
+  const { r, view } = publishedFlow();
+  const sha = forge(r, { 'docs/flow-map.html': '<script>x</script>\n' });
+  // The forged commit is recorded as published here only to reach the path check; it still must pass CI to merge.
+  assert.deepEqual(sync.prScope(r.root, 1, view({ headSha: sha })).reasons, []);
+  assert.equal(sync.mergeExempt(r.root, 1, { ...view({ headSha: sha }), repo: 'o/r', checks: () => [{ name: 'checks', bucket: 'fail' }], merge: () => true }).merged, null);
+});
+
+test('scope: only the flow map is exempt; Markdown, HTML, models.json and both ends of a rename are not', () => {
   const r = repo();
   git(['checkout', '-qb', 'x'], r.root);
   fs.writeFileSync(path.join(r.root, 'docs/page.html'), '<script>evil()</script>\n');
   fs.writeFileSync(path.join(r.root, 'docs/map.md'), 'ok\n');
-  fs.writeFileSync(path.join(r.root, 'docs/flow.json'), '{"v":3}\n');
+  fs.writeFileSync(path.join(r.root, 'docs/flow-map.json'), '{"v":3}\n');
   git(['commit', '-qam', 'pages'], r.root);
   assert.deepEqual(sync.scope(r.root, BRANCH, 'x').outside.sort(), ['docs/map.md', 'docs/page.html']);
   git(['checkout', '-q', BRANCH], r.root);
   git(['checkout', '-qb', 'y'], r.root);
-  git(['rm', '-q', 'docs/flow.json'], r.root);
-  git(['mv', 'src/a.js', 'docs/flow.json'], r.root);
+  git(['rm', '-q', 'docs/flow-map.json'], r.root);
+  git(['mv', 'src/a.js', 'docs/flow-map.json'], r.root);
   fs.writeFileSync(path.join(r.root, 'models.json'), JSON.stringify({ ...CONFIG, artifacts: [{ path: 'src/a.js', sources: ['x'] }] }));
   git(['commit', '-qam', 'rename'], r.root);
   assert.deepEqual(sync.scope(r.root, BRANCH, 'y').outside.sort(), ['models.json', 'src/a.js']);
-  assert.deepEqual(sync.exemptEntries([
-    { path: 'x.json', sources: ['a'], then: 'b', outputs: ['models.json'] },
-    { path: 'y.json', sources: ['a'] },
-    { path: 'z.md', sources: ['a'], then: 'b', outputs: ['z.html'] },
-  ]), []);
+  assert.deepEqual([...sync.exemptPaths([{ path: 'x.json', sources: ['a'], then: 'b', outputs: ['models.json'] }, { path: 'z.md', sources: ['a'] }])], []);
+  assert.deepEqual([...sync.exemptPaths(CONFIG.artifacts)].sort(), ['docs/flow-map.html', 'docs/flow-map.json']);
 });
 
 test('the brain repository maps its artifacts, and the hook is wired for Claude and Pi', () => {

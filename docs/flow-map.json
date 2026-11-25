@@ -759,7 +759,7 @@
       "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in models.json.",
       "steps": [
         [
-          "Artifact PR: merge --pr checks the published head, validated data and a reproduced render, then merges exactly that head without the double pass",
+          "Flow-map artifact PR: merge --pr checks the published head and green checks, confirms base and head again, then merges exactly that head without the double pass",
           "det",
           "skills/documentation/scripts/artifact-sync.js",
           ""

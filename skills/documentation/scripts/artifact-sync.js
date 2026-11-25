@@ -11,9 +11,8 @@
 //                                         push that commit to <b>-artifacts, and open a PR into <b>
 //   due [--cwd <dir>]                     print what `hook` would sync now, without starting anything
 //   scope --pr <number>                   exit 0 when the PR is this clone's published sync commit on <base>-artifacts,
-//                                         from the same repository, and changes only validated data artifacts whose
-//                                         outputs the base's renderer reproduces: it skips the double-pass review
-//   merge --pr <number>                   scope, then merge exactly the head it checked (--match-head-commit)
+//                                         from the same repository, and changes only the brain's flow map
+//   merge --pr <number>                   scope, require green checks, scope again, then merge exactly that head
 //
 // Code decides everything but the edit: which artifacts are due, the worktree, the commit, the push, and the PR.
 // Only the edit itself is the agent's. BRAIN_ARTIFACT_SYNC=1 marks the sync agent, so its own finish starts nothing.
@@ -134,35 +133,24 @@ function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
 }
 
-// One sync per code branch. The lock holds "starting:<token>" while the hook reserves it, then the sync's pid. A
-// lock whose pid is gone, or a reservation older than a minute, is stale. Staleness is judged on one read, and the
-// lock is taken over only if it still holds exactly what was judged; anything ambiguous fails closed.
+// One sync per code branch. The lock holds "starting:<token>" while the hook reserves it, then the sync's pid. A lock
+// is never taken over automatically: a stale one (its pid gone, or a reservation older than a minute) is reported,
+// and the next sync starts once someone removes it. Exclusive by construction; nothing races a takeover.
 function acquireLock(file, token) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
+  try {
+    fs.writeFileSync(file, `starting:${token}`, { flag: 'wx' });
+    return { ok: true };
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    let raw = '';
+    let stale = false;
     try {
-      fs.writeFileSync(file, `starting:${token}`, { flag: 'wx' });
-      return true;
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      let raw;
-      let stale;
-      try {
-        raw = fs.readFileSync(file, 'utf8');
-        stale = raw.startsWith('starting:') ? Date.now() - fs.statSync(file).mtimeMs >= STALE_START_MS : !alive(Number(raw));
-      } catch { return false; }
-      if (!stale) return false;
-      const aside = `${file}.stale-${process.pid}`;
-      try { fs.renameSync(file, aside); } catch { return false; }
-      if (fs.readFileSync(aside, 'utf8') !== raw) {
-        try { fs.linkSync(aside, file); } catch { /* a newer lock is there */ }
-        fs.rmSync(aside, { force: true });
-        return false;
-      }
-      fs.rmSync(aside, { force: true });
-    }
+      raw = fs.readFileSync(file, 'utf8');
+      stale = raw.startsWith('starting:') ? Date.now() - fs.statSync(file).mtimeMs >= STALE_START_MS : !alive(Number(raw));
+    } catch { /* unreadable: treat as held */ }
+    return { ok: false, stale, file };
   }
-  return false;
 }
 
 function releaseLock(file, holder) {
@@ -205,6 +193,24 @@ function defaultBranch(root) {
   return ref ? ref.replace(/^refs\/remotes\/origin\//, '') : 'main';
 }
 
+// Work is computed from the baseline: the last code commit whose artifacts are in the code branch. A publication not
+// merged yet does not move it, so the next sync redoes that work too instead of dropping it. Both the hook and run
+// compute it from the state, under the lock; run never trusts a base it is handed.
+// The baseline may move to <head> only when no publication is outstanding: none was made, or the last one is merged.
+// A run that edits nothing (the model judged the docs current, or stopped early) says nothing about unmerged work.
+function settled(root, state, head) {
+  return !state.published || tryGit(['merge-base', '--is-ancestor', state.published, head], root) !== null;
+}
+
+function baselineFor(root, state, head) {
+  const isAncestor = (a, b) => !!a && tryGit(['merge-base', '--is-ancestor', a, b], root) !== null;
+  const merged = state.published && state.publishedFor && isAncestor(state.published, head) ? state.publishedFor : null;
+  const known = [merged, state.baseline].filter(c => isAncestor(c, head));
+  const latest = known.length === 2 ? (isAncestor(known[0], known[1]) ? known[1] : known[0]) : known[0];
+  const main = defaultBranch(root);
+  return latest || tryGit(['merge-base', head, `refs/remotes/origin/${main}`], root) || tryGit(['merge-base', head, main], root);
+}
+
 // What `hook` would do now, and with what. Never writes anything; `hook` repeats it under the lock.
 function plan(cwd, env = process.env) {
   if (env[ENV_FLAG]) return { skip: 'this is the sync agent' };
@@ -223,13 +229,7 @@ function plan(cwd, env = process.env) {
   const dir = stateDir(root);
   const state = readState(dir, branch);
   if (state.synced === head || state.attempted === head) return { skip: `${head.slice(0, 7)} already synced or attempted${state.error ? `; last error: ${state.error}` : ''}` };
-  // Work is computed from the baseline: the last code commit whose artifacts are in the code branch. A publication
-  // not merged yet does not move it, so the next sync redoes that work too instead of dropping it.
-  const isAncestor = (a, b) => !!a && tryGit(['merge-base', '--is-ancestor', a, b], root) !== null;
-  const merged = state.published && state.publishedFor && isAncestor(state.published, head) ? state.publishedFor : null;
-  const known = [merged, state.baseline].filter(c => isAncestor(c, head));
-  const latest = known.length === 2 ? (isAncestor(known[0], known[1]) ? known[1] : known[0]) : known[0];
-  const base = latest || tryGit(['merge-base', head, `refs/remotes/origin/${main}`], root) || tryGit(['merge-base', head, main], root);
+  const base = baselineFor(root, state, head);
   if (!base) return { skip: `no base to compare ${branch} with` };
   const due = dueEntries(config.artifacts, changedFiles([base, head], root));
   return { root, branch, base, head, dir, due, config };
@@ -240,7 +240,8 @@ function hook(cwd, env = process.env, launch = spawn) {
   if (first.skip) return first.skip;
   const lock = path.join(first.dir, `${safeName(first.branch)}.lock`);
   const token = crypto.randomBytes(8).toString('hex');
-  if (!acquireLock(lock, token)) return 'a sync is already running for this branch';
+  const got = acquireLock(lock, token);
+  if (!got.ok) return got.stale ? `a stale lock from a sync that no longer runs blocks this branch; remove ${lock} to resume` : 'a sync is already running for this branch';
   const reserved = `starting:${token}`;
   let handedOff = false;
   try {
@@ -248,7 +249,8 @@ function hook(cwd, env = process.env, launch = spawn) {
     const p = plan(cwd, env);
     if (p.skip) return p.skip;
     if (!p.due.length) {
-      writeState(p.dir, p.branch, { synced: p.head, baseline: p.head });
+      const state = readState(p.dir, p.branch);
+      writeState(p.dir, p.branch, { synced: p.head, ...(settled(p.root, state, p.head) ? { baseline: p.head } : {}) });
       return 'no artifact is due';
     }
     writeState(p.dir, p.branch, { attempted: p.head });
@@ -344,7 +346,7 @@ function changedFiles(args, cwd) {
 // The run owns the lock from its first check to its last state write, and works only from <head>, the code branch's
 // tip on origin: it re-checks that tip, builds one commit on it in a fresh worktree, validates that exact commit, and
 // pushes it to <branch>-artifacts without overwriting anything it did not publish itself.
-function run({ root, branch, base, head, token }, deps = {}) {
+function run({ root, branch, base: given, head, token }, deps = {}) {
   const exec = deps.spawnSync || spawnSync;
   const dir = stateDir(root);
   const lock = path.join(dir, `${safeName(branch)}.lock`);
@@ -353,6 +355,9 @@ function run({ root, branch, base, head, token }, deps = {}) {
   try {
     const state = readState(dir, branch);
     if (state.synced === head) return `${head.slice(0, 7)} is already synced`;
+    const base = baselineFor(root, state, head) || given;
+    const keep = settled(root, state, head) ? { baseline: head } : {};
+    if (state.published && state.publishedFor && settled(root, state, head)) writeState(dir, branch, { baseline: state.publishedFor });
     const tipOf = deps.remoteTip || (b => remoteTip(root, b));
     const checkTip = () => {
       const live = tipOf(branch);
@@ -364,7 +369,7 @@ function run({ root, branch, base, head, token }, deps = {}) {
     const config = configAt(root, head);
     if (!config || !config.sync || !HARNESSES[config.sync.harness]) throw new Error(`no usable artifact-sync entry in ${CONFIG} at ${head.slice(0, 7)}`);
     const due = dueEntries(config.artifacts, changedFiles([base, head], root));
-    if (!due.length) { writeState(dir, branch, { synced: head, baseline: head, error: null }); return 'no artifact is due'; }
+    if (!due.length) { writeState(dir, branch, { synced: head, ...keep, error: null }); return 'no artifact is due'; }
     const ticket = ticketOf(branch);
     const name = `${branch}${SUFFIX}`;
     wt = freshWorktree(root, head);
@@ -381,7 +386,7 @@ function run({ root, branch, base, head, token }, deps = {}) {
       ...execFileSync('git', ['ls-files', '-z', '--others', '--exclude-standard'], { cwd: wt.dir, encoding: 'utf8' }).split('\0').filter(Boolean)])];
     const outside = touched.filter(f => !allowed.has(f));
     if (outside.length) throw new Error(`the sync agent changed files that are not its artifacts, nothing published: ${outside.join(', ')}`);
-    if (!touched.length) { writeState(dir, branch, { synced: head, baseline: head, error: null }); return 'artifacts already current'; }
+    if (!touched.length) { writeState(dir, branch, { synced: head, ...keep, error: null }); return 'artifacts already current'; }
     git(['add', '--', ...touched], wt.dir);
     execFileSync('git', ['commit', '--quiet', '-F', '-'], { cwd: wt.dir, input: commitMessage({ due, head, ticket, sync: config.sync }), env, stdio: ['pipe', 'pipe', 'pipe'] });
     const commit = git(['rev-parse', 'HEAD'], wt.dir);
@@ -392,12 +397,18 @@ function run({ root, branch, base, head, token }, deps = {}) {
     if (current && current !== state.published) throw new Error(`${name} on origin is at ${current.slice(0, 7)}, which this sync did not publish; not overwritten`);
     (deps.push || (() => git(['push', '--quiet', `--force-with-lease=refs/heads/${name}:${current}`, 'origin', `${commit}:refs/heads/${name}`], wt.dir)))(commit, current);
     writeState(dir, branch, { published: commit, publishedFor: head });
-    const open = exec('gh', ['pr', 'list', '--repo', repo, '--head', name, '--base', branch, '--state', 'open', '--json', 'url,headRefOid,headRefName,baseRefName,isCrossRepository'], { cwd: wt.dir, encoding: 'utf8' });
-    if (open.error || open.status !== 0) throw new Error(`pushed ${name}, but gh pr list failed: ${open.error ? open.error.message : (open.stderr || '').trim()}`);
-    let found;
-    try { found = JSON.parse(open.stdout || '[]'); } catch { throw new Error(`pushed ${name}, but gh pr list returned no JSON`); }
-    const match = found.find(x => x.headRefName === name && x.baseRefName === branch && x.isCrossRepository === false);
-    if (match && match.headRefOid !== commit) throw new Error(`the open PR for ${name} is at ${String(match.headRefOid).slice(0, 7)}, not the pushed ${commit.slice(0, 7)}`);
+    // GitHub updates an open PR's head shortly after a push: a few tries before a mismatch counts.
+    let match;
+    for (let attempt = 0; ; attempt++) {
+      const open = exec('gh', ['pr', 'list', '--repo', repo, '--head', name, '--base', branch, '--state', 'open', '--json', 'url,headRefOid,headRefName,baseRefName,isCrossRepository'], { cwd: wt.dir, encoding: 'utf8' });
+      if (open.error || open.status !== 0) throw new Error(`pushed ${name}, but gh pr list failed: ${open.error ? open.error.message : (open.stderr || '').trim()}`);
+      let found;
+      try { found = JSON.parse(open.stdout || '[]'); } catch { throw new Error(`pushed ${name}, but gh pr list returned no JSON`); }
+      match = found.find(x => x.headRefName === name && x.baseRefName === branch && x.isCrossRepository === false);
+      if (!match || match.headRefOid === commit) break;
+      if (attempt >= (deps.lookupTries ?? 5) - 1) throw new Error(`the open PR for ${name} is at ${String(match.headRefOid).slice(0, 7)}, not the pushed ${commit.slice(0, 7)}`);
+      (deps.sleep || (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)))(2000);
+    }
     let pr = match ? match.url : '';
     if (!pr) {
       const title = `${ticket ? `${ticket}: ` : ''}artifacts for ${branch} at ${head.slice(0, 7)}`;
@@ -416,18 +427,15 @@ function run({ root, branch, base, head, token }, deps = {}) {
   }
 }
 
-// What may skip review: validated documentation data, and nothing else. An entry qualifies only when its artifact is a
-// data file (JSON, YAML, diagrams as code) with a `then` renderer and declared outputs: prScope re-renders it from the
-// head's data with the base's renderer, which both validates the data and proves the outputs. Any other mapping, a
-// Markdown page or a hand-written HTML page included, is still synced but keeps the normal review.
-const DATA_ARTIFACT = /\.(json|mmd|drawio|csv|ya?ml)$/i;
-
-function exemptEntries(artifacts) {
-  return artifacts.filter(a => DATA_ARTIFACT.test(a.path) && a.path !== CONFIG && a.then && (a.outputs || []).length && !(a.outputs || []).includes(CONFIG));
-}
+// What may skip review: the brain's flow map, and nothing else. CI re-renders it (build-flow-map.js --check in the
+// `checks` job), so its data is validated and its page proven by the same checks a merge must pass. Every other
+// mapping, Markdown and HTML pages included, is still synced but keeps the normal review.
+const EXEMPT = ['docs/flow-map.json', 'docs/flow-map.html'];
+const REQUIRED_CHECK = 'checks';
 
 function exemptPaths(artifacts) {
-  return new Set(exemptEntries(artifacts).flatMap(a => [a.path, ...a.outputs]));
+  const mapped = new Set(artifacts.flatMap(a => [a.path, ...(a.outputs || [])]));
+  return new Set(EXEMPT.filter(f => mapped.has(f)));
 }
 
 // Files changed in base...head that may not skip review under <base>'s models.json. The base's config, so a PR cannot
@@ -457,21 +465,32 @@ function prScope(root, number, deps = {}) {
     const { changed, outside } = scope(root, view.baseSha, view.headSha);
     if (!changed.length) reasons.push('the PR changes nothing');
     if (outside.length) reasons.push(`files that may not skip review: ${outside.join(', ')}`);
-    // Every exempt entry the PR touches is re-rendered from the head's data with the base's renderer: the render
-    // validates the data, and its outputs must be exactly what the PR carries.
-    const config = configAt(root, view.baseSha);
-    const rendered = config ? exemptEntries(config.artifacts).filter(a => [a.path, ...a.outputs].some(f => changed.includes(f))) : [];
-    if (!outside.length && rendered.length) {
-      const wt = freshWorktree(root, view.headSha);
-      try {
-        for (const a of rendered) sh(a.then, wt.dir);
-        const differs = changedFiles(['HEAD'], wt.dir);
-        if (differs.length) reasons.push(`outputs that their renderer does not reproduce: ${differs.join(', ')}`);
-      } catch (err) { reasons.push(`the renderer failed: ${err.message}`); }
-      finally { wt.remove(); }
-    }
   }
   return { view, reasons };
+}
+
+// The exemption, used: scope the PR, require every check on its head to have passed (the `checks` job among them),
+// scope it again and require the same base and head, then merge exactly that head. Anything else declines.
+function mergeExempt(root, number, deps = {}) {
+  const repo = deps.repo || originRepo(root);
+  const first = prScope(root, number, deps);
+  if (first.reasons.length) return { merged: null, reasons: first.reasons };
+  const ran = (deps.checks || (n => {
+    const r = spawnSync('gh', ['pr', 'checks', String(n), '--repo', repo, '--json', 'name,bucket'], { cwd: root, encoding: 'utf8' });
+    try { return JSON.parse(r.stdout || '[]'); } catch { return []; }
+  }))(number);
+  const reasons = [];
+  if (!ran.some(c => c.name === REQUIRED_CHECK && c.bucket === 'pass')) reasons.push(`the ${REQUIRED_CHECK} job has not passed on this head`);
+  const notGreen = ran.filter(c => c.bucket !== 'pass' && c.bucket !== 'skipping');
+  if (notGreen.length) reasons.push(`checks not green: ${notGreen.map(c => `${c.name} (${c.bucket})`).join(', ')}`);
+  if (reasons.length) return { merged: null, reasons };
+  const again = prScope(root, number, deps);
+  if (again.reasons.length) return { merged: null, reasons: again.reasons };
+  if (again.view.baseSha !== first.view.baseSha || again.view.headSha !== first.view.headSha) {
+    return { merged: null, reasons: ['the PR base or head changed while its checks were read; run merge again'] };
+  }
+  const doMerge = deps.merge || ((n, head) => spawnSync('gh', ['pr', 'merge', String(n), '--repo', repo, '--merge', '--match-head-commit', head], { cwd: root, encoding: 'utf8', stdio: 'inherit' }).status === 0);
+  return doMerge(number, first.view.headSha) ? { merged: first.view.headSha, reasons: [] } : { merged: null, reasons: ['gh pr merge refused'] };
 }
 
 function readStdin(timeoutMs = 500) {
@@ -525,14 +544,13 @@ async function main(argv) {
     return 0;
   }
   if (cmd === 'merge') {
-    // The exemption, used: check the PR, then merge exactly the head that was checked. gh refuses if the head moved.
     const pr = option(args, '--pr');
     if (!pr) { console.error('merge needs --pr <number>'); return 2; }
     const root = git(['rev-parse', '--show-toplevel'], process.cwd());
-    const { view, reasons } = prScope(root, pr);
-    if (reasons.length) { console.error(`PR #${pr} is not an exempt artifact PR; review it as usual:\n${reasons.map(r => `  ${r}`).join('\n')}`); return 1; }
-    const merged = spawnSync('gh', ['pr', 'merge', pr, '--repo', originRepo(root), '--merge', '--match-head-commit', view.headSha], { cwd: root, encoding: 'utf8', stdio: 'inherit' });
-    return merged.status === 0 ? 0 : 1;
+    const { merged, reasons } = mergeExempt(root, pr);
+    if (!merged) { console.error(`PR #${pr} is not merged as an exempt artifact PR; review it as usual:\n${reasons.map(r => `  ${r}`).join('\n')}`); return 1; }
+    console.log(`PR #${pr} merged at ${merged}`);
+    return 0;
   }
   console.error('usage: artifact-sync.js hook [--cwd <dir>] | due [--cwd <dir>] | scope --pr <number> | merge --pr <number> | run --root <dir> --branch <b> --base <sha> --head <sha>');
   return 2;
@@ -540,4 +558,4 @@ async function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; });
 
-module.exports = { CONFIG, ENV_FLAG, HARNESSES, changedFiles, exemptEntries, originRepo, releaseLock, exemptPaths, prScope, safeName, claimLock, globToRegExp, matchesAny, parseConfig, dueEntries, ownedPaths, ticketOf, plan, hook, run, scope, prompt, commitMessage, acquireLock };
+module.exports = { CONFIG, ENV_FLAG, HARNESSES, changedFiles, mergeExempt, originRepo, releaseLock, exemptPaths, prScope, safeName, claimLock, globToRegExp, matchesAny, parseConfig, dueEntries, ownedPaths, ticketOf, plan, hook, run, scope, prompt, commitMessage, acquireLock };
