@@ -23,8 +23,10 @@
 // Ownership. The ledger (<git common dir>/brain-env-ledger.json) is written before the first side effect and records
 // each one as it happens, so teardown can clean up a spawn that failed part-way. The worktree registration spawn made
 // carries a random mark (in git's administrative directory) that the ledger repeats: a registration at the same path
-// without it is not this environment's. The branch counts as spawn's only when spawn created it and, on a restore, it
-// still continues the tip spawn last saw. The Compose reservation (~/.agent-brain/compose-claims.json) makes everything
+// without it is not this environment's. The branch counts as spawn's only when the `add -b` that created it is proven
+// spawn's (the intent recorded before `add` grants nothing), and only while it continues the commit spawn last
+// recorded; a resume narrows that before it records a new commit. Teardown decides the branch once and records it;
+// an interrupted delete is resolved by whether the branch is still there, never tried again. The Compose reservation (~/.agent-brain/compose-claims.json) makes everything
 // under the project name this environment's while it is held; spawn takes it only for an empty project, and both
 // commands refuse a project holding containers started outside this worktree.
 //
@@ -361,6 +363,27 @@ function branchOwned(root, entry, tip) {
   return Boolean(entry.branchCreated && tip && entry.branchTip && isAncestor(root, entry.branchTip, tip));
 }
 
+// A branch spawn asked git to create (`add -b`, which refuses a branch that already exists) becomes spawn's only once
+// the registration that add made is proven this spawn's, by its mark or spawn's lock reason, and holds the branch.
+// The intent recorded before `add` grants nothing by itself; it is settled once, here, and then cleared.
+function settleBranchIntent(root, ledger, name, worktree, branch) {
+  const entry = readJson(ledger)[name];
+  const pending = entry && entry.branchPending;
+  if (!pending) return;
+  const admin = adminDir(root, worktree);
+  let proven = false;
+  if (admin && pending.mark && pending.mark === entry.mark) {
+    const byMark = markOf(admin) === pending.mark || lockReasonOf(admin) === `${LOCK_PREFIX}${pending.mark}`;
+    let head = '';
+    try { head = fs.readFileSync(path.join(admin, 'HEAD'), 'utf8').trim(); } catch { /* no HEAD: not proven */ }
+    proven = byMark && head === `ref: refs/heads/${branch}`;
+  }
+  const tip = branchTip(root, branch);
+  const fields = { branchPending: null };
+  if (pending.create && proven && tip) { fields.branchCreated = true; fields.branchTip = tip; }
+  updateEntry(ledger, name, fields);
+}
+
 // The worktrees that have this branch checked out.
 function holdersOf(root, branch) {
   const holders = [];
@@ -522,6 +545,7 @@ async function spawnEnv(p, opts, root, owner, persona, ledger) {
   // A directory or registration with this name that the ledger does not record is not ours to reuse.
   if (!existing && (present || adminDir(root, p.worktree))) throw new Error(`${p.worktree} exists and the ledger does not record it; refusing to reuse it`);
   const admin = existing ? ownedRegistration(root, p.worktree, existing.mark) : null;
+  if (existing && existing.branchPending && !dryRun) settleBranchIntent(root, ledger, p.name, p.worktree, p.branch);
   if (present && !admin) throw new Error(`${p.worktree} exists and is not a worktree of this repository; refusing to reuse it`);
   const reuse = present && Boolean(admin);
   if (reuse && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) !== p.branch) {
@@ -594,17 +618,16 @@ async function spawnEnv(p, opts, root, owner, persona, ledger) {
   }
   updateEntry(ledger, p.name, { ports });
 
-  // 2. The worktree. The mark and the branch decision are recorded before `add`; git holds the mark as its lock reason.
+  // 2. The worktree. The mark and the branch intent are recorded before `add`; git holds the mark as its lock reason.
   if (!reuse) {
     const entry = readJson(ledger)[p.name];
     // A lost directory whose registration is still spawn's: drop that one registration, nothing else (never prune).
     if (admin) git(['worktree', 'remove', '--force', p.worktree], root);
     const mark = require('crypto').randomBytes(16).toString('hex');
     // Ownership of an existing branch is only ever kept, never gained: it stays spawn's while it continues the tip
-    // spawn recorded. A branch spawn creates now starts at the commit it is created from.
-    const branchCreated = tip ? branchOwned(root, entry, tip) : true;
-    const startTip = tip || git(['rev-parse', `${startRef}^{commit}`], root);
-    updateEntry(ledger, p.name, { mark, branchCreated, branchTip: startTip, installedFingerprint: null });
+    // spawn recorded. A branch spawn is about to create is only an intent until the add is proven (settleBranchIntent).
+    const branchCreated = tip ? branchOwned(root, entry, tip) : false;
+    updateEntry(ledger, p.name, { mark, branchCreated, branchPending: { create: !tip, mark }, installedFingerprint: null });
     const lock = ['--lock', '--reason', `${LOCK_PREFIX}${mark}`];
     const args = tip ? ['worktree', 'add', ...lock, p.worktree, p.branch]
       // A new branch does not track origin's default branch, so a plain push cannot land on it.
@@ -613,15 +636,19 @@ async function spawnEnv(p, opts, root, owner, persona, ledger) {
     let failure = null;
     try { git(args, root); } catch (err) { failure = err; }
     // Even a failed add (a failing checkout hook) can leave a registration: it carries spawn's lock, so it is proven
-    // spawn's, marked, and unlocked here. A branch spawn meant to create but git never made is not recorded as spawn's.
+    // spawn's, marked, and unlocked here; only then does the branch it created become spawn's.
     ownedRegistration(root, p.worktree, mark);
-    if (!branchTip(root, p.branch)) updateEntry(ledger, p.name, { branchCreated: false });
+    settleBranchIntent(root, ledger, p.name, p.worktree, p.branch);
     if (failure) throw failure;
     console.error(`${existing ? 'restored' : 'added'} ${p.worktree} on ${p.branch}`);
   } else {
     console.error(`reusing ${p.worktree}`);
   }
-  updateEntry(ledger, p.name, { branchTip: git(['rev-parse', 'HEAD'], p.worktree) });
+  // The recorded commit moves forward only along the branch: authority is narrowed first when HEAD no longer continues
+  // it (a branch rewritten in place), then HEAD is recorded.
+  const head = git(['rev-parse', 'HEAD'], p.worktree);
+  const now = readJson(ledger)[p.name];
+  updateEntry(ledger, p.name, { branchCreated: Boolean(now.branchCreated && now.branchTip && isAncestor(root, now.branchTip, head)), branchTip: head });
 
   // 3. .env from the main checkout without AWS credentials (DS4), never over the worktree's own, and only when git
   //    ignores it there: a copied secret git would commit is a leak waiting for `git add -A`.
@@ -687,6 +714,10 @@ async function teardown(p, opts, root, owner, ledger) {
   // Every check runs before anything is removed.
   const admin = ownedRegistration(root, p.worktree, entry.mark);
   if (present && !admin) throw new Error(`${p.worktree} is not a worktree of this repository; refusing to remove it`);
+  if (entry.branchPending) {
+    settleBranchIntent(root, ledger, p.name, p.worktree, entry.branch);
+    Object.assign(entry, readJson(ledger)[p.name]);
+  }
   if (present) {
     const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree);
     if (onBranch !== entry.branch) throw new Error(`${p.worktree} is on ${onBranch}, not ${entry.branch}; refusing to remove it`);
@@ -696,7 +727,14 @@ async function teardown(p, opts, root, owner, ledger) {
   }
   // The branch is decided once. A teardown run again after the decision was recorded skips the merge gate and the
   // branch, and finishes the rest.
-  const settled = entry.branchOutcome || null;
+  let settled = entry.branchOutcome || null;
+  // A delete that was interrupted is resolved once, by whether the branch is still there; it is never tried again.
+  if (settled && settled.status === 'deleting') {
+    settled = branchTip(root, entry.branch)
+      ? { status: 'done', note: `branch ${entry.branch} kept: its delete was interrupted`, p7Open: true }
+      : { status: 'done', note: `branch ${entry.branch} deleted`, p7Open: false };
+    updateEntry(ledger, p.name, { branchOutcome: settled });
+  }
   const base = entry.base || defaultBase(root);
   let tip = null;
   let merged = true;
@@ -735,7 +773,7 @@ async function teardown(p, opts, root, owner, ledger) {
     else if (holdersOf(root, entry.branch).length) {
       outcome = { note: `branch ${entry.branch} kept: checked out in ${holdersOf(root, entry.branch).join(', ')}`, p7Open: true };
     } else {
-      updateEntry(ledger, p.name, { branchCreated: false, branchOutcome: { note: `branch ${entry.branch} delete interrupted; it is kept if still there`, p7Open: true } });
+      updateEntry(ledger, p.name, { branchCreated: false, branchOutcome: { status: 'deleting', tip } });
       try {
         git(['update-ref', '-d', `refs/heads/${entry.branch}`, tip], root);
         outcome = { note: `branch ${entry.branch} deleted`, p7Open: false };

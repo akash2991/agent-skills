@@ -21,16 +21,19 @@ process.on('exit', () => fs.rmSync(FAKES, { recursive: true, force: true }));
 fs.writeFileSync(path.join(FAKES, 'docker'), `#!/usr/bin/env node
 const fs = require('fs');
 const args = process.argv.slice(2);
-if (process.env.FAKE_TOOL_LOG) fs.appendFileSync(process.env.FAKE_TOOL_LOG, 'docker ' + args.join(' ') + '\\n');
 const file = process.env.FAKE_DOCKER_STATE;
 const state = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { up: false, projects: {} };
+// The context a call goes to: DOCKER_CONTEXT when set, else the current one, which another process can switch.
+const ctx = process.env.DOCKER_CONTEXT || state.current || 'ctx-a';
+if (process.env.FAKE_TOOL_LOG) fs.appendFileSync(process.env.FAKE_TOOL_LOG, 'docker ' + args.join(' ') + ' @' + ctx + '\\n');
 if (!state.up) { console.error('Cannot connect to the Docker daemon'); process.exit(1); }
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const projectOf = () => { const f = args[args.indexOf('--filter') + 1] || ''; return f.split('com.docker.compose.project=')[1]; };
 const project = p => (state.projects[p] = state.projects[p] || { containers: [], volumes: [], networks: [] });
+if (args[0] === 'context' && args[1] === 'show') { console.log(state.current || 'ctx-a'); process.exit(0); }
 if (args[0] === 'info') {
   if (process.env.FAKE_DOCKER_ON_INFO) require('child_process').execSync(process.env.FAKE_DOCKER_ON_INFO, { stdio: 'ignore' });
-  console.log(state.daemon || 'daemon-a');
+  console.log((state.contexts || {})[ctx] || state.daemon || 'daemon-a');
   process.exit(0);
 }
 if (args[0] === 'ps' && !args.includes('--filter')) process.exit(0);
@@ -52,7 +55,7 @@ if (args[0] === 'compose') {
 process.exit(0);
 `, { mode: 0o755 });
 for (const tool of ['npm', 'pnpm', 'yarn', 'bun', 'uv', 'poetry']) {
-  fs.writeFileSync(path.join(FAKES, tool), `#!/bin/sh\n[ -n "$FAKE_TOOL_LOG" ] && echo "${tool} $* in $PWD" >> "$FAKE_TOOL_LOG"\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(FAKES, tool), `#!/bin/sh\n[ -n "$FAKE_TOOL_LOG" ] && echo "${tool} $* in $PWD" >> "$FAKE_TOOL_LOG"\n[ -n "$FAKE_INSTALL_RUN" ] && sh -c "$FAKE_INSTALL_RUN"\nexit 0\n`, { mode: 0o755 });
 }
 process.env.PATH = `${FAKES}${path.delimiter}${process.env.PATH}`;
 
@@ -442,7 +445,7 @@ function fakeTools(state = { up: false, projects: {} }) {
   const log = path.join(dir, 'log.txt');
   fs.writeFileSync(stateFile, JSON.stringify(state));
   return {
-    env: { ...process.env, FAKE_DOCKER_STATE: stateFile, FAKE_TOOL_LOG: log },
+    env: (() => { const e = { ...process.env, FAKE_DOCKER_STATE: stateFile, FAKE_TOOL_LOG: log }; delete e.DOCKER_CONTEXT; delete e.DOCKER_HOST; return e; })(),
     state: () => JSON.parse(fs.readFileSync(stateFile, 'utf8')),
     setState: s => fs.writeFileSync(stateFile, JSON.stringify(s)),
     log: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''),
@@ -1004,13 +1007,113 @@ test('a Docker daemon that changes during spawn stops it before anything is rese
   commitFile(repo, 'package-lock.json', '{}');
   const tools = fakeTools({ up: true, projects: {} });
   const env = scratchHome(tools.env);
-  // The install switches the daemon the current context talks to, as a `docker context use` elsewhere would.
-  fs.writeFileSync(path.join(FAKES, 'npm'), `#!/bin/sh\n[ -n "$FAKE_TOOL_LOG" ] && echo "npm $* in $PWD" >> "$FAKE_TOOL_LOG"\n[ -n "$FAKE_NPM_SWITCH" ] && node -e "const f=process.env.FAKE_DOCKER_STATE;const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.daemon='daemon-b';require('fs').writeFileSync(f,JSON.stringify(s))"\nexit 0\n`, { mode: 0o755 });
-  const r = runner(repo, { ...env, FAKE_NPM_SWITCH: '1' })(['spawn', 'ENG-95-switch', '--owner', 'a', '--persona', 'be']);
+  // The install changes the daemon behind the pinned context itself: the re-read under the lock must refuse.
+  const setDaemon = `node -e "const f=process.env.FAKE_DOCKER_STATE;const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.daemon='daemon-b';require('fs').writeFileSync(f,JSON.stringify(s))"`;
+  const r = runner(repo, { ...env, FAKE_INSTALL_RUN: setDaemon })(['spawn', 'ENG-95-switch', '--owner', 'a', '--persona', 'be']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /the Docker daemon changed during spawn \(daemon-a → daemon-b\)/);
   assert.deepStrictEqual(composeClaims(env), {});
   assert.doesNotMatch(tools.log(), / up -d/);
+  tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+// A git that kills the script calling it at one exact step, for interruptions that cannot be timed from outside.
+//   SHIM_KILL=add          the script dies on `worktree add`, before git runs it
+//   SHIM_KILL=delete-before / delete-after   the script dies on `update-ref -d`, before or after git runs it
+const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+const SHIM = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-git-shim-'));
+process.on('exit', () => fs.rmSync(SHIM, { recursive: true, force: true }));
+fs.writeFileSync(path.join(SHIM, 'git'), `#!/bin/sh
+case "$SHIM_KILL $*" in
+  "add "*"worktree add"*) kill -9 $PPID; exit 1 ;;
+  "delete-before "*"update-ref -d"*) [ -n "$SHIM_LOG" ] && echo delete >> "$SHIM_LOG"; kill -9 $PPID; exit 1 ;;
+  "delete-after "*"update-ref -d"*) [ -n "$SHIM_LOG" ] && echo delete >> "$SHIM_LOG"; "${REAL_GIT}" "$@"; kill -9 $PPID; exit 0 ;;
+esac
+case "$*" in *"update-ref -d"*) [ -n "$SHIM_LOG" ] && echo delete >> "$SHIM_LOG" ;; esac
+exec "${REAL_GIT}" "$@"
+`, { mode: 0o755 });
+const shimmed = (extra = {}) => ({ ...process.env, PATH: `${SHIM}${path.delimiter}${process.env.PATH}`, ...extra });
+
+test('a spawn killed before git ran its add owns no branch: a same-name branch made later survives teardown, P7 open', () => {
+  const { parent, repo } = makeRepo('kill-before-add-');
+  const r = runner(repo, shimmed({ SHIM_KILL: 'add' }))(['spawn', 'ENG-96-early', '--owner', 'a', '--persona', 'be']);
+  assert.notStrictEqual(r.status, 0);
+  assert.ok(ledgerOf(repo)['ENG-96-early'].branchPending, 'only an intent was recorded');
+  assert.strictEqual(ledgerOf(repo)['ENG-96-early'].branchCreated, false);
+  // someone else makes the branch, at the very commit spawn would have started from
+  gitIn(repo, ['branch', 'ENG-96-early', 'main']);
+  const t = runner(repo)(['teardown', 'ENG-96-early', '--owner', 'a']);
+  assert.strictEqual(t.status, 1, t.stderr);
+  assert.match(t.stderr, /P7 is not complete/);
+  assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-96-early']), '');
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('an interrupted branch delete is resolved once by presence: kept if still there, done if gone, never tried again', () => {
+  for (const [when, gone] of [['delete-before', false], ['delete-after', true]]) {
+    const { parent, repo } = makeRepo(`kill-${when}-`);
+    const log = path.join(parent, 'shim.log');
+    assert.strictEqual(runner(repo)(['spawn', 'ENG-97-del', '--owner', 'a', '--persona', 'be']).status, 0);
+    const first = runner(repo, shimmed({ SHIM_KILL: when, SHIM_LOG: log }))(['teardown', 'ENG-97-del', '--owner', 'a']);
+    assert.notStrictEqual(first.status, 0, when);
+    assert.strictEqual(ledgerOf(repo)['ENG-97-del'].branchOutcome.status, 'deleting', when);
+    const again = runner(repo, shimmed({ SHIM_LOG: log }))(['teardown', 'ENG-97-del', '--owner', 'a']);
+    assert.strictEqual(again.status, gone ? 0 : 1, `${when}: ${again.stderr}`);
+    assert.match(again.stdout, gone ? /branch ENG-97-del deleted/ : /kept: its delete was interrupted/);
+    assert.strictEqual(gitIn(repo, ['branch', '--list', 'ENG-97-del']) === '', gone, when);
+    assert.strictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, `${when}: the delete ran once`);
+    assert.strictEqual(ledgerOf(repo)['ENG-97-del'], undefined, `${when}: the rest of the cleanup finished`);
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('a resume narrows branch ownership before it records the new commit: rewritten in place is kept, advanced is not', () => {
+  const { parent, repo } = makeRepo('narrow-');
+  const node = runner(repo);
+  // rewritten in place to an unrelated history, then resumed, then merged: kept, P7 open
+  const wt = path.join(parent, 'ENG-98-rewrite');
+  assert.strictEqual(node(['spawn', 'ENG-98-rewrite', '--owner', 'a', '--persona', 'be']).status, 0);
+  const orphan = gitIn(wt, ['commit-tree', gitIn(wt, ['write-tree']), '-m', 'unrelated']);
+  gitIn(wt, ['reset', '-q', '--hard', orphan]);
+  assert.strictEqual(node(['spawn', 'ENG-98-rewrite', '--owner', 'a', '--persona', 'be']).status, 0);
+  assert.strictEqual(ledgerOf(repo)['ENG-98-rewrite'].branchCreated, false);
+  gitIn(repo, ['merge', '-q', '--allow-unrelated-histories', '--no-ff', '-m', 'merge', 'ENG-98-rewrite']);
+  let r = node(['teardown', 'ENG-98-rewrite', '--owner', 'a']);
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-98-rewrite']), '');
+  // ordinary work: commit, resume, commit, merge: still spawn's, deleted
+  const wt2 = path.join(parent, 'ENG-99-advance');
+  assert.strictEqual(node(['spawn', 'ENG-99-advance', '--owner', 'a', '--persona', 'be']).status, 0);
+  commitFile(wt2, 'one.txt', '1');
+  assert.strictEqual(node(['spawn', 'ENG-99-advance', '--owner', 'a', '--persona', 'be']).status, 0);
+  commitFile(wt2, 'two.txt', '2');
+  gitIn(repo, ['merge', '-q', '--no-ff', '-m', 'merge', 'ENG-99-advance']);
+  r = node(['teardown', 'ENG-99-advance', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /branch ENG-99-advance deleted/);
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('the Docker context is pinned for a whole run: a switch during install or before down does not move it', () => {
+  const { parent, repo } = makeRepo('pin-');
+  commitFile(repo, 'compose.yaml', 'services: {}\n');
+  commitFile(repo, 'package-lock.json', '{}');
+  const tools = fakeTools({ up: true, current: 'ctx-a', contexts: { 'ctx-a': 'daemon-a', 'ctx-b': 'daemon-b' }, projects: {} });
+  const env = scratchHome(tools.env);
+  const switchTo = c => `node -e "const f=process.env.FAKE_DOCKER_STATE;const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.current='${c}';require('fs').writeFileSync(f,JSON.stringify(s))"`;
+  // spawn: the current context moves to B during the install
+  let r = runner(repo, { ...env, FAKE_INSTALL_RUN: switchTo('ctx-b') })(['spawn', 'ENG-100-pin', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(composeClaims(env)['eng-100-pin'].daemon, 'daemon-a');
+  assert.match(tools.log(), /docker compose -p eng-100-pin up -d @ctx-a/);
+  assert.doesNotMatch(tools.log(), /@ctx-b/);
+  // teardown starts on A; the current context moves to B after its checks, before down
+  tools.setState({ ...tools.state(), current: 'ctx-a' });
+  r = runner(repo, { ...env, FAKE_DOCKER_ON_INFO: switchTo('ctx-b') })(['teardown', 'ENG-100-pin', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(tools.log(), /docker compose -p eng-100-pin down --volumes --remove-orphans @ctx-a/);
+  assert.doesNotMatch(tools.log(), /@ctx-b/);
   tools.cleanup();
   fs.rmSync(parent, { recursive: true, force: true });
 });
