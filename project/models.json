@@ -1,0 +1,5 @@
+{
+  "code-reviewer": { "label": "GPT-6.2 Sol", "harness": "pi", "model": "openai-codex/gpt-6.2-sol", "effort": "medium" },
+  "artifact-sync": { "label": "Sonnet 5.5", "harness": "claude", "model": "claude-sonnet-5-5", "effort": "medium" },
+  "artifacts": []
+}

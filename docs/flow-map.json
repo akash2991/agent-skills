@@ -153,7 +153,7 @@
           "P13"
         ],
         [
-          "Link the PR on the ticket; high or ticket-requested: hand the code-reviewer (model from review-models.json) the PR to review and merge, under its assignment name",
+          "Link the PR on the ticket; high or ticket-requested: hand the code-reviewer (model from models.json) the PR to review and merge, under its assignment name",
           "det",
           null,
           "P10 P17"
@@ -467,6 +467,44 @@
       ]
     },
     {
+      "id": "artifact-sync",
+      "name": "Keep artifacts current",
+      "area": "Planning and design",
+      "summary": "W12: when an agent finishes, a hook decides which mapped artifacts are stale; a cheaper model updates them in its own PR, asynchronously to the code.",
+      "steps": [
+        [
+          "An agent finishes: compare the branch's pushed commits since the last sync with the artifact map in models.json",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          "W12"
+        ],
+        [
+          "Start the artifact-sync model in the background, in its own worktree on <branch>-artifacts",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          "W12"
+        ],
+        [
+          "Update the due artifacts to match the code",
+          "judgment",
+          null,
+          "W12"
+        ],
+        [
+          "Render with then, refuse edits outside the map, commit, push, and open the PR into the code branch",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          "W12"
+        ],
+        [
+          "Merge the artifact PR into the code branch",
+          "judgment",
+          null,
+          "W12"
+        ]
+      ]
+    },
+    {
       "id": "implement",
       "name": "Implement a slice",
       "area": "Building",
@@ -644,10 +682,16 @@
       "id": "double-pass",
       "name": "Double-pass review of a brain PR",
       "area": "Reviews and audits",
-      "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in review-models.json.",
+      "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in models.json.",
       "steps": [
         [
-          "Start both reviewers on the same revision with the models in review-models.json",
+          "Artifact-only PR: skip both passes and the synthesis when the scope check passes",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          ""
+        ],
+        [
+          "Start both reviewers on the same revision with the models in models.json",
           "det",
           null,
           ""
@@ -835,7 +879,7 @@
         [
           "Review models are config; no AGENTS.md names a model",
           "det",
-          "scripts/validate-review-models.js",
+          "scripts/validate-models.js",
           ""
         ],
         [

@@ -41,7 +41,7 @@ function validateManagedRelPath(rel, label = 'path') {
     throw new Error(`invalid ${label}: reserved or unsafe path: ${rel}`);
   }
   const name = '[a-z0-9]+(?:-[a-z0-9]+)*';
-  const allowed = runtimeFile || (['source path', 'build path'].includes(label) && runtimeName && parts[0] === 'runtime' && parts[1] === 'langfuse') || ['AGENTS.md', 'SOUL.md', '.env.example', 'review-models.json', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md'].includes(rel)
+  const allowed = runtimeFile || (['source path', 'build path'].includes(label) && runtimeName && parts[0] === 'runtime' && parts[1] === 'langfuse') || ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md'].includes(rel)
     || new RegExp(`^skills/${name}/.+$`).test(rel)
     || new RegExp(`^agents/${name}\\.md$`).test(rel)
     || /^(references|templates)\/.+/.test(rel)

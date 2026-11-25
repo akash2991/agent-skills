@@ -1,3 +1,0 @@
-{
-  "code-reviewer": { "label": "GPT-6.2 Sol", "harness": "pi", "model": "openai-codex/gpt-6.2-sol", "effort": "medium" }
-}

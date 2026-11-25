@@ -1,7 +1,0 @@
-{
-  "independent": [
-    { "label": "GPT-6.2 Sol", "harness": "pi", "model": "openai-codex/gpt-6.2-sol", "effort": "high" },
-    { "label": "Opus 5.5", "harness": "claude", "model": "claude-opus-5-5", "effort": "high" }
-  ],
-  "synthesis": { "label": "GPT-6.2 Astra", "harness": "pi", "model": "openai-codex/gpt-6.2-astra", "effort": "high" }
-}
