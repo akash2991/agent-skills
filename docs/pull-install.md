@@ -26,7 +26,7 @@ In a reviewed revision containing the first-party runtime, explicitly opts this 
 
 ## Ownership and updates
 
-**This repository is the source of truth for brain files.** Skills, personas, references, templates, commands, `SOUL.md`, and `.env.example` are replaced with the source version, even if existing copies differ. There are no backups or local-override lists: use Git to review and revert changes. Files previously installed by the tool but no longer supplied by the brain are removed, including edited copies.
+**This repository is the source of truth for brain files.** Skills, personas, references, templates, commands, `SOUL.md`, `.env.example`, and `review-models.json` are replaced with the source version, even if existing copies differ. There are no backups or local-override lists: use Git to review and revert changes. Files previously installed by the tool but no longer supplied by the brain are removed, including edited copies.
 
 **Only `AGENTS.md` is patched:** shared sections come from the current brain, while the existing `## This project` instructions are preserved. Exact links to relocated brain files are adjusted to their tool-local paths; custom project paths are left alone. An initial install without `AGENTS.md` uses the source template. If an existing file lacks that heading or contains it more than once, the pull stops before changing files; identify the project-specific section rather than guessing which instructions to keep.
 
@@ -36,7 +36,7 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 
 ## Installed layout
 
-- Root `AGENTS.md`, `SOUL.md`, and `.env.example`.
+- Root `AGENTS.md`, `SOUL.md`, `.env.example`, and `review-models.json`.
 - Shared skill copies in `.agents/skills/` for Pi, Codex, Gemini, and Hermes; native copies in `.claude/skills/` for Claude. Both come from the same `skills/` source, selected by `manifest.json`.
 - Full persona copies in `.agents/agents/`, `.claude/agents/`, `.gemini/agents/`, and `.pi/agents/`. The `.claude/`, `.gemini/`, and `.pi/` copies carry native tool names in place of the labels ([harness layout](harness-layout.md#persona-tools-labels-in-the-source-native-names-in-harness-copies)).
 - One root `references/` and `templates/` directory. Installed Markdown links to those shared files gain the extra `../` needed for the tool directory; source Markdown is unchanged. Skill-local references/templates stay with their skill, and per-project runtime scripts are copied with it. Account-wide Terraform provisioning sources, generated state, local tfvars, and provider caches are excluded.
