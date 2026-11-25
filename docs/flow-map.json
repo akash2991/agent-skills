@@ -649,7 +649,7 @@
         [
           "Start both reviewers on the same revision with the models in review-models.json",
           "det",
-          "review-models.json",
+          null,
           ""
         ],
         [
