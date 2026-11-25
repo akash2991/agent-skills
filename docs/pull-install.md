@@ -6,7 +6,7 @@ From the **consuming repository's root**, run:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
 
-Requires Node.js 22+, npm/npx, and Git. Review the package source before running it. Replace `main` with a reviewed commit SHA or tag to pin a version. Rerun the command to update; nothing pushes updates or synchronizes in the background.
+Requires Node.js 22+, npm/npx, and Git. Review the package source before running it. Replace `main` with a reviewed commit SHA or tag to pin a version. Rerun the command to update; the brain itself is never pushed or updated in the background. The one background job it installs is the artifact sync (`documentation` W12): when an agent finishes, it may open a PR with updated artifacts into the branch the agent pushed.
 
 Preview without changing files:
 

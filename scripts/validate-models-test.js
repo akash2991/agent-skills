@@ -118,6 +118,7 @@ test('artifacts are checked: shape, paths, and existence in this repository only
     [[{ ...art, outputs: ['/abs'] }], /outputs: must be an array of repository-relative paths/],
     [[{ path: 'docs/map.json', sources: ['x'], outputs: ['docs/map.html'] }], /only a then command writes outputs/],
     [[{ ...art, extra: 1 }], /unknown field\(s\) extra/],
+    [[{ ...art, outputs: ['models.json'] }], /outputs: models\.json is config/],
     [[{ ...art, path: 'docs/missing.md' }], /docs\/missing\.md does not exist/],
   ];
   for (const [artifacts, re] of cases) assert.match(validate(sandbox({ gate: { ...GATE, artifacts } })).join('\n'), re, String(re));

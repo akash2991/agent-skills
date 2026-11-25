@@ -268,6 +268,11 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
         continue;
       }
     }
+    // A models.json the brain never installed is the project's own file: never parse it as brain config.
+    if (rel === 'models.json' && existing && !state.files.has(rel) && !sameInfo(existing, desiredInfo)) {
+      conflicts.push(`${rel}: an existing file the brain did not install; move it aside, then pull`);
+      continue;
+    }
     if (rel === 'models.json' && existing) {
       try {
         desiredInfo.content = Buffer.from(mergeProjectModels(desiredInfo.content.toString('utf8'), existing.content.toString('utf8')));
@@ -289,7 +294,12 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
     try {
       checkPathComponents(targetRoot, rel);
       if (!lstatIfPresent(destAbs)) continue;
-      fileInfo(destAbs); // Still refuse symlinks and nonregular paths.
+      const current = fileInfo(destAbs); // Still refuse symlinks and nonregular paths.
+      // The renamed review-models.json is pruned only as installed; an edited copy holds settings to carry over.
+      if (rel === 'review-models.json' && !sameInfo(current, state.files.get(rel))) {
+        conflicts.push(`${rel}: edited since it was installed; its models now live in models.json. Carry over what you need, delete it, then pull`);
+        continue;
+      }
       prunes.push(rel);
     } catch (err) {
       conflicts.push(`${rel}: ${err.message}`);

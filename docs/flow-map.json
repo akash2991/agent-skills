@@ -553,7 +553,7 @@
           "W12"
         ],
         [
-          "Start the artifact-sync model in the background, in its own worktree on <branch>-artifacts",
+          "Start the artifact-sync model in the background, in a fresh worktree at the pushed tip",
           "det",
           "skills/documentation/scripts/artifact-sync.js",
           "W12"
@@ -565,7 +565,7 @@
           "W12"
         ],
         [
-          "Render with then, refuse edits outside the map, commit, push, and open the PR into the code branch",
+          "Render with then, refuse edits outside the map, commit once on the tip, check that commit, push it without overwriting, and open the PR",
           "det",
           "skills/documentation/scripts/artifact-sync.js",
           "W12"
@@ -759,7 +759,7 @@
       "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in models.json.",
       "steps": [
         [
-          "Artifact-only PR: skip both passes and the synthesis when the scope check passes",
+          "Artifact PR: skip both passes when scope --pr proves the sync published it and it changes only data artifacts",
           "det",
           "skills/documentation/scripts/artifact-sync.js",
           ""

@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const MARK = 'documentation/scripts/artifact-sync.js';
 const CLAUDE_EVENTS = ['Stop', 'SubagentStop'];
 const CLAUDE_COMMAND = 'f="$CLAUDE_PROJECT_DIR/.claude/skills/documentation/scripts/artifact-sync.js"; [ ! -f "$f" ] || node "$f" hook';
 const PI_EXTENSION = '../.agents/skills/documentation/scripts/artifact-sync-pi.js';
@@ -29,14 +28,17 @@ function mergeClaude(settings) {
     throw new Error('.claude/settings.json hooks must be an object');
   }
   const hooks = structuredClone(settings.hooks || {});
+  // Ours is only the exact command this installer writes; a project's own wrapper around the script is theirs.
+  const isOurs = h => h && h.type === 'command' && h.command === CLAUDE_COMMAND;
   for (const event of CLAUDE_EVENTS) {
-    if (hooks[event] !== undefined && !Array.isArray(hooks[event])) throw new Error(`.claude/settings.json hooks.${event} must be an array`);
-    // Already registered, exactly once and current: leave the event as it is, wherever the entry sits.
-    const ours = (hooks[event] || []).flatMap(entry => (Array.isArray(entry?.hooks) ? entry.hooks : [])).filter(h => typeof h?.command === 'string' && h.command.includes(MARK));
-    if (ours.length === 1 && ours[0].command === CLAUDE_COMMAND) continue;
-    const others = (hooks[event] || [])
-      .map(entry => ({ ...entry, hooks: (Array.isArray(entry?.hooks) ? entry.hooks : []).filter(h => !(typeof h?.command === 'string' && h.command.includes(MARK))) }))
-      .filter(entry => entry.hooks.length);
+    const entries = hooks[event] || [];
+    if (!Array.isArray(entries) || entries.some(e => !e || typeof e !== 'object' || !Array.isArray(e.hooks))) {
+      throw new Error(`.claude/settings.json hooks.${event} must be an array of { hooks: [...] } entries`);
+    }
+    // Already registered exactly once, in an entry of its own with no matcher: leave the event as it is.
+    const holders = entries.filter(e => e.hooks.some(isOurs));
+    if (holders.length === 1 && holders[0].hooks.length === 1 && holders[0].matcher === undefined && entries.flatMap(e => e.hooks).filter(isOurs).length === 1) continue;
+    const others = entries.map(e => ({ ...e, hooks: e.hooks.filter(h => !isOurs(h)) })).filter(e => e.hooks.length);
     others.push({ hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] });
     hooks[event] = others;
   }
@@ -46,9 +48,8 @@ function mergeClaude(settings) {
 function mergePi(settings) {
   if (settings.extensions !== undefined && !Array.isArray(settings.extensions)) throw new Error('.pi/settings.json extensions must be an array');
   const current = settings.extensions || [];
-  const ours = current.filter(e => typeof e === 'string' && e.includes('documentation/scripts/artifact-sync-pi.js'));
-  if (ours.length === 1 && ours[0] === PI_EXTENSION) return settings;
-  const extensions = current.filter(e => !ours.includes(e));
+  if (current.filter(e => e === PI_EXTENSION).length === 1) return settings;
+  const extensions = current.filter(e => e !== PI_EXTENSION);
   extensions.push(PI_EXTENSION);
   return { ...settings, extensions };
 }
@@ -70,8 +71,12 @@ function planArtifactSyncSettings(targetRoot) {
 function applyArtifactSyncSettings(writes) {
   for (const { file, value } of writes) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Keep the file's mode; a new file is readable by its owner and group only.
+    let mode = 0o640;
+    try { mode = fs.statSync(file).mode & 0o777; } catch (err) { if (err.code !== 'ENOENT') throw err; }
     const tmp = `${file}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx' });
+    fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode });
+    fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
   }
 }

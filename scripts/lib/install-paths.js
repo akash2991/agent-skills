@@ -50,7 +50,9 @@ function validateManagedRelPath(rel, label = 'path') {
     || /^\.(agents|claude|gemini|pi|hermes)\/(references|templates)\/.+/.test(rel)
     || /^(\.claude\/commands|\.pi\/prompts|\.codex\/prompts)\/(brain|brain-status|orchestrator)\.md$/.test(rel)
     || /^(\.gemini\/commands|commands)\/(brain|brain-status|orchestrator)\.toml$/.test(rel);
-  if (!allowed) throw new Error(`invalid ${label}: outside managed brain layout: ${rel}`);
+  // review-models.json became models.json (FAC-39): an older install's state still lists it, so the pull can prune it.
+  const retired = label === 'state path' && rel === 'review-models.json';
+  if (!allowed && !retired) throw new Error(`invalid ${label}: outside managed brain layout: ${rel}`);
   return rel;
 }
 

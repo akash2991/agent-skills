@@ -110,6 +110,7 @@ function checkArtifacts(list, rel, errors, root) {
     }
     if (a.then !== undefined && (typeof a.then !== 'string' || !a.then.trim())) errors.push(`${where}.then: must be a non-empty command`);
     if (a.outputs !== undefined && (!Array.isArray(a.outputs) || !a.outputs.every(safeRel))) errors.push(`${where}.outputs: must be an array of repository-relative paths`);
+    if (Array.isArray(a.outputs) && a.outputs.includes('models.json')) errors.push(`${where}.outputs: models.json is config, never an artifact`);
     if (a.outputs !== undefined && a.then === undefined) errors.push(`${where}.outputs: only a then command writes outputs`);
     if (root) {
       for (const f of [a.path, ...(Array.isArray(a.outputs) ? a.outputs : [])]) {

@@ -772,3 +772,48 @@ test("models.json keeps the project's artifacts and takes the brain's models", (
   assert.deepEqual(after['code-reviewer'], readJson(path.join(ROOT, 'project/models.json'))['code-reviewer']);
   assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
 });
+
+test('an install from before the rename upgrades: review-models.json is pruned and models.json installed', () => {
+  const target = tmpDir('legacy-models');
+  const legacy = Buffer.from('{"code-reviewer":{}}\n');
+  fs.writeFileSync(path.join(target, 'review-models.json'), legacy);
+  fs.mkdirSync(path.join(target, '.agent-brain'));
+  fs.writeFileSync(path.join(target, STATE_PATH), JSON.stringify({ schema: 1, files: [{ path: 'review-models.json', sha256: crypto.createHash('sha256').update(legacy).digest('hex'), mode: '0644' }] }));
+  const first = pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(first.plan.prunes, ['review-models.json']);
+  assert.ok(!fs.existsSync(path.join(target, 'review-models.json')));
+  assert.ok(fs.existsSync(path.join(target, 'models.json')));
+  assert.ok(!state(target).files.some(f => f.path === 'review-models.json'));
+  assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
+});
+
+test("settings: a project's own wrapper is kept, malformed entries are refused, and the file mode is kept", () => {
+  const target = tmpDir('settings-ownership');
+  fs.mkdirSync(path.join(target, '.claude'));
+  const wrapper = { type: 'command', command: 'mywrap node .claude/skills/documentation/scripts/artifact-sync.js hook --verbose' };
+  const file = path.join(target, '.claude/settings.json');
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ matcher: 'x', hooks: [wrapper] }] } }), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  pullInstall({ sourceRoot: ROOT, target });
+  const after = readJson(file);
+  assert.deepEqual(after.hooks.Stop[0], { matcher: 'x', hooks: [wrapper] });
+  assert.equal(after.hooks.Stop[1].hooks[0].command, CLAUDE_COMMAND);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  fs.writeFileSync(file, JSON.stringify({ hooks: { SubagentStop: [{ command: 'not wrapped' }] } }));
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /hooks\.SubagentStop must be an array of \{ hooks/);
+});
+
+test("an unmanaged models.json, or an edited review-models.json, stops the pull before anything is written", () => {
+  const target = tmpDir('models-collision');
+  fs.writeFileSync(path.join(target, 'models.json'), '{"gpt-4":{"max_tokens":8192}}');
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /models\.json: an existing file the brain did not install/);
+  assert.equal(fs.readFileSync(path.join(target, 'models.json'), 'utf8'), '{"gpt-4":{"max_tokens":8192}}');
+  assert.ok(!fs.existsSync(path.join(target, STATE_PATH)));
+  const legacyTarget = tmpDir('legacy-edited');
+  const legacy = Buffer.from('{"code-reviewer":{}}\n');
+  fs.writeFileSync(path.join(legacyTarget, 'review-models.json'), '{"code-reviewer":{"model":"mine"}}\n');
+  fs.mkdirSync(path.join(legacyTarget, '.agent-brain'));
+  fs.writeFileSync(path.join(legacyTarget, STATE_PATH), JSON.stringify({ schema: 1, files: [{ path: 'review-models.json', sha256: crypto.createHash('sha256').update(legacy).digest('hex'), mode: '0644' }] }));
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target: legacyTarget }), /review-models\.json: edited since it was installed/);
+  assert.ok(fs.existsSync(path.join(legacyTarget, 'review-models.json')));
+});
