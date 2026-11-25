@@ -11,6 +11,10 @@
       "sources": ["skills/*/SKILL.md", "skills/*/scripts/**", "agents/*.md", "scripts/**/*.js", "runtime/**", "hooks/**", "references/**", "AGENTS.md", "project/AGENTS.md", ".claude/settings.json", ".pi/settings.json", ".github/workflows/**"],
       "then": "node scripts/build-flow-map.js",
       "outputs": ["docs/flow-map.html"]
+    },
+    {
+      "path": "docs/orchestrator-hld.html",
+      "sources": ["skills/orchestrator/**", ".claude/commands/orchestrator.md", ".pi/prompts/orchestrator.md", "commands/orchestrator.toml", ".gemini/commands/orchestrator.toml"]
     }
   ]
 }
