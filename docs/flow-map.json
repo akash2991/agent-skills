@@ -346,7 +346,7 @@
       "id": "linear-intake",
       "name": "Take in a request",
       "area": "Linear",
-      "summary": "M1–M2: the request lands in Triage verbatim, then is classified.",
+      "summary": "M1–M2: the request lands in Triage verbatim, then is classified; every later prompt follows as a verbatim comment.",
       "steps": [
         [
           "Record the prompt verbatim on a Triage issue",
@@ -365,6 +365,12 @@
           "judgment",
           null,
           "M1"
+        ],
+        [
+          "Record each later prompt about the work verbatim, as a comment on the issue",
+          "judgment",
+          null,
+          "M2"
         ]
       ]
     },

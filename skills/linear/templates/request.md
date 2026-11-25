@@ -5,7 +5,7 @@ The intake issue: the user's words before classification. It lands in `Triage`; 
 ```markdown
 Kind: feature | product change | tech improvement | chore | question
 Requested by: <user or persona> on <date>
-User prompt (verbatim): "<...>"
+User prompt (verbatim): "<...>"  (each later prompt: its own comment, verbatim)
 Goal: <what should be true afterwards, in one sentence>
 Why now: <the trigger: a user need, an incident, a deadline, a cost, or "none stated">
 Affects: <services, screens, or docs, if known>

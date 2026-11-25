@@ -3,7 +3,7 @@
 The body of every issue, using the scope and readiness decisions from `planning-and-task-breakdown`. Fill applicable fields and explain omissions. Estimate and cycle below mirror the native Linear fields; they do not replace them.
 
 ```markdown
-User prompt (verbatim, when direct): "<...>"
+User prompt (verbatim, when direct): "<...>"  (each later prompt: its own comment, verbatim)
 Outcome: <one observable deliverable that is true when done>
 Out of scope: <explicit exclusions>
 Readiness: actionable | provisional (blocked on design issue <id>)

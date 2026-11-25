@@ -24,7 +24,7 @@ Linear is the source of truth for all work: what was asked, what was decided, wh
 | ID | Rule |
 | --- | --- |
 | M1 | **An intake issue before work; actionable issues before execution.** Record the request, then apply the scope and design-readiness decisions from `planning-and-task-breakdown`. Use the Workflow below to represent their readiness in Linear; an issue's existence alone does not make it executable. |
-| M2 | **An issue created from a direct user request carries the prompt verbatim.** |
+| M2 | **Every user prompt about an issue's work is on the issue verbatim: the prompt that creates it in the description, each later one (a correction, an answer, a decision, a "go") as its own comment when it arrives.** Word for word, typos included; never a paraphrase or a summary. A prompt that spans several issues goes on each. |
 | M3 | **A workflow state that is skipped is recorded on the issue with the reason.** An override of any convention (one-shot development, a migration plan change) is accepted only on an explicit user instruction and is recorded in `docs/LEARNINGS.md`, with a note on the issue. |
 | M4 | **The issue carries the reasoning; the code and the commit carry the issue id.** The issue and the commit message together replace most documentation: do not repeat on one what the other already says. |
 | M5 | **Every state change, reassignment, or re-estimate is a status update on the issue**; a `Blocked` update carries the blocker block. A project gets a project update at every milestone close and whenever its health changes. |
@@ -110,6 +110,7 @@ The agent doing the work moves the issue, with a status update on every move (M5
 |---|---|
 | "It's a small change, I'll file the issue after." | An issue comes before any work; without it nobody could see the work in progress and the skipped states were never recorded (M1, M3). |
 | "The prompt is long, I'll paraphrase it." | The verbatim prompt is what the issue is judged against later. Paste it (M2). |
+| "It was only a follow-up; the first prompt is already on the issue." | Later prompts change the scope and carry the decisions; each goes on the issue as a comment, verbatim (M2). |
 | "The user said to one-shot it, so the convention is gone." | An override is accepted only on an explicit user instruction and is recorded in `docs/LEARNINGS.md` with a note on the issue (M3). |
 | "I'll explain the reasoning in a code comment." | The issue carries the reasoning; the code carries the issue id (M4). |
 | "A one-line comment is enough for this state change." | Without the structured update nobody can later tell why the issue moved (M5). |
@@ -122,6 +123,7 @@ The agent doing the work moves the issue, with a status update on every move (M5
 ## Red Flags
 
 - Work started with no issue, or a direct request with no verbatim prompt (M1, M2).
+- A later prompt acted on but not on the issue, or on it only as a paraphrase (M2).
 - A state skipped, or a convention overridden, with nothing on the issue or in `docs/LEARNINGS.md` (M3).
 - A commit or PR with no issue id (M4).
 - A state change without a status update; a `Blocked` issue without the blocker block; a milestone closed without a project update (M5).
@@ -134,7 +136,7 @@ The agent doing the work moves the issue, with a status update on every move (M5
 
 - [ ] The team has the workflow states and labels; `LINEAR_TEAM` and `LINEAR_API_KEY` are in the local `.env`, not in the repository.
 - [ ] The request is scoped before execution and its actionable issue exists; large work has a project and design/planning issue before implementation breakdown. Detailed implementation issues wait for applicable design review (M1).
-- [ ] A request is filed with `templates/request.md` and carries the prompt verbatim; skipped states and overrides are recorded (M2, M3).
+- [ ] A request is filed with `templates/request.md` and carries the prompt verbatim, and every later prompt about the work is a verbatim comment; skipped states and overrides are recorded (M2, M3).
 - [ ] The issue is in the workflow state its work is in; a skipped state has a status update with the reason (M3, M5).
 - [ ] Every actionable issue follows `templates/issue.md` with a definite deliverable, native estimate, verification, owned paths, and design basis; provisional placeholders remain explicitly blocked and unestimated. Every project follows `templates/project.md` with its documents attached.
 - [ ] Every state change has a status update; `Blocked` updates carry the blocker block; every closed milestone has a project update (M5).
