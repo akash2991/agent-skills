@@ -1020,6 +1020,7 @@ test('a Docker daemon that changes during spawn stops it before anything is rese
 
 // A git that kills the script calling it at one exact step, for interruptions that cannot be timed from outside.
 //   SHIM_KILL=add          the script dies on `worktree add`, before git runs it
+//   SHIM_KILL=add-after    the script dies right after git ran `worktree add`
 //   SHIM_KILL=delete-before / delete-after   the script dies on `update-ref -d`, before or after git runs it
 const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
 const SHIM = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-git-shim-'));
@@ -1027,6 +1028,7 @@ process.on('exit', () => fs.rmSync(SHIM, { recursive: true, force: true }));
 fs.writeFileSync(path.join(SHIM, 'git'), `#!/bin/sh
 case "$SHIM_KILL $*" in
   "add "*"worktree add"*) kill -9 $PPID; exit 1 ;;
+  "add-after "*"worktree add"*) "${REAL_GIT}" "$@"; kill -9 $PPID; exit 0 ;;
   "delete-before "*"update-ref -d"*) [ -n "$SHIM_LOG" ] && echo delete >> "$SHIM_LOG"; kill -9 $PPID; exit 1 ;;
   "delete-after "*"update-ref -d"*) [ -n "$SHIM_LOG" ] && echo delete >> "$SHIM_LOG"; "${REAL_GIT}" "$@"; kill -9 $PPID; exit 0 ;;
 esac
@@ -1116,4 +1118,29 @@ test('the Docker context is pinned for a whole run: a switch during install or b
   assert.doesNotMatch(tools.log(), /@ctx-b/);
   tools.cleanup();
   fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a create settled after an interrupted add needs the branch to continue its start commit, also on resume', () => {
+  const { pendingTeardown } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  for (const via of ['teardown', 'resume']) {
+    const { parent, repo } = makeRepo(`late-${via}-`);
+    const wt = path.join(parent, 'ENG-101-late');
+    // git's add succeeds, then spawn dies before it settles its intent
+    const r = runner(repo, shimmed({ SHIM_KILL: 'add-after' }))(['spawn', 'ENG-101-late', '--owner', 'a', '--persona', 'be']);
+    assert.notStrictEqual(r.status, 0, via);
+    assert.ok(ledgerOf(repo)['ENG-101-late'].branchPending, via);
+    // before anything settles it, the branch is rewritten in place to an unrelated history and merged
+    const orphan = gitIn(wt, ['commit-tree', gitIn(wt, ['write-tree']), '-m', 'unrelated']);
+    gitIn(wt, ['reset', '-q', '--hard', orphan]);
+    gitIn(repo, ['merge', '-q', '--allow-unrelated-histories', '--no-ff', '-m', 'merge', 'ENG-101-late']);
+    if (via === 'resume') {
+      assert.strictEqual(runner(repo)(['spawn', 'ENG-101-late', '--owner', 'a', '--persona', 'be']).status, 0);
+      assert.strictEqual(ledgerOf(repo)['ENG-101-late'].branchCreated, false);
+      assert.strictEqual(pendingTeardown('ENG-101-late', repo, gitIn(repo, ['rev-parse', 'ENG-101-late'])), null);
+    }
+    const t = runner(repo)(['teardown', 'ENG-101-late', '--owner', 'a']);
+    assert.strictEqual(t.status, 1, `${via}: ${t.stderr}`);
+    assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-101-late']), '', `${via}: the rewritten branch survives`);
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });

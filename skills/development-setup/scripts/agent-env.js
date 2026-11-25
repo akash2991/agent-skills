@@ -364,8 +364,9 @@ function branchOwned(root, entry, tip) {
 }
 
 // A branch spawn asked git to create (`add -b`, which refuses a branch that already exists) becomes spawn's only once
-// the registration that add made is proven this spawn's, by its mark or spawn's lock reason, and holds the branch.
-// The intent recorded before `add` grants nothing by itself; it is settled once, here, and then cleared.
+// the registration that add made is proven this spawn's, by its mark or spawn's lock reason, holds the branch, and
+// the branch still continues the commit it was created from. The intent recorded before `add` grants nothing by
+// itself; it is settled once, here, and then cleared.
 function settleBranchIntent(root, ledger, name, worktree, branch) {
   const entry = readJson(ledger)[name];
   const pending = entry && entry.branchPending;
@@ -380,7 +381,10 @@ function settleBranchIntent(root, ledger, name, worktree, branch) {
   }
   const tip = branchTip(root, branch);
   const fields = { branchPending: null };
-  if (pending.create && proven && tip) { fields.branchCreated = true; fields.branchTip = tip; }
+  if (pending.create && proven && tip && pending.startTip && isAncestor(root, pending.startTip, tip)) {
+    fields.branchCreated = true;
+    fields.branchTip = tip;
+  }
   updateEntry(ledger, name, fields);
 }
 
@@ -627,7 +631,8 @@ async function spawnEnv(p, opts, root, owner, persona, ledger) {
     // Ownership of an existing branch is only ever kept, never gained: it stays spawn's while it continues the tip
     // spawn recorded. A branch spawn is about to create is only an intent until the add is proven (settleBranchIntent).
     const branchCreated = tip ? branchOwned(root, entry, tip) : false;
-    updateEntry(ledger, p.name, { mark, branchCreated, branchPending: { create: !tip, mark }, installedFingerprint: null });
+    const startTip = tip ? null : git(['rev-parse', `${startRef}^{commit}`], root);
+    updateEntry(ledger, p.name, { mark, branchCreated, branchPending: { create: !tip, mark, startTip }, installedFingerprint: null });
     const lock = ['--lock', '--reason', `${LOCK_PREFIX}${mark}`];
     const args = tip ? ['worktree', 'add', ...lock, p.worktree, p.branch]
       // A new branch does not track origin's default branch, so a plain push cannot land on it.
