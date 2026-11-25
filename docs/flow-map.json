@@ -815,7 +815,7 @@
           ""
         ],
         [
-          "Pass each worker the user's whole message as quoted context, so the ticket writer records it (linear M2)",
+          "Hand each issue's writer the M2-redacted quotation as context, not an assignment, for any message about its work (linear M2)",
           "judgment",
           null,
           "M2"

@@ -1,6 +1,6 @@
 # Issue
 
-The body of every issue, using the scope and readiness decisions from `planning-and-task-breakdown`. Later user prompts about the work go in comments, as `linear` M2 says. Fill applicable fields and explain omissions. Estimate and cycle below mirror the native Linear fields; they do not replace them.
+The body of every issue, using the scope and readiness decisions from `planning-and-task-breakdown`. Apply `linear` M2 to both the creating prompt here and comments on an existing issue. Fill applicable fields and explain omissions. Estimate and cycle below mirror the native Linear fields; they do not replace them.
 
 ```markdown
 User prompt (verbatim, when direct): "<...>"
