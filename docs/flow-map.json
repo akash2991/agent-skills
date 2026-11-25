@@ -61,6 +61,12 @@
           "P5"
         ],
         [
+          "Refuse a legacy new-worktree.js entry before changing anything",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS10"
+        ],
+        [
           "Record the environment in the ledger before the first side effect",
           "det",
           "skills/development-setup/scripts/agent-env.js",
@@ -73,7 +79,7 @@
           "DS3"
         ],
         [
-          "Reuse the marked worktree, or restore it on the local branch, else origin's, else a new branch from the base; mark the registration",
+          "Reuse the worktree only when its registration carries spawn's mark and its checkout points back to it; otherwise restore it, else check out origin's branch, else branch from the base, with the mark recorded first and held as git's lock reason",
           "det",
           "skills/development-setup/scripts/agent-env.js",
           "P6 DS2 DS10"
@@ -85,7 +91,7 @@
           "DS4 DS10"
         ],
         [
-          "Reserve the Compose project name machine-wide on this Docker daemon, only when it is empty or already this environment's; bring it up",
+          "For a checkout with a compose file: reserve the project name machine-wide on the pinned Docker daemon (re-read under the lock), only when it is empty or already this environment's; bring it up",
           "det",
           "skills/development-setup/scripts/agent-env.js",
           "DS3 DS5 DS11"
@@ -105,7 +111,7 @@
       "summary": "DS11 with P7: after the merge, or on a canceled ticket, remove only what spawn created.",
       "steps": [
         [
-          "Delete the remote branch at merge; leave the local branch to teardown only when that teardown will delete it",
+          "Delete the remote branch at merge; leave the local branch to teardown only when its tip is in the merged head and that teardown will delete it",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
           "P7"
@@ -129,7 +135,7 @@
           "DS2 DS11"
         ],
         [
-          "Delete the local branch only when spawn created it, it merged, nothing holds it, and it is still at the checked tip",
+          "Decide the local branch once and record it: delete it only when spawn created it, it continues spawn's recorded commit, it merged, nothing holds it, and it is still at the checked tip; a kept merged branch leaves P7 open",
           "det",
           "skills/development-setup/scripts/agent-env.js",
           "DS11 P7"

@@ -230,7 +230,7 @@ function main(argv) {
     try { git(['branch', '-d', view.headRefName]); } catch (err) {
       const text = String(err.stderr || err.message);
       const outcome = localBranchOutcome(text);
-      const holder = outcome === 'worktree' ? pendingTeardown(view.headRefName) : null;
+      const holder = outcome === 'worktree' ? pendingTeardown(view.headRefName, process.cwd(), view.headRefOid) : null;
       if (holder) {
         console.log(`merge-pr: local branch ${view.headRefName} is pending the teardown of ${holder} (development-setup DS11), which deletes it`);
       } else if (outcome !== 'gone') {
@@ -300,9 +300,11 @@ function localBranchOutcome(text) {
 }
 
 // The worktree whose teardown will delete this local branch, or null. Only a spawned environment qualifies: the
-// ledger in the git common dir names the branch as one spawn created, exactly one worktree holds it, that worktree is
-// the environment's, and its registration carries the mark spawn left (development-setup agent-env.js).
-function pendingTeardown(branch, cwd = process.cwd()) {
+// local tip is part of the merged PR head (a local-only commit means P7 is open now), the ledger in the git common
+// dir names the branch as one spawn created and the tip still continues the commit spawn recorded, exactly one
+// worktree holds it, that worktree is the environment's, and its registration carries spawn's mark
+// (development-setup agent-env.js).
+function pendingTeardown(branch, cwd, mergedHead) {
   const fs = require('fs');
   const path = require('path');
   const run = args => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -317,6 +319,11 @@ function pendingTeardown(branch, cwd = process.cwd()) {
   if (holders.length !== 1) return null;
   const entry = Object.values(ledger).find(e => e && e.branch === branch && e.branchCreated === true && e.mark);
   if (!entry || path.resolve(entry.worktree) !== path.resolve(holders[0])) return null;
+  const isAncestor = (a, b) => { try { run(['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } };
+  let tip;
+  try { tip = run(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]); } catch { return null; }
+  if (!mergedHead || !isAncestor(tip, mergedHead)) return null;
+  if (!entry.branchTip || !isAncestor(entry.branchTip, tip)) return null;
   try {
     const admin = run(['-C', holders[0], 'rev-parse', '--absolute-git-dir']);
     return fs.readFileSync(path.join(admin, 'brain-env-mark'), 'utf8').trim() === entry.mark ? holders[0] : null;

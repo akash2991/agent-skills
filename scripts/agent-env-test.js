@@ -472,11 +472,12 @@ test('teardown waits for the merge; --abandon keeps the unmerged branch, and a r
   r = node(['spawn', 'ENG-50-work', '--owner', 'a', '--persona', 'be']);
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(gitIn(wt, ['rev-parse', 'HEAD']), tip);
-  // This spawn found the branch already there, so even after the merge teardown leaves it alone.
+  // This spawn found the branch already there, so even after the merge teardown leaves it alone, and says P7 is open.
   gitIn(repo, ['merge', '--no-ff', '-q', '-m', 'merge', 'ENG-50-work']);
   r = node(['teardown', 'ENG-50-work', '--owner', 'a']);
-  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.status, 1, r.stderr);
   assert.match(r.stdout, /kept: spawn did not create it/);
+  assert.match(r.stderr, /P7 is not complete/);
   assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-50-work']), '');
   fs.rmSync(parent, { recursive: true, force: true });
 });
@@ -516,13 +517,15 @@ test('a worktree deleted by hand is restored by spawn on the same branch, which 
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
-test('a branch that existed before spawn is never deleted by teardown', () => {
+test('a branch that existed before spawn is never deleted by teardown, which then reports P7 open', () => {
   const { parent, repo } = makeRepo('theirs-');
   const node = runner(repo);
   gitIn(repo, ['branch', 'ENG-53-theirs']);
   assert.strictEqual(node(['spawn', 'ENG-53-theirs', '--owner', 'a', '--persona', 'be']).status, 0);
   const r = node(['teardown', 'ENG-53-theirs', '--owner', 'a']);
-  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, /P7 is not complete/);
+  assert.ok(!fs.existsSync(path.join(parent, 'ENG-53-theirs')), 'the rest of the cleanup finished');
   assert.match(r.stdout, /kept: spawn did not create it/);
   assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-53-theirs']), '');
   fs.rmSync(parent, { recursive: true, force: true });
@@ -867,17 +870,147 @@ test('unknown flags, a missing value, and teardown --dry-run are refused before 
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
-test('an environment recorded by new-worktree.js is adopted with its branch and Compose project kept', () => {
+test('an environment recorded by new-worktree.js is refused by spawn and teardown without changing anything', () => {
   const { parent, repo } = makeRepo('legacy-env-');
+  commitFile(repo, 'compose.yaml', 'services: {}\n');
   const wt = path.join(parent, 'ENG-89-old');
   gitIn(repo, ['worktree', 'add', '-q', '--no-track', '-b', 'ENG-89-old', wt, 'main']);
-  fs.writeFileSync(path.join(repo, '.git', 'brain-env-ledger.json'), JSON.stringify({ 'ENG-89-old': {
-    owner: 'a', branch: 'ENG-89-old', worktree: wt, ports: [], composeProject: 'eng-89-old', createdAt: '2026-11-01T00:00:00Z' } }));
+  const legacy = { 'ENG-89-old': { owner: 'a', branch: 'ENG-89-old', worktree: wt, ports: [], composeProject: 'eng-89-old', createdAt: '2026-11-01T00:00:00Z' } };
+  fs.writeFileSync(path.join(repo, '.git', 'brain-env-ledger.json'), JSON.stringify(legacy));
+  // its stack is still running
+  const tools = fakeTools({ up: true, projects: { 'eng-89-old': { containers: [{ id: 'l1', dir: fs.realpathSync(parent) + '/ENG-89-old' }], volumes: ['eng-89-old_data'], networks: [] } } });
+  const node = runner(repo, scratchHome(tools.env));
+  for (const args of [['spawn', 'ENG-89-old', '--owner', 'a', '--persona', 'be'], ['teardown', 'ENG-89-old', '--owner', 'a']]) {
+    const r = node(args);
+    assert.strictEqual(r.status, 1, args[0]);
+    assert.match(r.stderr, /legacy environment from new-worktree.js/);
+  }
+  assert.ok(fs.existsSync(wt));
+  assert.deepStrictEqual(ledgerOf(repo), legacy);
+  assert.deepStrictEqual(tools.state().projects['eng-89-old'].volumes, ['eng-89-old_data']);
+  assert.doesNotMatch(tools.log(), /compose/);
+  tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a foreign checkout left under spawn\'s stale registration is neither reused nor torn down', () => {
+  const { parent, repo } = makeRepo('foreign-checkout-');
   const node = runner(repo);
-  assert.strictEqual(node(['spawn', 'ENG-89-old', '--owner', 'a', '--persona', 'be']).status, 0);
-  const r = node(['teardown', 'ENG-89-old', '--owner', 'a']);
+  const wt = path.join(parent, 'ENG-90-stale');
+  assert.strictEqual(node(['spawn', 'ENG-90-stale', '--owner', 'a', '--persona', 'be']).status, 0);
+  // The directory goes, the registration stays, and an unrelated repository appears at the path on the same branch.
+  fs.rmSync(wt, { recursive: true, force: true });
+  fs.mkdirSync(wt);
+  gitIn(wt, ['init', '-q', '-b', 'ENG-90-stale']);
+  commitFile(wt, 'theirs.txt', 't');
+  for (const args of [['spawn', 'ENG-90-stale', '--owner', 'a', '--persona', 'be'], ['teardown', 'ENG-90-stale', '--owner', 'a']]) {
+    const r = node(args);
+    assert.strictEqual(r.status, 1, args[0]);
+    assert.match(r.stderr, /not the checkout of spawn's registration/);
+  }
+  assert.ok(fs.existsSync(path.join(wt, 'theirs.txt')));
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a spawn killed mid-checkout left proof in git\'s lock: the next spawn resumes it and teardown removes it', async () => {
+  const { parent, repo } = makeRepo('killed-');
+  const hook = path.join(repo, '.git', 'hooks', 'post-checkout');
+  fs.writeFileSync(hook, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+  const child = spawn(process.execPath, [SCRIPT, 'spawn', 'ENG-91-kill', '--owner', 'a', '--persona', 'be'], { cwd: repo, stdio: 'ignore', detached: true });
+  const admin = path.join(repo, '.git', 'worktrees', 'ENG-91-kill');
+  // Wait until git has registered the worktree under spawn's lock and is running the slow checkout hook.
+  for (let i = 0; !fs.existsSync(path.join(admin, 'locked')); i++) {
+    assert.ok(i < 300, 'the add never started');
+    await new Promise(r => setTimeout(r, 50));
+  }
+  await new Promise(r => setTimeout(r, 500));
+  process.kill(-child.pid, 'SIGKILL');
+  await new Promise(r => setTimeout(r, 100));
+  fs.rmSync(hook);
+  assert.ok(!fs.existsSync(path.join(admin, 'brain-env-mark')), 'killed before the mark file was written');
+  const node = runner(repo);
+  let r = node(['spawn', 'ENG-91-kill', '--owner', 'a', '--persona', 'be']);
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /kept: spawn did not create it/);
-  assert.ok(!fs.existsSync(wt));
+  assert.ok(!fs.existsSync(path.join(admin, 'locked')), 'spawn\'s own lock was lifted');
+  r = node(['teardown', 'ENG-91-kill', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /branch ENG-91-kill deleted/);
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('direct teardown keeps a merged branch that was made again by hand since spawn, and reports P7 open', () => {
+  const { parent, repo } = makeRepo('remade-');
+  const node = runner(repo);
+  const wt = path.join(parent, 'ENG-92-remade');
+  assert.strictEqual(node(['spawn', 'ENG-92-remade', '--owner', 'a', '--persona', 'be']).status, 0);
+  commitFile(wt, 'mine.txt', 'm');
+  gitIn(repo, ['worktree', 'remove', wt]);
+  gitIn(repo, ['branch', '-D', 'ENG-92-remade']);
+  gitIn(repo, ['checkout', '-q', '--orphan', 'other']);
+  gitIn(repo, ['commit', '-q', '--allow-empty', '-m', 'unrelated']);
+  gitIn(repo, ['branch', 'ENG-92-remade']);
+  gitIn(repo, ['checkout', '-q', 'main']);
+  gitIn(repo, ['merge', '-q', '--allow-unrelated-histories', '--no-ff', '-m', 'merge', 'ENG-92-remade']);
+  const r = node(['teardown', 'ENG-92-remade', '--owner', 'a']);
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stdout, /kept: spawn did not create it, or it was made again since/);
+  assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-92-remade']), '');
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a teardown run again after its branch decision never deletes a branch made since', () => {
+  const { parent, repo } = makeRepo('settled-');
+  const tools = fakeTools();
+  const env = scratchHome(tools.env);
+  const node = runner(repo, env);
+  assert.strictEqual(node(['spawn', 'ENG-93-once', '--owner', 'a', '--persona', 'be', '--ports', '1']).status, 0);
+  const claims = path.join(env.HOME, '.agent-brain', 'port-claims.json');
+  const good = fs.readFileSync(claims, 'utf8');
+  fs.writeFileSync(claims, '{');
+  let r = node(['teardown', 'ENG-93-once', '--owner', 'a']);
+  assert.strictEqual(r.status, 1);
+  assert.strictEqual(gitIn(repo, ['branch', '--list', 'ENG-93-once']), '', 'the first run deleted spawn\'s branch');
+  // Someone makes a branch of that name at the very same commit; the retry must not take it.
+  gitIn(repo, ['branch', 'ENG-93-once']);
+  fs.writeFileSync(claims, good);
+  r = node(['teardown', 'ENG-93-once', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-93-once']), '', 'the new branch survives');
+  assert.strictEqual(ledgerOf(repo)['ENG-93-once'], undefined);
+  tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a resume without a compose file is not blocked by another repository\'s reservation', () => {
+  const a = makeRepo('nocompose-a-');
+  const b = makeRepo('nocompose-b-');
+  commitFile(b.repo, 'compose.yaml', 'services: {}\n');
+  const tools = fakeTools({ up: true, projects: {} });
+  const env = scratchHome(tools.env);
+  assert.strictEqual(runner(a.repo, env)(['spawn', 'ENG-94-name', '--owner', 'a', '--persona', 'be']).status, 0);
+  assert.strictEqual(runner(b.repo, env)(['spawn', 'ENG-94-name', '--owner', 'b', '--persona', 'be']).status, 0);
+  const ups = () => tools.log().split('\n').filter(l => / up -d/.test(l)).length;
+  const before = ups();
+  const r = runner(a.repo, env)(['spawn', 'ENG-94-name', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(ups(), before, 'A started nothing');
+  tools.cleanup();
+  for (const x of [a, b]) fs.rmSync(x.parent, { recursive: true, force: true });
+});
+
+test('a Docker daemon that changes during spawn stops it before anything is reserved or started', () => {
+  const { parent, repo } = makeRepo('daemon-switch-');
+  commitFile(repo, 'compose.yaml', 'services: {}\n');
+  commitFile(repo, 'package-lock.json', '{}');
+  const tools = fakeTools({ up: true, projects: {} });
+  const env = scratchHome(tools.env);
+  // The install switches the daemon the current context talks to, as a `docker context use` elsewhere would.
+  fs.writeFileSync(path.join(FAKES, 'npm'), `#!/bin/sh\n[ -n "$FAKE_TOOL_LOG" ] && echo "npm $* in $PWD" >> "$FAKE_TOOL_LOG"\n[ -n "$FAKE_NPM_SWITCH" ] && node -e "const f=process.env.FAKE_DOCKER_STATE;const s=JSON.parse(require('fs').readFileSync(f,'utf8'));s.daemon='daemon-b';require('fs').writeFileSync(f,JSON.stringify(s))"\nexit 0\n`, { mode: 0o755 });
+  const r = runner(repo, { ...env, FAKE_NPM_SWITCH: '1' })(['spawn', 'ENG-95-switch', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /the Docker daemon changed during spawn \(daemon-a → daemon-b\)/);
+  assert.deepStrictEqual(composeClaims(env), {});
+  assert.doesNotMatch(tools.log(), / up -d/);
+  tools.cleanup();
   fs.rmSync(parent, { recursive: true, force: true });
 });
