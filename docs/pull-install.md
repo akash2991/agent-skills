@@ -26,7 +26,7 @@ In a reviewed revision containing the first-party runtime, explicitly opts this 
 
 ## Ownership and updates
 
-**This repository is the source of truth for brain files.** Skills, personas, references, templates, commands, `SOUL.md`, `.env.example`, and `models.json` are replaced with the source version, even if existing copies differ. There are no backups or local-override lists: use Git to review and revert changes. Files previously installed by the tool but no longer supplied by the brain are removed, including edited copies.
+**This repository is the source of truth for brain files.** Skills, personas, references, templates, commands, `SOUL.md`, `.env.example`, and `models.json` are replaced with the source version, even if existing copies differ. There are no backups or local-override lists: use Git to review and revert changes. Files previously installed by the tool but no longer supplied by the brain are removed, including edited copies. One exception: an edited `review-models.json` (renamed `models.json`) stops the pull, so you can see what you changed before deleting it.
 
 **Only `AGENTS.md` and `models.json` are patched:** shared sections come from the current brain, while the existing `## This project` instructions are preserved. `models.json` takes the brain's models and keeps the project's own `artifacts` map (`documentation` W12). Exact links to relocated brain files are adjusted to their tool-local paths; custom project paths are left alone. An initial install without `AGENTS.md` uses the source template. If an existing file lacks that heading or contains it more than once, the pull stops before changing files; identify the project-specific section rather than guessing which instructions to keep.
 

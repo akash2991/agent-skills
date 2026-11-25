@@ -759,7 +759,7 @@
       "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in models.json.",
       "steps": [
         [
-          "Artifact PR: skip both passes when scope --pr proves the sync published it and it changes only data artifacts",
+          "Artifact PR: merge --pr checks the published head, validated data and a reproduced render, then merges exactly that head without the double pass",
           "det",
           "skills/documentation/scripts/artifact-sync.js",
           ""

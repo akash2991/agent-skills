@@ -297,7 +297,7 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
       const current = fileInfo(destAbs); // Still refuse symlinks and nonregular paths.
       // The renamed review-models.json is pruned only as installed; an edited copy holds settings to carry over.
       if (rel === 'review-models.json' && !sameInfo(current, state.files.get(rel))) {
-        conflicts.push(`${rel}: edited since it was installed; its models now live in models.json. Carry over what you need, delete it, then pull`);
+        conflicts.push(`${rel}: edited since it was installed; models.json replaces it and keeps only a project's own artifacts across pulls (the models come from the brain). Delete it, then pull`);
         continue;
       }
       prunes.push(rel);

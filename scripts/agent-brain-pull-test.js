@@ -801,6 +801,15 @@ test("settings: a project's own wrapper is kept, malformed entries are refused, 
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   fs.writeFileSync(file, JSON.stringify({ hooks: { SubagentStop: [{ command: 'not wrapped' }] } }));
   assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /hooks\.SubagentStop must be an array of \{ hooks/);
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: null } }));
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /hooks\.Stop must be an array/);
+  // The exact command inside the project's own matched group is the project's: kept as it is, ours added beside it.
+  const theirs = { matcher: 'Explore', hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 42 }] };
+  fs.writeFileSync(file, JSON.stringify({ hooks: { SubagentStop: [theirs] } }));
+  pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(file).hooks.SubagentStop, [theirs, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }]);
+  const again = pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(again.plan.settings, []);
 });
 
 test("an unmanaged models.json, or an edited review-models.json, stops the pull before anything is written", () => {

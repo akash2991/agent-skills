@@ -27,6 +27,7 @@ const CONFIG = {
   artifacts: [
     { path: 'docs/map.md', sources: ['src/**/*.js'], then: 'cp docs/map.md docs/map.html', outputs: ['docs/map.html'] },
     { path: 'docs/page.html', sources: ['web/**'] },
+    { path: 'docs/flow.json', sources: ['lib/**'], then: 'cp docs/flow.json docs/flow.html', outputs: ['docs/flow.html'] },
   ],
 };
 
@@ -39,7 +40,10 @@ function repo({ change = 'src/a.js' } = {}) {
   git(['init', '--bare', '-q', '-b', 'main', origin], top);
   git(['init', '-q', '-b', 'main', root], top);
   for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.com'], ['commit.gpgsign', 'false']]) git(['config', k, v], root);
-  for (const d of ['src', 'docs', 'web']) fs.mkdirSync(path.join(root, d));
+  for (const d of ['src', 'docs', 'web', 'lib']) fs.mkdirSync(path.join(root, d));
+  fs.writeFileSync(path.join(root, 'lib/x.js'), '1\n');
+  fs.writeFileSync(path.join(root, 'docs/flow.json'), '{"v":1}\n');
+  fs.writeFileSync(path.join(root, 'docs/flow.html'), '{"v":1}\n');
   fs.writeFileSync(path.join(root, 'models.json'), JSON.stringify(CONFIG));
   fs.writeFileSync(path.join(root, 'src/a.js'), '1\n');
   fs.writeFileSync(path.join(root, 'web/app.js'), '1\n');
@@ -80,14 +84,14 @@ function fakeExec(calls, edit, gh = {}) {
   return (cmd, args, opts) => {
     calls.push({ cmd, args, cwd: opts.cwd });
     if (cmd === 'claude' || cmd === 'pi') { edit(opts.cwd); return { status: 0, stdout: '', stderr: '' }; }
-    if (cmd === 'gh' && args[1] === 'list') return gh.list || { status: 0, stdout: '\n' };
+    if (cmd === 'gh' && args[1] === 'list') return gh.list || { status: 0, stdout: '[]' };
     if (cmd === 'gh' && args[1] === 'create') return { status: 0, stdout: 'https://example.com/pr/7\n' };
     return { status: 1, stderr: 'unexpected' };
   };
 }
 const edit = cwd => fs.writeFileSync(path.join(cwd, 'docs/map.md'), `v2 ${++counter}\n`);
 const runIt = (r, opts = {}) => sync.run({ root: r.root, branch: BRANCH, base: opts.base || r.base, head: opts.head || r.head },
-  { spawnSync: fakeExec(opts.calls || [], opts.edit || edit, opts.gh), ...opts.deps });
+  { spawnSync: fakeExec(opts.calls || [], opts.edit || edit, opts.gh), repo: 'o/r', ...opts.deps });
 
 test('globs are repository-relative', () => {
   const m = (g, f) => sync.globToRegExp(g).test(f);
@@ -159,7 +163,7 @@ test('an unpushed branch and a running sync start nothing; a dead holder is take
   assert.match(sync.hook(r.root, {}, fakeLaunch([])), /already running/);
   fs.writeFileSync(lock, '999999999');
   assert.match(sync.hook(r.root, {}, fakeLaunch([])), /started/);
-  assert.equal(fs.readFileSync(lock, 'utf8'), 'starting');
+  assert.match(fs.readFileSync(lock, 'utf8'), /^starting:[0-9a-f]{16}$/);
 });
 
 test('run publishes one validated commit on the pushed tip to <branch>-artifacts and opens a PR into the code branch', () => {
@@ -179,10 +183,11 @@ test('run publishes one validated commit on the pushed tip to <branch>-artifacts
   assert.match(message, /^docs\(artifacts\): bring 1 artifact up to date with [0-9a-f]{7} \[FAC-1\]$/m);
   for (const t of ['Model: claude-sonnet-5-5', 'Thinking-effort: medium', 'Harness: claude']) assert.ok(message.includes(t), t);
   const create = calls.find(c => c.cmd === 'gh' && c.args[1] === 'create');
-  assert.deepEqual(create.args.slice(2, 6), ['--base', BRANCH, '--head', `${BRANCH}-artifacts`]);
+  assert.deepEqual(create.args.slice(4, 8), ['--base', BRANCH, '--head', `${BRANCH}-artifacts`]);
   assert.deepEqual(parseBlastRadius(create.args[create.args.indexOf('--body') + 1]), { level: 'low', error: null });
   const list = calls.find(c => c.cmd === 'gh' && c.args[1] === 'list');
   assert.ok(list.args.includes('--base') && list.args.includes(BRANCH));
+  for (const c of calls.filter(x => x.cmd === 'gh')) assert.deepEqual(c.args.slice(2, 4), ['--repo', 'o/r'], 'every gh call names the repository');
   assert.equal(readState(r.root).published, published);
   assert.equal(readState(r.root).synced, r.head);
   assert.ok(!fs.existsSync(stateFile(r.root, 'lock')), 'the lock is released');
@@ -247,48 +252,134 @@ test('failures are recorded and fail closed: a failed push or gh lookup marks no
   assert.match(sync.plan(r.root, {}).skip, /last error: .*gh pr list failed/);
 });
 
-test('run takes only a free or "starting" lock, and releases only its own', () => {
+test('run takes only its own reservation, or a free lock when started by hand, and releases only its own', () => {
   const r = repo();
   const lock = stateFile(r.root, 'lock');
   fs.mkdirSync(path.dirname(lock), { recursive: true });
   fs.writeFileSync(lock, '1');
   assert.throws(() => runIt(r), /another sync holds/);
   assert.equal(fs.readFileSync(lock, 'utf8'), '1');
-  fs.writeFileSync(lock, 'starting');
-  runIt(r);
+  fs.writeFileSync(lock, 'starting:aaaa');
+  const run = token => sync.run({ root: r.root, branch: BRANCH, base: r.base, head: r.head, token }, { spawnSync: fakeExec([], edit), repo: 'o/r' });
+  assert.throws(() => run('bbbb'), /not this sync's reservation/);
+  assert.equal(fs.readFileSync(lock, 'utf8'), 'starting:aaaa');
+  run('aaaa');
   assert.ok(!fs.existsSync(lock));
 });
 
-test("scope --pr: exempt only for this clone's published commit on <base>-artifacts", () => {
-  const r = repo();
-  runIt(r);
-  git(['fetch', '-q', 'origin'], r.root);
-  const published = readState(r.root).published;
-  const view = (over = {}) => ({ prView: () => ({ base: BRANCH, baseSha: r.head, head: `${BRANCH}-artifacts`, headSha: published, ...over }) });
-  assert.deepEqual(sync.prScope(r.root, 1, view()).reasons, []);
-  assert.match(sync.prScope(r.root, 1, view({ head: 'FAC-1-other' })).reasons.join(), /is not FAC-1-feature-artifacts/);
-  // A hand-made commit on the artifact branch, even one touching only the map's paths, is not the sync's.
-  git(['checkout', '-q', '--detach', published], r.root);
-  fs.writeFileSync(path.join(r.root, 'docs/map.md'), 'hand edit\n');
-  git(['commit', '-qam', 'hand'], r.root);
-  assert.match(sync.prScope(r.root, 1, view({ headSha: git(['rev-parse', 'HEAD'], r.root) })).reasons.join(), /not the commit this clone's sync published/);
+test('a hook that finds nothing due writes state only under the lock, and releases it', () => {
+  const r = repo({ change: 'README.md' });
+  const lock = stateFile(r.root, 'lock');
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.writeFileSync(lock, String(process.pid));
+  assert.match(sync.hook(r.root, {}, fakeLaunch([])), /already running/);
+  assert.ok(!fs.existsSync(stateFile(r.root, 'json')), 'nothing written while another sync holds the lock');
+  fs.rmSync(lock);
+  assert.match(sync.hook(r.root, {}, fakeLaunch([])), /no artifact is due/);
+  assert.ok(!fs.existsSync(lock));
 });
 
-test('scope: an HTML artifact, models.json, and both ends of a rename keep the normal review', () => {
+test('an unmerged publication is not dropped: the next sync redoes it with the new work', () => {
+  const r = repo();
+  runIt(r);
+  // A later push changes a different artifact's source while the first artifact PR is still open.
+  const head2 = pushChange(r.root, 'web/app.js');
+  const p = sync.plan(r.root, {});
+  assert.equal(p.base, r.base, 'the baseline does not move past an unmerged publication');
+  assert.deepEqual(p.due.map(d => d.path).sort(), ['docs/map.md', 'docs/page.html']);
+  const calls = [];
+  runIt(r, { base: p.base, head: head2, calls, edit: cwd => { edit(cwd); fs.writeFileSync(path.join(cwd, 'docs/page.html'), '<p>v2</p>\n'); } });
+  const second = remote(r.root, `${BRANCH}-artifacts`);
+  git(['fetch', '-q', 'origin'], r.root);
+  assert.deepEqual(git(['diff', '--name-only', head2, second], r.root).split('\n').sort(), ['docs/map.html', 'docs/map.md', 'docs/page.html']);
+  // Once the artifact PR is merged into the code branch, the baseline moves to the head it was made for.
+  git(['merge', '-q', '--no-edit', second], r.root);
+  git(['push', '-q', 'origin', BRANCH], r.root);
+  git(['fetch', '-q', 'origin'], r.root);
+  const after = sync.plan(r.root, {});
+  assert.equal(after.base, head2);
+  assert.deepEqual(after.due, []);
+});
+
+test('a mode change is refused, and so is a code branch that moved while the agent worked', () => {
+  const r = repo();
+  assert.throws(() => runIt(r, { edit: cwd => { edit(cwd); fs.chmodSync(path.join(cwd, 'docs/map.md'), 0o755); } }),
+    /changes more than its artifacts; not pushed: docs\/map\.md \(M 100644->100755\)/);
+  const r2 = repo();
+  assert.throws(() => runIt(r2, { edit: cwd => { edit(cwd); pushChange(r2.root); } }), /on origin, not/);
+  assert.equal(remote(r2.root, `${BRANCH}-artifacts`), '');
+});
+
+test('an open PR for the artifact branch at another commit is an error, not a match', () => {
+  const r = repo();
+  const list = { status: 0, stdout: JSON.stringify([{ url: 'u', headRefName: `${BRANCH}-artifacts`, baseRefName: BRANCH, headRefOid: 'f'.repeat(40), isCrossRepository: false }]) };
+  assert.throws(() => runIt(r, { gh: { list } }), /the open PR for FAC-1-feature-artifacts is at fffffff, not the pushed/);
+  assert.notEqual(readState(r.root).synced, r.head);
+});
+
+test('originRepo reads owner/name from a GitHub origin and refuses anything else', () => {
+  const r = repo();
+  assert.throws(() => sync.originRepo(r.root), /is not a GitHub repository/);
+  git(['remote', 'set-url', 'origin', 'git@github.com:acme/widgets.git'], r.root);
+  assert.equal(sync.originRepo(r.root), 'acme/widgets');
+  git(['remote', 'set-url', 'origin', 'https://github.com/acme/widgets'], r.root);
+  assert.equal(sync.originRepo(r.root), 'acme/widgets');
+});
+
+// A published sync of the JSON artifact, the one kind that may skip review.
+function publishedFlow() {
+  const r = repo({ change: 'lib/x.js' });
+  runIt(r, { edit: cwd => fs.writeFileSync(path.join(cwd, 'docs/flow.json'), '{"v":2}\n') });
+  git(['fetch', '-q', 'origin'], r.root);
+  const published = readState(r.root).published;
+  const view = (over = {}) => ({ prView: () => ({ base: BRANCH, baseSha: r.head, head: `${BRANCH}-artifacts`, headSha: published, headRepo: 'o/r', baseRepo: 'o/r', state: 'open', ...over }) });
+  return { r, published, view };
+}
+const forge = (r, files) => {
+  git(['checkout', '-q', '--detach', readState(r.root).published], r.root);
+  for (const [f, text] of Object.entries(files)) fs.writeFileSync(path.join(r.root, f), text);
+  git(['commit', '-qam', 'hand'], r.root);
+  const sha = git(['rev-parse', 'HEAD'], r.root);
+  fs.writeFileSync(stateFile(r.root, 'json'), JSON.stringify({ ...readState(r.root), published: sha }));
+  return sha;
+};
+
+test("scope --pr: exempt only for this clone's published commit on <base>-artifacts, from the same repository", () => {
+  const { r, published, view } = publishedFlow();
+  assert.deepEqual(sync.prScope(r.root, 1, view()).reasons, []);
+  assert.match(sync.prScope(r.root, 1, view({ head: 'FAC-1-other' })).reasons.join(), /is not FAC-1-feature-artifacts/);
+  assert.match(sync.prScope(r.root, 1, view({ headRepo: 'fork/r' })).reasons.join(), /head fork\/r is not the base repository o\/r/);
+  assert.match(sync.prScope(r.root, 1, view({ state: 'closed' })).reasons.join(), /the PR is closed/);
+  assert.match(sync.prScope(r.root, 1, view({ headSha: r.head })).reasons.join(), /not the commit this clone's sync published/);
+  assert.ok(published);
+});
+
+test('scope --pr: outputs must be what the base renderer makes from the head data', () => {
+  const { r, view } = publishedFlow();
+  const sha = forge(r, { 'docs/flow.html': '<script>x</script>\n' });
+  assert.match(sync.prScope(r.root, 1, view({ headSha: sha })).reasons.join(), /outputs that their renderer does not reproduce: docs\/flow\.html/);
+});
+
+test('scope: only validated data artifacts are exempt; Markdown, HTML, models.json and both ends of a rename are not', () => {
   const r = repo();
   git(['checkout', '-qb', 'x'], r.root);
   fs.writeFileSync(path.join(r.root, 'docs/page.html'), '<script>evil()</script>\n');
   fs.writeFileSync(path.join(r.root, 'docs/map.md'), 'ok\n');
-  git(['commit', '-qam', 'html'], r.root);
-  assert.deepEqual(sync.scope(r.root, BRANCH, 'x').outside, ['docs/page.html']);
+  fs.writeFileSync(path.join(r.root, 'docs/flow.json'), '{"v":3}\n');
+  git(['commit', '-qam', 'pages'], r.root);
+  assert.deepEqual(sync.scope(r.root, BRANCH, 'x').outside.sort(), ['docs/map.md', 'docs/page.html']);
   git(['checkout', '-q', BRANCH], r.root);
   git(['checkout', '-qb', 'y'], r.root);
-  git(['rm', '-q', 'docs/map.md'], r.root);
-  git(['mv', 'src/a.js', 'docs/map.md'], r.root);
+  git(['rm', '-q', 'docs/flow.json'], r.root);
+  git(['mv', 'src/a.js', 'docs/flow.json'], r.root);
   fs.writeFileSync(path.join(r.root, 'models.json'), JSON.stringify({ ...CONFIG, artifacts: [{ path: 'src/a.js', sources: ['x'] }] }));
   git(['commit', '-qam', 'rename'], r.root);
   assert.deepEqual(sync.scope(r.root, BRANCH, 'y').outside.sort(), ['models.json', 'src/a.js']);
-  assert.ok(!sync.exemptPaths([{ path: 'x.md', sources: ['a'], then: 'b', outputs: ['models.json'] }]).has('models.json'));
+  assert.deepEqual(sync.exemptEntries([
+    { path: 'x.json', sources: ['a'], then: 'b', outputs: ['models.json'] },
+    { path: 'y.json', sources: ['a'] },
+    { path: 'z.md', sources: ['a'], then: 'b', outputs: ['z.html'] },
+  ]), []);
 });
 
 test('the brain repository maps its artifacts, and the hook is wired for Claude and Pi', () => {

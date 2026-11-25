@@ -28,19 +28,18 @@ function mergeClaude(settings) {
     throw new Error('.claude/settings.json hooks must be an object');
   }
   const hooks = structuredClone(settings.hooks || {});
-  // Ours is only the exact command this installer writes; a project's own wrapper around the script is theirs.
-  const isOurs = h => h && h.type === 'command' && h.command === CLAUDE_COMMAND;
+  // Ours is only the group this installer writes: no matcher, one hook, this exact command. A group with a matcher,
+  // more hooks, or another command is the project's, even when it runs the same script, and is left as it is.
+  const isOurs = e => e.matcher === undefined && e.hooks.length === 1 && e.hooks[0] && e.hooks[0].type === 'command' && e.hooks[0].command === CLAUDE_COMMAND;
   for (const event of CLAUDE_EVENTS) {
+    if (Object.hasOwn(hooks, event) && !Array.isArray(hooks[event])) throw new Error(`.claude/settings.json hooks.${event} must be an array`);
     const entries = hooks[event] || [];
-    if (!Array.isArray(entries) || entries.some(e => !e || typeof e !== 'object' || !Array.isArray(e.hooks))) {
+    if (entries.some(e => !e || typeof e !== 'object' || Array.isArray(e) || !Array.isArray(e.hooks))) {
       throw new Error(`.claude/settings.json hooks.${event} must be an array of { hooks: [...] } entries`);
     }
-    // Already registered exactly once, in an entry of its own with no matcher: leave the event as it is.
-    const holders = entries.filter(e => e.hooks.some(isOurs));
-    if (holders.length === 1 && holders[0].hooks.length === 1 && holders[0].matcher === undefined && entries.flatMap(e => e.hooks).filter(isOurs).length === 1) continue;
-    const others = entries.map(e => ({ ...e, hooks: e.hooks.filter(h => !isOurs(h)) })).filter(e => e.hooks.length);
-    others.push({ hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] });
-    hooks[event] = others;
+    const ours = entries.filter(isOurs);
+    if (ours.length === 1 && ours[0].hooks[0].timeout === 10) continue;
+    hooks[event] = [...entries.filter(e => !isOurs(e)), { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }];
   }
   return { ...settings, hooks };
 }
