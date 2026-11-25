@@ -1,37 +1,45 @@
 #!/usr/bin/env node
 'use strict';
 
-// Spawn and teardown of an agent's own environment (development-setup DS1-DS5, git-workflow-and-versioning P5-P7).
+// Spawn and teardown of an agent's own environment (development-setup DS1-DS5, DS10, DS11; git-workflow-and-versioning P5-P7).
 //   agent-env.js spawn <TICKET-slug> --owner <name> --persona <persona> [--base <ref>] [--ports <n>] [--no-install] [--no-compose] [--dry-run]
 //   agent-env.js teardown <TICKET-slug> --owner <name> [--abandon]
+// The owner is the name the agent declares on both; it guards against mistakes between agents on one machine, it is
+// not an authentication.
 //
 // Spawn gives the agent everything it needs to start work, and is re-entrant: a resumed session runs it again.
-//   1. The worktree beside the main checkout: reused while it exists; otherwise added on the local branch, else on
+//   1. Host ports, claimed machine-wide; a resumed spawn keeps the ports it holds, with or without --ports.
+//   2. The worktree beside the main checkout: reused while it exists; otherwise added on the local branch, else on
 //      origin's branch of that name, else on a new branch from the base (origin's default branch, fetched).
-//   2. Host ports, claimed machine-wide; a reused environment keeps the ports it holds.
-//   3. `.env` copied from the main checkout when the worktree has none; an existing one is never overwritten.
-//   4. Dependencies installed from the root lockfile (one JavaScript and one Python lockfile at most), once.
-//   5. The Compose project (the worktree name, lowercase) brought up when the worktree has a compose file.
+//   3. `.env` copied from the main checkout without AWS credentials (DS4), when git ignores it in the worktree and the
+//      worktree has none; an existing one is never overwritten.
+//   4. Dependencies installed from the root lockfile (one JavaScript and one Python lockfile at most), again whenever
+//      the worktree is new or a lockfile changed.
+//   5. The Compose project (the worktree name, lowercase), reserved machine-wide for this environment on this Docker
+//      daemon and brought up, when the worktree has a compose file.
 // Prints shell exports: AGENT_NAME (`<TICKET-slug> (<persona>)`, the visible name), WORKTREE, COMPOSE_PROJECT_NAME and
 // HOST_PORT_<n>. Progress and tool output go to stderr, so stdout stays a list of exports.
 //
+// Ownership. The ledger (<git common dir>/brain-env-ledger.json) is written before the first side effect and records
+// each one as it happens, so teardown can clean up a spawn that failed part-way. The worktree registration spawn made
+// carries a random mark (in git's administrative directory) that the ledger repeats: a registration at the same path
+// without it is not this environment's. The branch counts as spawn's only when spawn created it and, on a restore, it
+// still continues the tip spawn last saw. The Compose reservation (~/.agent-brain/compose-claims.json) makes everything
+// under the project name this environment's while it is held; spawn takes it only for an empty project, and both
+// commands refuse a project holding containers started outside this worktree.
+//
 // Teardown runs once the branch has merged into its base (P15 merge commits keep the branch tip an ancestor of it), or
-// with --abandon for a canceled ticket. It refuses uncommitted or untracked work, and removes only what the ledger says
-// this environment created:
-//   - the Compose project's containers, networks and volumes, only when spawn found the project empty or already this
-//     environment's (composeClaimed), and only while every container in it was started from this worktree;
-//   - the worktree (no --force: git refuses a changed one) with the `.env` and dependencies inside it;
-//   - the local branch, only when spawn created it and it has merged; an unmerged or pre-existing branch is kept;
-//   - the port claims and the ledger entry.
-// The remote branch is merge-pr.js's (P7). Anything else is left in place and named.
+// with --abandon for a canceled ticket. Every check runs before anything is removed: the owner, the mark, a clean
+// worktree on its branch, the merge, and the Compose reservation on a reachable, matching daemon. Then, in order:
+//   1. the worktree with everything inside it, ignored files included (no --force, so git can still refuse here);
+//   2. the local branch, only when spawn created it, it merged, nothing holds it, and it is still at the verified tip;
+//   3. the reserved Compose project's containers, networks and volumes (with the DS5 snapshot), and the reservation;
+//   4. the port claims, then the ledger entry.
+// The remote branch is merge-pr.js's (P7). Anything else is left in place and named. A teardown that stops part-way
+// can be run again: whatever is already gone is skipped.
 //
-// The ledger (<git common dir>/brain-env-ledger.json) records every environment spawn made and the steps it completed;
-// it is written before any step runs, so teardown can also clean up after a spawn that failed half-way.
-// Run from the main checkout or any worktree of it. The worktree is placed beside the main checkout, never inside it.
-//
-// Spawn and teardown each run whole under one lifecycle lock per repository (<git common dir>/brain-env-lifecycle.lock):
-// every ownership check, worktree, ledger, port-claim and Compose change happens inside it. The port-claim lock is
-// taken inside it, never the other way round.
+// Spawn and teardown each run whole under one lifecycle lock per repository (<git common dir>/brain-env-lifecycle.lock);
+// the port-claim and Compose-reservation locks are taken inside it, never the other way round.
 
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -243,18 +251,6 @@ async function withLock(file, fn) {
   }
 }
 
-// The owner is the name the agent declares with --owner on spawn and on teardown. It guards against mistakes between
-// agents on one machine; it is not an authentication, since anyone who can run the script can type any name.
-function requireOwner(rest) {
-  const owner = optionValue(rest, '--owner');
-  if (!owner) throw new Error('--owner <name> is required: the same name on spawn and on teardown');
-  return owner;
-}
-
-function optionValue(argv, flag) {
-  const i = argv.indexOf(flag);
-  return i === -1 ? undefined : argv[i + 1];
-}
 
 // Releases this environment's port claim; used by teardown and by a spawn that failed after claiming.
 async function releaseClaim(repo, name) {
@@ -269,12 +265,76 @@ async function releaseClaim(repo, name) {
   });
 }
 
+function claimedPorts(repo, name) {
+  return ((readJson(claimFile())[repo] || {})[name]) || [];
+}
+
+// Compose project names are machine-wide in Docker, so their reservations are too: { "<project>": { repo, env, daemon } }.
+// While a reservation is held, everything Docker holds under that project name belongs to that environment (DS11).
+function composeClaimFile() {
+  return path.join(require('os').homedir(), '.agent-brain', 'compose-claims.json');
+}
+
+function composeReservation(project) {
+  return readJson(composeClaimFile())[project] || null;
+}
+
+async function releaseCompose(project, repo, name) {
+  const file = composeClaimFile();
+  await withLock(file, () => {
+    const claims = readJson(file);
+    const held = claims[project];
+    if (held && held.repo === repo && held.env === name) {
+      delete claims[project];
+      writeJson(file, claims);
+    }
+  });
+}
+
 function registeredWorktree(root, worktree) {
   return git(['worktree', 'list', '--porcelain'], root).split('\n').includes(`worktree ${path.resolve(worktree)}`);
 }
 
-function branchExists(root, branch) {
-  return git(['branch', '--list', branch], root) !== '';
+// Git's administrative directory for the worktree registered at this path, found by its `gitdir` file, also when the
+// directory itself is gone. null when no registration names the path.
+function adminDir(root, worktree) {
+  const dir = path.join(path.resolve(root, git(['rev-parse', '--git-common-dir'], root)), 'worktrees');
+  if (!fs.existsSync(dir)) return null;
+  const wanted = new Set([path.join(path.resolve(worktree), '.git')]);
+  try { wanted.add(path.join(resolvedWorktree(worktree), '.git')); } catch { /* parent gone */ }
+  for (const id of fs.readdirSync(dir)) {
+    let gitdir;
+    try { gitdir = fs.readFileSync(path.join(dir, id, 'gitdir'), 'utf8').trim(); } catch { continue; }
+    if (wanted.has(path.resolve(gitdir))) return path.join(dir, id);
+  }
+  return null;
+}
+
+// Spawn leaves a random mark in the registration it made and records it in the ledger. A registration at the same path
+// without that mark (made by hand, or by another tool, after spawn's was lost) is not this environment's.
+const MARK = 'brain-env-mark';
+
+function markOf(admin) {
+  try { return fs.readFileSync(path.join(admin, MARK), 'utf8').trim(); } catch { return null; }
+}
+
+function branchTip(root, branch) {
+  try { return git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], root); } catch { return null; }
+}
+
+function isAncestor(root, a, b) {
+  try { git(['merge-base', '--is-ancestor', a, b], root); return true; } catch { return false; }
+}
+
+// The worktrees that have this branch checked out.
+function holdersOf(root, branch) {
+  const holders = [];
+  let current = null;
+  for (const line of git(['worktree', 'list', '--porcelain'], root).split('\n')) {
+    if (line.startsWith('worktree ')) current = line.slice('worktree '.length);
+    if (line === `branch refs/heads/${branch}`) holders.push(current);
+  }
+  return holders;
 }
 
 function updateEntry(ledger, name, fields) {
@@ -294,8 +354,7 @@ function refreshBase(root, base) {
 // Where an existing branch of this name lives on origin. `ls-remote` asks origin itself, because the cached
 // remote-tracking ref outlives a branch merge-pr.js deleted. Unreachable origin: the cached ref, with a warning.
 function remoteBranch(root, branch) {
-  const remotes = git(['remote'], root).split('\n');
-  if (!remotes.includes('origin')) return null;
+  if (!git(['remote'], root).split('\n').includes('origin')) return null;
   const ref = `refs/remotes/origin/${branch}`;
   try {
     if (git(['ls-remote', '--heads', 'origin', `refs/heads/${branch}`], root) === '') return null;
@@ -327,6 +386,26 @@ function installers(worktree) {
   return INSTALLERS.map(group => group.find(([lock]) => fs.existsSync(path.join(worktree, lock)))).filter(Boolean);
 }
 
+// What a successful install covered: the selected lockfiles and their content. A changed lockfile installs again.
+function lockFingerprint(worktree, selected) {
+  const hash = require('crypto').createHash('sha256');
+  for (const [lock] of selected) hash.update(`${lock}\0`).update(fs.readFileSync(path.join(worktree, lock))).update('\0');
+  return hash.digest('hex');
+}
+
+// AWS credentials never enter a development environment (DS4): these variables are dropped from the copied .env.
+const AWS_CREDENTIALS = /^\s*(export\s+)?(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_SECURITY_TOKEN|AWS_PROFILE|AWS_DEFAULT_PROFILE|AWS_ROLE_ARN|AWS_WEB_IDENTITY_TOKEN_FILE|AWS_CREDENTIAL_EXPIRATION)\s*=/;
+
+function withoutAwsCredentials(text) {
+  const dropped = [];
+  const kept = text.split('\n').filter(line => {
+    const m = AWS_CREDENTIALS.exec(line);
+    if (m) dropped.push(m[2]);
+    return !m;
+  });
+  return { text: kept.join('\n'), dropped };
+}
+
 const COMPOSE_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
 
 function composeFile(worktree) {
@@ -337,8 +416,9 @@ function docker(args) {
   return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-function dockerReachable() {
-  try { docker(['info', '--format', '{{.ServerVersion}}']); return true; } catch { return false; }
+// The ID of the Docker daemon the current context talks to, or null when none answers. A reservation is bound to it.
+function dockerDaemon() {
+  try { return docker(['info', '--format', '{{.ID}}']) || null; } catch { return null; }
 }
 
 // Everything Docker holds under this Compose project, by Compose's own label; containers carry the directory they
@@ -363,57 +443,63 @@ function foreignContainers(resources, worktree) {
   return resources.containers.filter(c => c.dir !== mine);
 }
 
-async function spawnEnv(p, rest, root, owner, persona, dryRun, ledger) {
+// Why this environment may not use the Compose project, or null. Read-only; spawn asks it again under the lock.
+function composeRefusal(project, repo, name, daemon, worktree) {
+  const held = composeReservation(project);
+  if (held && (held.repo !== repo || held.env !== name)) {
+    return `Compose project ${project} is reserved by ${held.env} in ${held.repo}; two environments cannot share one name (DS3)`;
+  }
+  if (held && held.daemon !== daemon) return `Compose project ${project} is reserved on Docker daemon ${held.daemon}, not ${daemon}; switch back to that context`;
+  const resources = composeResources(project);
+  if (!held && !resources.empty) return `Compose project ${project} already has resources this environment did not create; refusing to claim it (DS3)`;
+  const foreign = foreignContainers(resources, worktree);
+  if (foreign.length) return `Compose project ${project} has containers started outside ${worktree} (${foreign.map(c => c.id).join(', ')}); refusing to share it (DS3)`;
+  return null;
+}
+
+async function spawnEnv(p, opts, root, owner, persona, ledger) {
+  const { dryRun } = opts;
+  const repo = repoKey(root);
   const existing = readJson(ledger)[p.name];
   if (existing && existing.owner !== owner) throw new Error(`${p.name} belongs to ${existing.owner}, not ${owner}; refusing to take it over`);
-  // A directory with this name that the ledger does not record is not ours to reuse: refuse before any port is claimed.
-  if (!existing && fs.existsSync(p.worktree)) throw new Error(`${p.worktree} exists and the ledger does not record it; refusing to reuse it`);
-  const base = optionValue(rest, '--base') || (existing && existing.base) || defaultBase(root, { fetch: !dryRun });
-  const count = Number(optionValue(rest, '--ports') || 0);
-  const wantCompose = !rest.includes('--no-compose');
-  // Reuse only this repository's worktree on this branch; any other directory with the name is someone else's.
-  let reuse = false;
-  if (fs.existsSync(p.worktree)) {
-    const onBranch = registeredWorktree(root, p.worktree) && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) === p.branch;
-    if (!onBranch) throw new Error(`${p.worktree} exists and is not this repository's worktree on ${p.branch}; refusing to reuse it`);
-    reuse = true;
+  const present = fs.existsSync(p.worktree);
+  const admin = adminDir(root, p.worktree);
+  // A directory or registration with this name that the ledger does not record is not ours to reuse.
+  if (!existing && (present || admin)) throw new Error(`${p.worktree} exists and the ledger does not record it; refusing to reuse it`);
+  // An environment recorded by new-worktree.js (no mark field) is adopted: that script's ledger recorded it as created.
+  // Its branch and Compose project are not: they were never recorded as created, so teardown keeps them.
+  if (existing && !('mark' in existing) && admin && !markOf(admin) && !dryRun) {
+    const mark = require('crypto').randomBytes(16).toString('hex');
+    fs.writeFileSync(path.join(admin, MARK), mark);
+    updateEntry(ledger, p.name, { mark, branchCreated: false });
+    existing.mark = mark;
+    existing.branchCreated = false;
   }
-  // The Compose project must be empty, or already this environment's, before spawn claims it: whatever is in it later
-  // was made by this environment, and teardown removes exactly that. Checked before anything is created.
-  const reachable = wantCompose && dockerReachable();
-  let composeClaimed = Boolean(existing && existing.composeClaimed);
-  if (reachable) {
-    const resources = composeResources(p.composeProject);
-    const foreign = foreignContainers(resources, p.worktree);
-    if (foreign.length) throw new Error(`Compose project ${p.composeProject} has containers started outside ${p.worktree} (${foreign.map(c => c.id).join(', ')}); refusing to share it (DS3)`);
-    if (!composeClaimed && !resources.empty) throw new Error(`Compose project ${p.composeProject} already has resources this environment did not create; refusing to claim it (DS3)`);
-    composeClaimed = true;
+  if (admin && (!existing.mark || markOf(admin) !== existing.mark)) {
+    throw new Error(`the worktree registered at ${p.worktree} is not the one spawn made (no matching mark); refusing to reuse it. Remove it by hand, or tear down by hand`);
   }
-  // Ports are claimed before the worktree exists, so a failure here leaves nothing behind to clean up by hand.
-  let ports = [];
-  const repo = repoKey(root);
-  if (count) {
-    let psOutput = '';
-    try { psOutput = execFileSync('docker', ['ps', '--format', '{{.Ports}}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { /* docker not running: only the bind test applies */ }
-    const file = claimFile();
-    ports = await withLock(file, async () => {
-      const claims = readJson(file);
-      // An environment the ledger holds keeps the ports it already claimed, so its containers keep their host ports.
-      const mine = existing ? ((claims[repo] || {})[p.name] || []) : [];
-      const kept = mine.slice(0, count);
-      const claimed = claimedElsewhere(claims, repo, p.name);
-      const more = count - kept.length;
-      const found = more > 0 ? await freePorts(more, new Set([...usedHostPorts(psOutput), ...claimed, ...kept])) : [];
-      if (found.length < more) throw new Error(`only ${found.length} of ${more} host ports are free; free some or ask for fewer`);
-      const all = [...kept, ...found];
-      if (!dryRun) {
-        claims[repo] = { ...(claims[repo] || {}), [p.name]: all };
-        writeJson(file, claims);
-      }
-      return all;
-    });
+  if (present && !admin) throw new Error(`${p.worktree} exists and is not a worktree of this repository; refusing to reuse it`);
+  const reuse = present && Boolean(admin);
+  if (reuse && git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree) !== p.branch) {
+    throw new Error(`${p.worktree} is not on ${p.branch}; refusing to reuse it`);
   }
-  const exportsFor = () => {
+  const base = opts.base || (existing && existing.base) || defaultBase(root, { fetch: !dryRun });
+
+  // Ports: a resumed spawn keeps the ports it holds, also when --ports is left out; a different count is refused.
+  const held = existing ? claimedPorts(repo, p.name) : [];
+  if (opts.ports !== undefined && held.length && opts.ports !== held.length) {
+    throw new Error(`${p.name} holds ${held.length} host ports; spawn again without --ports, or with --ports ${held.length}`);
+  }
+  const count = opts.ports !== undefined ? opts.ports : held.length;
+
+  // Compose, read-only, before anything is created; checked again under the reservation lock before `up`.
+  const daemon = opts.compose ? dockerDaemon() : null;
+  if (daemon) {
+    const refusal = composeRefusal(p.composeProject, repo, p.name, daemon, p.worktree);
+    if (refusal) throw new Error(refusal);
+  }
+
+  const exportsFor = ports => {
     console.log(`export AGENT_NAME=${shellQuote(`${p.name} (${persona})`)}`);
     console.log(`export WORKTREE=${shellQuote(p.worktree)}`);
     console.log(`export COMPOSE_PROJECT_NAME=${shellQuote(p.composeProject)}`);
@@ -421,16 +507,49 @@ async function spawnEnv(p, rest, root, owner, persona, dryRun, ledger) {
   };
   if (dryRun) {
     console.error(reuse ? `would reuse ${p.worktree}` : `would add the worktree ${p.worktree} on ${p.branch}`);
-    exportsFor();
+    exportsFor(held.slice(0, count));
     return;
   }
 
-  // 1. The worktree. The ledger entry is written first, so a spawn that fails from here on can be torn down.
-  let branchCreated = Boolean(existing && existing.branchCreated);
+  // The ledger entry comes first: from here on every side effect is recorded, so teardown can clean up a failed spawn.
+  const all = readJson(ledger);
+  if (all[p.name] && all[p.name].owner !== owner) throw new Error(`${p.name} belongs to ${all[p.name].owner}, not ${owner}; refusing to take it over`);
+  all[p.name] = { mark: null, branchCreated: false, branchTip: null, envCopied: false, installedFingerprint: null, ports: [],
+    ...all[p.name], owner, persona, branch: p.branch, worktree: p.worktree, base, composeProject: p.composeProject,
+    spawnedAt: new Date().toISOString() };
+  writeJson(ledger, all);
+
+  // 1. Host ports, claimed machine-wide (DS3).
+  let ports = held.slice(0, count);
+  if (count > ports.length) {
+    let psOutput = '';
+    try { psOutput = execFileSync('docker', ['ps', '--format', '{{.Ports}}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { /* docker not running: only the bind test applies */ }
+    const file = claimFile();
+    ports = await withLock(file, async () => {
+      const claims = readJson(file);
+      const claimed = claimedElsewhere(claims, repo, p.name);
+      const more = count - ports.length;
+      const found = await freePorts(more, new Set([...usedHostPorts(psOutput), ...claimed, ...ports]));
+      if (found.length < more) throw new Error(`only ${found.length} of ${more} host ports are free; free some or ask for fewer`);
+      const mine = [...ports, ...found];
+      claims[repo] = { ...(claims[repo] || {}), [p.name]: mine };
+      writeJson(file, claims);
+      return mine;
+    });
+  }
+  updateEntry(ledger, p.name, { ports });
+
+  // 2. The worktree: reused, or added on the local branch, else origin's, else a new branch from the base.
   if (!reuse) {
-    if (existing) git(['worktree', 'prune'], root);
+    const entry = readJson(ledger)[p.name];
+    // A lost directory whose registration is still spawn's: drop that one registration, nothing else (never prune).
+    if (admin) git(['worktree', 'remove', '--force', p.worktree], root);
+    let branchCreated = false;
     let args;
-    if (branchExists(root, p.branch)) {
+    const tip = branchTip(root, p.branch);
+    if (tip) {
+      // The branch stays spawn's only while it continues the tip spawn last saw; a branch recreated by hand is not.
+      branchCreated = Boolean(entry.branchCreated && entry.branchTip && isAncestor(root, entry.branchTip, tip));
       args = ['worktree', 'add', p.worktree, p.branch];
     } else {
       const remote = remoteBranch(root, p.branch);
@@ -439,68 +558,87 @@ async function spawnEnv(p, rest, root, owner, persona, dryRun, ledger) {
         : ['worktree', 'add', '--no-track', '-b', p.branch, p.worktree, base];
       branchCreated = true;
     }
-    try { git(args, root); } catch (err) {
-      if (count && !existing) await releaseClaim(repo, p.name);
-      throw err;
+    let failure = null;
+    try { git(args, root); } catch (err) { failure = err; }
+    // Even a failed add (a failing checkout hook) can leave a registration and a branch: they are this spawn's.
+    const made = adminDir(root, p.worktree);
+    const fields = { branchCreated: branchCreated && Boolean(branchTip(root, p.branch)), installedFingerprint: null };
+    if (made) {
+      fields.mark = require('crypto').randomBytes(16).toString('hex');
+      fs.writeFileSync(path.join(made, MARK), fields.mark);
     }
+    updateEntry(ledger, p.name, fields);
+    if (failure) throw failure;
     console.error(`${existing ? 'restored' : 'added'} ${p.worktree} on ${p.branch}`);
   } else {
     console.error(`reusing ${p.worktree}`);
   }
-  const all = readJson(ledger);
-  // An entry that already exists keeps its owner: spawn cannot take over another agent's environment.
-  if (all[p.name] && all[p.name].owner !== owner) throw new Error(`${p.name} belongs to ${all[p.name].owner}, not ${owner}; refusing to take it over`);
-  all[p.name] = { envCopied: false, installed: false, ...all[p.name], owner, persona, branch: p.branch, worktree: p.worktree, base,
-    ports, composeProject: p.composeProject, branchCreated, composeClaimed, spawnedAt: new Date().toISOString() };
-  writeJson(ledger, all);
-  const entry = all[p.name];
+  updateEntry(ledger, p.name, { branchTip: git(['rev-parse', 'HEAD'], p.worktree) });
 
-  // 2. .env from the main checkout, never over one the worktree already has, and only when git ignores it there:
-  //    a copied secret git would commit is a leak waiting for `git add -A`.
+  // 3. .env from the main checkout without AWS credentials (DS4), never over the worktree's own, and only when git
+  //    ignores it there: a copied secret git would commit is a leak waiting for `git add -A`.
   const source = path.join(root, '.env');
   const target = path.join(p.worktree, '.env');
   if (fs.existsSync(source) && !fs.existsSync(target)) {
     if (spawnSync('git', ['check-ignore', '-q', '.env'], { cwd: p.worktree }).status === 0) {
-      fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+      const { text, dropped } = withoutAwsCredentials(fs.readFileSync(source, 'utf8'));
+      fs.writeFileSync(target, text, { flag: 'wx', mode: fs.statSync(source).mode & 0o777 });
       updateEntry(ledger, p.name, { envCopied: true });
-      console.error(`copied .env from ${root}`);
+      console.error(`copied .env from ${root}${dropped.length ? `, without ${dropped.join(', ')} (DS4)` : ''}`);
     } else {
       console.error(`.env not copied: git does not ignore it in ${p.worktree}; add it to .gitignore first`);
     }
   }
 
-  // 3. Dependencies, once per environment; a failed install is retried by the next spawn.
-  if (!rest.includes('--no-install') && !entry.installed) {
-    for (const [lock, cmd, args] of installers(p.worktree)) {
-      console.error(`installing from ${lock}: ${cmd} ${args.join(' ')}`);
-      run(cmd, args, p.worktree, process.env);
+  // 4. Dependencies: installed again whenever the worktree is new or a selected lockfile changed.
+  const selected = installers(p.worktree);
+  if (opts.install && selected.length) {
+    const fingerprint = lockFingerprint(p.worktree, selected);
+    if (readJson(ledger)[p.name].installedFingerprint !== fingerprint) {
+      for (const [lock, cmd, args] of selected) {
+        console.error(`installing from ${lock}: ${cmd} ${args.join(' ')}`);
+        run(cmd, args, p.worktree, process.env);
+      }
+      updateEntry(ledger, p.name, { installedFingerprint: fingerprint });
     }
-    updateEntry(ledger, p.name, { installed: true });
   }
 
-  // 4. The Compose project, on the claimed ports.
+  // 5. The Compose project: reserved machine-wide for this environment on this daemon, then brought up on the ports.
   const file = composeFile(p.worktree);
-  if (wantCompose && file) {
-    if (!reachable) throw new Error(`${file} needs Docker, which is not reachable; start Docker and spawn again, or pass --no-compose`);
+  if (opts.compose && file) {
+    if (!daemon) throw new Error(`${file} needs Docker, which is not reachable; start Docker and spawn again, or pass --no-compose`);
+    await withLock(composeClaimFile(), () => {
+      const refusal = composeRefusal(p.composeProject, repo, p.name, daemon, p.worktree);
+      if (refusal) throw new Error(refusal);
+      const claims = readJson(composeClaimFile());
+      if (!claims[p.composeProject]) {
+        claims[p.composeProject] = { repo, env: p.name, daemon, reservedAt: new Date().toISOString() };
+        writeJson(composeClaimFile(), claims);
+      }
+    });
     const env = { ...process.env, COMPOSE_PROJECT_NAME: p.composeProject };
     ports.forEach((port, i) => { env[`HOST_PORT_${i + 1}`] = String(port); });
     console.error(`starting Compose project ${p.composeProject}`);
     run('docker', ['compose', '-p', p.composeProject, 'up', '-d'], p.worktree, env);
   }
-  exportsFor();
+  exportsFor(ports);
 }
 
-async function teardown(p, rest, root, owner, ledger) {
+async function teardown(p, opts, root, owner, ledger) {
+  const repo = repoKey(root);
   const entry = readJson(ledger)[p.name];
   if (!entry) throw new Error(`${p.name} is not in the ledger: spawn did not create it, so teardown does not touch it`);
   if (entry.owner !== owner) throw new Error(`${p.name} belongs to ${entry.owner}, not ${owner}; refusing to touch it`);
   if (path.resolve(entry.worktree) !== path.resolve(p.worktree)) throw new Error(`ledger path ${entry.worktree} does not match ${p.worktree}`);
-  const abandon = rest.includes('--abandon');
   const present = fs.existsSync(p.worktree);
+  const admin = adminDir(root, p.worktree);
 
   // Every check runs before anything is removed.
+  if (admin && (!entry.mark || markOf(admin) !== entry.mark)) {
+    throw new Error(`the worktree registered at ${p.worktree} is not the one spawn made (no matching mark); refusing to remove it`);
+  }
+  if (present && !admin) throw new Error(`${p.worktree} is not a worktree of this repository; refusing to remove it`);
   if (present) {
-    if (!registeredWorktree(root, p.worktree)) throw new Error(`${p.worktree} is not a worktree of this repository; refusing to remove it`);
     const onBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], p.worktree);
     if (onBranch !== entry.branch) throw new Error(`${p.worktree} is on ${onBranch}, not ${entry.branch}; refusing to remove it`);
     if (git(['status', '--porcelain', '--untracked-files=all'], p.worktree) !== '') {
@@ -509,77 +647,129 @@ async function teardown(p, rest, root, owner, ledger) {
   }
   const base = entry.base || defaultBase(root);
   refreshBase(root, base);
-  const hasBranch = branchExists(root, entry.branch);
-  let merged = !hasBranch;
-  if (hasBranch) {
-    try { git(['merge-base', '--is-ancestor', entry.branch, base], root); merged = true; } catch { merged = false; }
-  }
-  if (!merged && !abandon) {
+  // The tip is resolved once; only this exact commit is ever deleted, and only when it is in the base.
+  const tip = branchTip(root, entry.branch);
+  const merged = tip ? isAncestor(root, tip, base) : true;
+  if (!merged && !opts.abandon) {
     throw new Error(`${entry.branch} has not merged into ${base}; teardown runs after the merge, or with --abandon for a canceled ticket (the branch is then kept)`);
   }
+  const reservation = composeReservation(entry.composeProject);
+  const reserved = Boolean(reservation && reservation.repo === repo && reservation.env === p.name);
   let resources = null;
-  if (entry.composeClaimed) {
-    if (!dockerReachable()) throw new Error(`Docker is not reachable, so Compose project ${entry.composeProject} cannot be checked; start Docker and tear down again`);
+  if (reserved) {
+    const daemon = dockerDaemon();
+    if (!daemon) throw new Error(`Docker is not reachable, so Compose project ${entry.composeProject} cannot be checked; start Docker and tear down again`);
+    if (daemon !== reservation.daemon) throw new Error(`Compose project ${entry.composeProject} is reserved on Docker daemon ${reservation.daemon}, not ${daemon}; switch back to that context`);
     resources = composeResources(entry.composeProject);
     const foreign = foreignContainers(resources, p.worktree);
     if (foreign.length) throw new Error(`Compose project ${entry.composeProject} has containers started outside ${p.worktree} (${foreign.map(c => c.id).join(', ')}); refusing to remove any of it`);
   }
 
-  // 1. The Compose project, by its label, from an empty directory so no compose file is read.
-  if (resources && !resources.empty) {
-    const empty = fs.mkdtempSync(path.join(require('os').tmpdir(), 'brain-teardown-'));
-    try {
-      run('docker', ['compose', '-p', entry.composeProject, 'down', '--volumes', '--remove-orphans'], empty, process.env);
-    } finally {
-      fs.rmSync(empty, { recursive: true, force: true });
-    }
-    console.error(`removed Compose project ${entry.composeProject}: ${resources.containers.length} containers, ${resources.volumes.length} volumes, ${resources.networks.length} networks`);
-  }
-  // 2. The worktree, with the .env and dependencies inside it. No --force: git refuses a changed worktree.
-  if (present) git(['worktree', 'remove', p.worktree], root);
-  else git(['worktree', 'prune'], root);
-  // 3. The local branch: only one spawn created, and only once it has merged.
+  // 1. The worktree, with everything inside it, ignored files included (DS11). No --force: git refuses a changed or
+  //    locked worktree, and that refusal comes before anything irreversible. A lost directory drops only its own registration.
+  if (admin) git(present ? ['worktree', 'remove', p.worktree] : ['worktree', 'remove', '--force', p.worktree], root);
+  // 2. The local branch: only one spawn created, only once merged, only at the verified tip, and only when no other
+  //    worktree has it checked out.
   let branchNote;
-  if (!hasBranch) branchNote = `branch ${entry.branch} already gone`;
+  let p7Open = false;
+  if (!tip) branchNote = `branch ${entry.branch} already gone`;
   else if (!entry.branchCreated) branchNote = `branch ${entry.branch} kept: spawn did not create it`;
   else if (!merged) branchNote = `branch ${entry.branch} kept: it has not merged`;
-  else { git(['branch', '-D', entry.branch], root); branchNote = `branch ${entry.branch} deleted`; }
-  // 4. The ledger entry and the port claims.
+  else if (holdersOf(root, entry.branch).length) {
+    branchNote = `branch ${entry.branch} kept: checked out in ${holdersOf(root, entry.branch).join(', ')}`;
+    p7Open = true;
+  } else {
+    try { git(['update-ref', '-d', `refs/heads/${entry.branch}`, tip], root); branchNote = `branch ${entry.branch} deleted`; } catch {
+      branchNote = `branch ${entry.branch} kept: it moved past the merged commit ${tip.slice(0, 12)}`;
+      p7Open = true;
+    }
+  }
+  // 3. The Compose project this environment reserved, by its label, from an empty directory so no compose file is
+  //    read; then the reservation.
+  if (reserved) {
+    if (!resources.empty) {
+      const empty = fs.mkdtempSync(path.join(require('os').tmpdir(), 'brain-teardown-'));
+      try {
+        run('docker', ['compose', '-p', entry.composeProject, 'down', '--volumes', '--remove-orphans'], empty, process.env);
+      } finally {
+        fs.rmSync(empty, { recursive: true, force: true });
+      }
+      console.error(`removed Compose project ${entry.composeProject}: ${resources.containers.length} containers, ${resources.volumes.length} volumes, ${resources.networks.length} networks`);
+    }
+    await releaseCompose(entry.composeProject, repo, p.name);
+  } else if (reservation) {
+    console.error(`Compose project ${entry.composeProject} not touched: it is reserved by ${reservation.env} in ${reservation.repo}`);
+  }
+  // 4. The port claims, then the ledger entry, so a failed release is retried by the next teardown.
+  await releaseClaim(repo, p.name);
   const all = readJson(ledger);
   delete all[p.name];
   writeJson(ledger, all);
-  await releaseClaim(repoKey(root), p.name);
-  if (!entry.composeClaimed) console.error(`Compose project ${entry.composeProject} not touched: spawn did not claim it (Docker was off or --no-compose)`);
   console.log(`tore down ${p.worktree}; ${branchNote}`);
+  if (p7Open) {
+    console.error(`agent-env: P7 is not complete: delete ${entry.branch} by hand once nothing holds it`);
+    process.exitCode = 1;
+  }
 }
 
 const USAGE = 'usage: agent-env.js spawn <TICKET-slug> --owner <name> --persona <persona> [--base <ref>] [--ports <n>] [--no-install] [--no-compose] [--dry-run]\n'
   + '       agent-env.js teardown <TICKET-slug> --owner <name> [--abandon]';
 
+// Each command takes only its own flags; an unknown flag, or one with a missing value, stops before anything runs.
+const FLAGS = {
+  spawn: { values: ['--owner', '--persona', '--base', '--ports'], switches: ['--no-install', '--no-compose', '--dry-run'] },
+  teardown: { values: ['--owner'], switches: ['--abandon'] },
+};
+
+function parseFlags(cmd, rest) {
+  const { values, switches } = FLAGS[cmd];
+  const out = {};
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i];
+    if (switches.includes(flag)) { out[flag] = true; continue; }
+    if (!values.includes(flag)) throw new Error(`${cmd} does not take ${flag}`);
+    const value = rest[++i];
+    if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
+    out[flag] = value;
+  }
+  if (out['--ports'] !== undefined && !/^\d+$/.test(out['--ports'])) throw new Error('--ports needs a whole number');
+  return out;
+}
+
 async function main(argv) {
   const [cmd, name, ...rest] = argv;
-  if (!['spawn', 'teardown'].includes(cmd) || !name) {
+  if (!FLAGS[cmd] || !name) {
     console.error(USAGE);
     process.exit(2);
   }
-  const persona = optionValue(rest, '--persona');
+  let flags;
+  try { flags = parseFlags(cmd, rest); } catch (err) {
+    console.error(`agent-env: ${err.message}\n${USAGE}`);
+    process.exit(2);
+  }
+  const persona = flags['--persona'];
   if (cmd === 'spawn' && !PERSONA.test(persona || '')) {
     console.error('agent-env: spawn needs --persona <persona>, a kebab-case persona name such as backend-engineer (DS2)');
     process.exit(2);
   }
   const root = mainCheckout();
   const p = plan(name, root);
-  const dryRun = rest.includes('--dry-run');
-  const owner = requireOwner(rest);
+  const owner = flags['--owner'];
+  if (!owner) throw new Error('--owner <name> is required: the same name on spawn and on teardown');
   const ledger = ledgerFile(root);
+  const opts = {
+    dryRun: Boolean(flags['--dry-run']), base: flags['--base'], abandon: Boolean(flags['--abandon']),
+    ports: flags['--ports'] === undefined ? undefined : Number(flags['--ports']),
+    install: !flags['--no-install'], compose: !flags['--no-compose'],
+  };
   // The lifecycle lock covers the ownership checks and every change that follows them.
   await withLock(lifecycleFile(root), () => (cmd === 'teardown'
-    ? teardown(p, rest, root, owner, ledger)
-    : spawnEnv(p, rest, root, owner, persona, dryRun, ledger)));
+    ? teardown(p, opts, root, owner, ledger)
+    : spawnEnv(p, opts, root, owner, persona, ledger)));
 }
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch(err => { console.error(`agent-env: ${err.message}`); process.exit(1); });
 }
 
-module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock, reclaimStale, ledgerFile, lifecycleFile, repoKey, claimFile, readJson, installers };
+module.exports = { plan, usedHostPorts, freePorts, shellQuote, mainCheckout, withLock, reclaimStale, ledgerFile, lifecycleFile, repoKey, claimFile, composeClaimFile, readJson, installers, withoutAwsCredentials, MARK };

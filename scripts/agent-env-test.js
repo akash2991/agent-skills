@@ -15,7 +15,7 @@ process.on('exit', () => fs.rmSync(process.env.HOME, { recursive: true, force: t
 
 // Docker and the package managers are fakes on PATH, so the Compose and install steps run the same with or without a
 // Docker daemon. The fake keeps Compose state in FAKE_DOCKER_STATE ({ up, projects: { <p>: { containers: [{ id, dir }],
-// volumes, networks } } }) and logs every call to FAKE_TOOL_LOG. By default Docker is down.
+// volumes, networks } }, daemon }) and logs every call to FAKE_TOOL_LOG. By default Docker is down.
 const FAKES = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-test-fakes-'));
 process.on('exit', () => fs.rmSync(FAKES, { recursive: true, force: true }));
 fs.writeFileSync(path.join(FAKES, 'docker'), `#!/usr/bin/env node
@@ -28,7 +28,11 @@ if (!state.up) { console.error('Cannot connect to the Docker daemon'); process.e
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const projectOf = () => { const f = args[args.indexOf('--filter') + 1] || ''; return f.split('com.docker.compose.project=')[1]; };
 const project = p => (state.projects[p] = state.projects[p] || { containers: [], volumes: [], networks: [] });
-if (args[0] === 'info') { console.log('fake'); process.exit(0); }
+if (args[0] === 'info') {
+  if (process.env.FAKE_DOCKER_ON_INFO) require('child_process').execSync(process.env.FAKE_DOCKER_ON_INFO, { stdio: 'ignore' });
+  console.log(state.daemon || 'daemon-a');
+  process.exit(0);
+}
 if (args[0] === 'ps' && !args.includes('--filter')) process.exit(0);
 if (args[0] === 'ps') { for (const c of project(projectOf()).containers) console.log(c.id + '\\t' + c.dir); process.exit(0); }
 if (args[0] === 'volume') { for (const v of project(projectOf()).volumes) console.log(v); process.exit(0); }
@@ -570,44 +574,84 @@ test('spawn installs from the root lockfiles once per environment, and stdout st
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
-test('spawn brings up the Compose project from the worktree and teardown brings down exactly that project', () => {
+const composeClaims = env => {
+  const file = path.join(env.HOME, '.agent-brain', 'compose-claims.json');
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+};
+
+function scratchHome(env) {
+  return { ...env, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'brain-home-')) };
+}
+
+test('spawn reserves the Compose project and brings it up from the worktree; teardown brings down exactly that project', () => {
   const { parent, repo } = makeRepo('compose-');
   commitFile(repo, 'compose.yaml', 'services: {}\n');
   const tools = fakeTools({ up: true, projects: { other: { containers: [{ id: 'o1', dir: '/elsewhere' }], volumes: ['other_data'], networks: [] } } });
-  const node = runner(repo, tools.env);
+  const env = scratchHome(tools.env);
+  const node = runner(repo, env);
   const wt = path.join(parent, 'ENG-60-stack');
   let r = node(['spawn', 'ENG-60-stack', '--owner', 'a', '--persona', 'be', '--ports', '1']);
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(tools.log(), /docker compose -p eng-60-stack up -d/);
   assert.deepStrictEqual(tools.state().projects['eng-60-stack'].containers, [{ id: 'c-eng-60-stack', dir: fs.realpathSync(wt) }]);
-  assert.strictEqual(ledgerOf(repo)['ENG-60-stack'].composeClaimed, true);
+  assert.strictEqual(composeClaims(env)['eng-60-stack'].env, 'ENG-60-stack');
   r = node(['teardown', 'ENG-60-stack', '--owner', 'a']);
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(tools.log(), /docker compose -p eng-60-stack down --volumes --remove-orphans/);
   assert.strictEqual(tools.state().projects['eng-60-stack'], undefined);
   assert.deepStrictEqual(tools.state().projects.other.volumes, ['other_data'], 'another project is untouched');
+  assert.deepStrictEqual(composeClaims(env), {});
   assert.ok(!fs.existsSync(wt));
   tools.cleanup();
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
-test('a Compose project with containers from elsewhere, or resources spawn did not make, is neither claimed nor torn down', () => {
+test('two repositories with one environment name: the second cannot take the Compose name, and the first never touches the second\'s volume', () => {
+  const a = makeRepo('same-a-');
+  const b = makeRepo('same-b-');
+  commitFile(b.repo, 'compose.yaml', 'services: {}\n');
+  const tools = fakeTools({ up: true, projects: {} });
+  const env = scratchHome(tools.env);
+  // A has no compose file, so it reserves nothing; B reserves the name when it brings its stack up.
+  assert.strictEqual(runner(a.repo, env)(['spawn', 'ENG-70-same', '--owner', 'a', '--persona', 'be']).status, 0);
+  assert.strictEqual(runner(b.repo, env)(['spawn', 'ENG-70-same', '--owner', 'b', '--persona', 'be']).status, 0);
+  // B stops its containers but keeps its data volume, as `docker compose down` does.
+  const s = tools.state();
+  s.projects['eng-70-same'].containers = [];
+  tools.setState(s);
+  const r = runner(a.repo, env)(['teardown', 'ENG-70-same', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stderr, /not touched: it is reserved by ENG-70-same in /);
+  assert.deepStrictEqual(tools.state().projects['eng-70-same'].volumes, ['eng-70-same_data'], 'B\'s volume survives');
+  assert.doesNotMatch(tools.log(), /eng-70-same down/);
+  // A third repository with a compose file is refused the reserved name before it creates anything.
+  const c = makeRepo('same-c-');
+  commitFile(c.repo, 'compose.yaml', 'services: {}\n');
+  const rc = runner(c.repo, env)(['spawn', 'ENG-70-same', '--owner', 'c', '--persona', 'be']);
+  assert.strictEqual(rc.status, 1);
+  assert.match(rc.stderr, /is reserved by ENG-70-same in .*same-b-/);
+  assert.ok(!fs.existsSync(path.join(c.parent, 'ENG-70-same')));
+  tools.cleanup();
+  for (const x of [a, b, c]) fs.rmSync(x.parent, { recursive: true, force: true });
+});
+
+test('a Compose project with containers from elsewhere, or resources spawn did not make, is neither reserved nor torn down', () => {
   const { parent, repo } = makeRepo('foreign-');
   commitFile(repo, 'compose.yaml', 'services: {}\n');
   const tools = fakeTools({ up: true, projects: {
     'eng-61-shared': { containers: [{ id: 'x1', dir: '/elsewhere' }], volumes: [], networks: [] },
     'eng-63-left': { containers: [], volumes: ['eng-63-left_data'], networks: [] },
   } });
-  const node = runner(repo, tools.env);
+  const env = scratchHome(tools.env);
+  const node = runner(repo, env);
   let r = node(['spawn', 'ENG-61-shared', '--owner', 'a', '--persona', 'be']);
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /started outside/);
+  assert.match(r.stderr, /did not create/);
   assert.ok(!fs.existsSync(path.join(parent, 'ENG-61-shared')), 'nothing was created');
   r = node(['spawn', 'ENG-63-left', '--owner', 'a', '--persona', 'be']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /did not create/);
-
-  // A foreign container that joins the project after spawn stops teardown before anything is removed.
+  // A foreign container that joins the reserved project after spawn stops teardown before anything is removed.
   assert.strictEqual(node(['spawn', 'ENG-62-mine', '--owner', 'a', '--persona', 'be']).status, 0);
   const s = tools.state();
   s.projects['eng-62-mine'].containers.push({ id: 'x2', dir: '/elsewhere' });
@@ -621,24 +665,21 @@ test('a Compose project with containers from elsewhere, or resources spawn did n
   fs.rmSync(parent, { recursive: true, force: true });
 });
 
-test('a project spawn could not claim is left alone; a claimed one is not torn down blind while Docker is off', () => {
+test('a reserved project is not torn down blind: Docker off, or another daemon, refuses before anything is removed', () => {
   const { parent, repo } = makeRepo('docker-off-');
-  const tools = fakeTools({ up: false, projects: {} });
-  const node = runner(repo, tools.env);
-  // Docker off at spawn: the project is not claimed, so teardown never removes it, even once Docker holds it.
-  assert.strictEqual(node(['spawn', 'ENG-64-off', '--owner', 'a', '--persona', 'be']).status, 0);
-  assert.strictEqual(ledgerOf(repo)['ENG-64-off'].composeClaimed, false);
-  tools.setState({ up: true, projects: { 'eng-64-off': { containers: [], volumes: ['eng-64-off_data'], networks: [] } } });
-  let r = node(['teardown', 'ENG-64-off', '--owner', 'a']);
-  assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stderr, /not touched: spawn did not claim it/);
-  assert.deepStrictEqual(tools.state().projects['eng-64-off'].volumes, ['eng-64-off_data']);
-  // Docker on at spawn, off at teardown: refuse rather than leave containers behind unseen.
+  commitFile(repo, 'compose.yaml', 'services: {}\n');
+  const tools = fakeTools({ up: true, projects: {} });
+  const env = scratchHome(tools.env);
+  const node = runner(repo, env);
   assert.strictEqual(node(['spawn', 'ENG-65-on', '--owner', 'a', '--persona', 'be']).status, 0);
   tools.setState({ ...tools.state(), up: false });
-  r = node(['teardown', 'ENG-65-on', '--owner', 'a']);
+  let r = node(['teardown', 'ENG-65-on', '--owner', 'a']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /Docker is not reachable/);
+  tools.setState({ ...tools.state(), up: true, daemon: 'daemon-b' });
+  r = node(['teardown', 'ENG-65-on', '--owner', 'a']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /reserved on Docker daemon daemon-a, not daemon-b/);
   assert.ok(fs.existsSync(path.join(parent, 'ENG-65-on')));
   tools.cleanup();
   fs.rmSync(parent, { recursive: true, force: true });
@@ -658,5 +699,185 @@ test('a compose file with Docker off fails spawn after the worktree is recorded,
   assert.strictEqual(r.status, 0, r.stderr);
   assert.ok(!fs.existsSync(path.join(parent, 'ENG-66-half')));
   tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('restore and teardown drop only this environment\'s registration; an unrelated stale one survives', () => {
+  const { parent, repo } = makeRepo('prune-');
+  const node = runner(repo);
+  const stale = path.join(parent, 'ENG-80-theirs');
+  gitIn(repo, ['worktree', 'add', '-q', '-b', 'ENG-80-theirs', stale, 'main']);
+  fs.rmSync(stale, { recursive: true, force: true });
+  const wt = path.join(parent, 'ENG-81-mine');
+  assert.strictEqual(node(['spawn', 'ENG-81-mine', '--owner', 'a', '--persona', 'be']).status, 0);
+  fs.rmSync(wt, { recursive: true, force: true });
+  assert.strictEqual(node(['spawn', 'ENG-81-mine', '--owner', 'a', '--persona', 'be']).status, 0);
+  fs.rmSync(wt, { recursive: true, force: true });
+  const r = node(['teardown', 'ENG-81-mine', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const listed = gitIn(repo, ['worktree', 'list', '--porcelain']);
+  const real = p => path.join(fs.realpathSync(parent), path.basename(p));
+  assert.ok(listed.includes(`worktree ${real(stale)}`), 'the unrelated registration is still there');
+  assert.ok(!listed.includes(`worktree ${real(wt)}`));
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a worktree or branch recreated by hand at the same name is not spawn\'s: reuse and teardown refuse it, and the branch is kept', () => {
+  const { parent, repo } = makeRepo('replaced-');
+  const node = runner(repo);
+  const wt = path.join(parent, 'ENG-82-swap');
+  assert.strictEqual(node(['spawn', 'ENG-82-swap', '--owner', 'a', '--persona', 'be']).status, 0);
+  // Someone removes spawn's worktree and makes their own at the same path, on the same branch.
+  gitIn(repo, ['worktree', 'remove', wt]);
+  gitIn(repo, ['worktree', 'add', '-q', wt, 'ENG-82-swap']);
+  let r = node(['spawn', 'ENG-82-swap', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /not the one spawn made/);
+  r = node(['teardown', 'ENG-82-swap', '--owner', 'a']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /not the one spawn made/);
+  assert.ok(fs.existsSync(wt));
+  gitIn(repo, ['worktree', 'remove', wt]);
+  // The branch is deleted and recreated by hand from an unrelated commit: a restore does not count it as spawn's.
+  gitIn(repo, ['branch', '-D', 'ENG-82-swap']);
+  commitFile(repo, 'other.txt', 'o');
+  gitIn(repo, ['checkout', '-q', '--orphan', 'tmp']);
+  gitIn(repo, ['commit', '-q', '--allow-empty', '-m', 'unrelated']);
+  gitIn(repo, ['branch', 'ENG-82-swap']);
+  gitIn(repo, ['checkout', '-q', 'main']);
+  r = node(['spawn', 'ENG-82-swap', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(ledgerOf(repo)['ENG-82-swap'].branchCreated, false);
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('teardown deletes only the merged tip it checked: a branch that moved on is kept and P7 is reported open', () => {
+  const { parent, repo } = makeRepo('moved-');
+  commitFile(repo, 'compose.yaml', 'services: {}\n');
+  const tools = fakeTools({ up: true, projects: {} });
+  const env = scratchHome(tools.env);
+  const node = runner(repo, env);
+  const wt = path.join(parent, 'ENG-83-moved');
+  assert.strictEqual(node(['spawn', 'ENG-83-moved', '--owner', 'a', '--persona', 'be']).status, 0);
+  // The branch is merged; then, after teardown resolved its tip, a commit lands on it (here: while Docker is asked).
+  const r = runner(repo, { ...env, FAKE_DOCKER_ON_INFO: `git -C '${wt}' -c user.name=t -c user.email=t@t commit -q --allow-empty -m late` })(['teardown', 'ENG-83-moved', '--owner', 'a']);
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stdout, /kept: it moved past the merged commit/);
+  assert.match(r.stderr, /P7 is not complete/);
+  assert.notStrictEqual(gitIn(repo, ['branch', '--list', 'ENG-83-moved']), '', 'the unmerged commit survives');
+  assert.strictEqual(ledgerOf(repo)['ENG-83-moved'], undefined, 'the rest of the cleanup finished');
+  tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a failed worktree add is recorded, so teardown removes what it left behind', () => {
+  const { parent, repo } = makeRepo('hook-');
+  fs.writeFileSync(path.join(repo, '.git', 'hooks', 'post-checkout'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const node = runner(repo);
+  let r = node(['spawn', 'ENG-84-hook', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 1);
+  assert.ok(ledgerOf(repo)['ENG-84-hook'].mark, 'the registration the failed add left is marked as spawn\'s');
+  fs.rmSync(path.join(repo, '.git', 'hooks', 'post-checkout'));
+  r = node(['teardown', 'ENG-84-hook', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(!fs.existsSync(path.join(parent, 'ENG-84-hook')));
+  assert.strictEqual(gitIn(repo, ['branch', '--list', 'ENG-84-hook']), '');
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a locked worktree stops teardown before the Compose volumes go, and a failed port release keeps the entry for a retry', () => {
+  const { parent, repo } = makeRepo('locked-');
+  commitFile(repo, 'compose.yaml', 'services: {}\n');
+  const tools = fakeTools({ up: true, projects: {} });
+  const env = scratchHome(tools.env);
+  const node = runner(repo, env);
+  const wt = path.join(parent, 'ENG-85-lock');
+  assert.strictEqual(node(['spawn', 'ENG-85-lock', '--owner', 'a', '--persona', 'be', '--ports', '1']).status, 0);
+  gitIn(repo, ['worktree', 'lock', wt]);
+  let r = node(['teardown', 'ENG-85-lock', '--owner', 'a']);
+  assert.strictEqual(r.status, 1);
+  assert.deepStrictEqual(tools.state().projects['eng-85-lock'].volumes, ['eng-85-lock_data'], 'the snapshot volume survives');
+  gitIn(repo, ['worktree', 'unlock', wt]);
+  // The claims file cannot be read: teardown stops before the ledger entry goes, and the next run finishes.
+  const claims = path.join(env.HOME, '.agent-brain', 'port-claims.json');
+  const good = fs.readFileSync(claims, 'utf8');
+  fs.writeFileSync(claims, '{');
+  r = node(['teardown', 'ENG-85-lock', '--owner', 'a']);
+  assert.strictEqual(r.status, 1);
+  assert.ok(ledgerOf(repo)['ENG-85-lock'], 'the entry stays while its claims are held');
+  fs.writeFileSync(claims, good);
+  r = node(['teardown', 'ENG-85-lock', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(ledgerOf(repo)['ENG-85-lock'], undefined);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(claims, 'utf8')), {});
+  tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('a resumed spawn keeps its ports without --ports, refuses a different count, and reinstalls a restored or changed checkout', () => {
+  const { parent, repo } = makeRepo('resume-env-');
+  commitFile(repo, 'package-lock.json', '{}');
+  const tools = fakeTools();
+  const node = runner(repo, tools.env);
+  const wt = path.join(parent, 'ENG-86-keep');
+  const first = node(['spawn', 'ENG-86-keep', '--owner', 'a', '--persona', 'be', '--ports', '2']);
+  assert.strictEqual(first.status, 0, first.stderr);
+  const ports = out => out.match(/HOST_PORT_\d+='\d+'/g);
+  const again = node(['spawn', 'ENG-86-keep', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(again.status, 0, again.stderr);
+  assert.deepStrictEqual(ports(again.stdout), ports(first.stdout));
+  assert.strictEqual(ledgerOf(repo)['ENG-86-keep'].ports.length, 2);
+  const fewer = node(['spawn', 'ENG-86-keep', '--owner', 'a', '--persona', 'be', '--ports', '1']);
+  assert.strictEqual(fewer.status, 1);
+  assert.match(fewer.stderr, /holds 2 host ports/);
+  const installs = () => tools.log().split('\n').filter(l => l.startsWith('npm ')).length;
+  assert.strictEqual(installs(), 1);
+  fs.rmSync(wt, { recursive: true, force: true });
+  assert.strictEqual(node(['spawn', 'ENG-86-keep', '--owner', 'a', '--persona', 'be']).status, 0);
+  assert.strictEqual(installs(), 2, 'a restored checkout installs again');
+  fs.writeFileSync(path.join(wt, 'package-lock.json'), '{"changed":true}');
+  assert.strictEqual(node(['spawn', 'ENG-86-keep', '--owner', 'a', '--persona', 'be']).status, 0);
+  assert.strictEqual(installs(), 3, 'a changed lockfile installs again');
+  tools.cleanup();
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('the copied .env leaves out AWS credentials (DS4) and keeps everything else', () => {
+  const { parent, repo } = makeRepo('aws-');
+  commitFile(repo, '.gitignore', '.env\n');
+  fs.writeFileSync(path.join(repo, '.env'), 'EXPO_TOKEN=e\nAWS_ACCESS_KEY_ID=AKIAEXAMPLE\nexport AWS_SECRET_ACCESS_KEY=s\nAWS_REGION=us-east-1\nAWS_PROFILE=prod\n');
+  const r = runner(repo)(['spawn', 'ENG-87-aws', '--owner', 'a', '--persona', 'be']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stderr, /without AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_PROFILE/);
+  assert.strictEqual(fs.readFileSync(path.join(parent, 'ENG-87-aws', '.env'), 'utf8'), 'EXPO_TOKEN=e\nAWS_REGION=us-east-1\n');
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('unknown flags, a missing value, and teardown --dry-run are refused before anything runs', () => {
+  const { parent, repo } = makeRepo('flags-');
+  const node = runner(repo);
+  assert.strictEqual(node(['spawn', 'ENG-88-f', '--owner', 'a', '--persona', 'be']).status, 0);
+  for (const args of [['teardown', 'ENG-88-f', '--owner', 'a', '--dry-run'], ['teardown', 'ENG-88-f', '--owner'],
+    ['spawn', 'ENG-88-f', '--owner', 'a', '--persona', 'be', '--ports', 'two'], ['spawn', 'ENG-88-f', '--owner', 'a', '--persona', 'be', '--force'],
+    ['teardown', 'ENG-88-f', '--owner', 'a', '--keep', 'yes']]) {
+    const r = node(args);
+    assert.strictEqual(r.status, 2, args.join(' '));
+  }
+  assert.ok(fs.existsSync(path.join(parent, 'ENG-88-f')), 'nothing was torn down');
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('an environment recorded by new-worktree.js is adopted with its branch and Compose project kept', () => {
+  const { parent, repo } = makeRepo('legacy-env-');
+  const wt = path.join(parent, 'ENG-89-old');
+  gitIn(repo, ['worktree', 'add', '-q', '--no-track', '-b', 'ENG-89-old', wt, 'main']);
+  fs.writeFileSync(path.join(repo, '.git', 'brain-env-ledger.json'), JSON.stringify({ 'ENG-89-old': {
+    owner: 'a', branch: 'ENG-89-old', worktree: wt, ports: [], composeProject: 'eng-89-old', createdAt: '2026-11-01T00:00:00Z' } }));
+  const node = runner(repo);
+  assert.strictEqual(node(['spawn', 'ENG-89-old', '--owner', 'a', '--persona', 'be']).status, 0);
+  const r = node(['teardown', 'ENG-89-old', '--owner', 'a']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /kept: spawn did not create it/);
+  assert.ok(!fs.existsSync(wt));
   fs.rmSync(parent, { recursive: true, force: true });
 });

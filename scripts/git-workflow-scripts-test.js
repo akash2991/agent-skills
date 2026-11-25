@@ -740,3 +740,42 @@ test('merge-pr leaves a branch checked out in a worktree to its teardown, and st
   assert.strictEqual(localBranchOutcome("error: branch 'ENG-1-x' not found"), 'gone');
   assert.strictEqual(localBranchOutcome("error: the branch 'ENG-1-x' is not fully merged"), 'failed');
 });
+
+test('merge-pr leaves a checked-out branch only to a teardown that will delete it', () => {
+  const { pendingTeardown } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p7-')));
+  const repo = path.join(parent, 'app');
+  fs.mkdirSync(repo);
+  const git = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, encoding: 'utf8' });
+  git(['init', '-q', '-b', 'main']);
+  git(['commit', '-q', '--allow-empty', '-m', 'init']);
+  const env = { ...process.env, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'p7-home-')) };
+  const spawn = (name, extra = []) => execFileSync('node', [path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'agent-env.js'),
+    'spawn', name, '--owner', 'a', '--persona', 'be', '--no-compose', ...extra], { cwd: repo, env, encoding: 'utf8', stdio: 'pipe' });
+  // a spawned environment that created its branch: pending its teardown
+  spawn('ENG-1-mine');
+  assert.strictEqual(pendingTeardown('ENG-1-mine', repo), path.join(parent, 'ENG-1-mine'));
+  // a branch checked out in a worktree made by hand: P7 stays open
+  git(['worktree', 'add', '-q', '-b', 'ENG-2-hand', path.join(parent, 'ENG-2-hand'), 'main']);
+  assert.strictEqual(pendingTeardown('ENG-2-hand', repo), null);
+  // a spawned environment on a branch that existed before it: teardown keeps the branch, so P7 stays open
+  git(['branch', 'ENG-3-old']);
+  spawn('ENG-3-old');
+  assert.strictEqual(pendingTeardown('ENG-3-old', repo), null);
+  // spawn's worktree replaced by hand at the same path, on the same branch: the mark is gone, so P7 stays open
+  spawn('ENG-4-swap');
+  git(['worktree', 'remove', path.join(parent, 'ENG-4-swap')]);
+  git(['worktree', 'add', '-q', path.join(parent, 'ENG-4-swap'), 'ENG-4-swap']);
+  assert.strictEqual(pendingTeardown('ENG-4-swap', repo), null);
+  // ...also when that registration carries some other mark
+  const admin = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: path.join(parent, 'ENG-4-swap'), encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(admin, 'brain-env-mark'), 'not-spawns');
+  assert.strictEqual(pendingTeardown('ENG-4-swap', repo), null);
+  // the branch checked out in the main checkout: P7 stays open
+  assert.strictEqual(pendingTeardown('main', repo), null);
+  fs.rmSync(parent, { recursive: true, force: true });
+});

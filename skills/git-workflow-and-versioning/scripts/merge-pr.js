@@ -230,9 +230,10 @@ function main(argv) {
     try { git(['branch', '-d', view.headRefName]); } catch (err) {
       const text = String(err.stderr || err.message);
       const outcome = localBranchOutcome(text);
-      if (outcome === 'worktree') {
-        console.log(`merge-pr: local branch ${view.headRefName} is checked out in a worktree; its teardown deletes it (development-setup agent-env.js teardown)`);
-      } else if (outcome === 'failed') {
+      const holder = outcome === 'worktree' ? pendingTeardown(view.headRefName) : null;
+      if (holder) {
+        console.log(`merge-pr: local branch ${view.headRefName} is pending the teardown of ${holder} (development-setup DS11), which deletes it`);
+      } else if (outcome !== 'gone') {
         console.error(`merge-pr: local branch ${view.headRefName} not deleted (${text.trim()}); P7 is not complete: delete it by hand`);
         process.exitCode = 1;
       }
@@ -290,12 +291,36 @@ function deleteRemoteBranch(branch, mergedSha, remote = 'origin') {
 }
 
 // What a failed `git branch -d` of the merged branch means. No local branch at all (merged from another checkout) is
-// already the outcome P7 asks for; a branch checked out in a worktree is deleted by that worktree's teardown, which
-// runs after the merge; anything else (unpushed work, an unmerged branch) leaves P7 incomplete.
+// already the outcome P7 asks for; a branch checked out in a worktree may be left to that worktree's teardown, when
+// pendingTeardown proves it will delete it; anything else (unpushed work, an unmerged branch) leaves P7 incomplete.
 function localBranchOutcome(text) {
   if (/not found|did not match any/.test(text)) return 'gone';
   if (/used by worktree at|checked out at/.test(text)) return 'worktree';
   return 'failed';
 }
 
-module.exports = { argvProblem, mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor, localBranchOutcome };
+// The worktree whose teardown will delete this local branch, or null. Only a spawned environment qualifies: the
+// ledger in the git common dir names the branch as one spawn created, exactly one worktree holds it, that worktree is
+// the environment's, and its registration carries the mark spawn left (development-setup agent-env.js).
+function pendingTeardown(branch, cwd = process.cwd()) {
+  const fs = require('fs');
+  const path = require('path');
+  const run = args => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  let ledger;
+  try { ledger = JSON.parse(fs.readFileSync(path.join(path.resolve(cwd, run(['rev-parse', '--git-common-dir'])), 'brain-env-ledger.json'), 'utf8')); } catch { return null; }
+  const holders = [];
+  let current = null;
+  for (const line of run(['worktree', 'list', '--porcelain']).split('\n')) {
+    if (line.startsWith('worktree ')) current = line.slice('worktree '.length);
+    if (line === `branch refs/heads/${branch}`) holders.push(current);
+  }
+  if (holders.length !== 1) return null;
+  const entry = Object.values(ledger).find(e => e && e.branch === branch && e.branchCreated === true && e.mark);
+  if (!entry || path.resolve(entry.worktree) !== path.resolve(holders[0])) return null;
+  try {
+    const admin = run(['-C', holders[0], 'rev-parse', '--absolute-git-dir']);
+    return fs.readFileSync(path.join(admin, 'brain-env-mark'), 'utf8').trim() === entry.mark ? holders[0] : null;
+  } catch { return null; }
+}
+
+module.exports = { pendingTeardown, argvProblem, mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor, localBranchOutcome };
