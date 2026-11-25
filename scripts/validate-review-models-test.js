@@ -97,8 +97,6 @@ test('Gemini models are declared through agy (Antigravity) or pi', () => {
   const hydrogen = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
   assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': hydrogen } })), []);
   assert.deepEqual(validate(sandbox({ gate: { ...GATE, independent: [GATE.independent[0], hydrogen] } })), []);
-  const opusOnAgy = { label: 'Opus via Antigravity', harness: 'agy', model: 'claude-opus-4-6-thinking', effort: 'max' };
-  assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': opusOnAgy } })), [], 'an id with no effort suffix takes any agy effort');
   const argon = { label: 'Gemini 4 Argon', harness: 'pi', model: 'opencode-go/gemini-4-argon', effort: 'high' };
   assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': argon } })), []);
 });
@@ -106,7 +104,12 @@ test('Gemini models are declared through agy (Antigravity) or pi', () => {
 test('agy entries are checked like the others', () => {
   const base = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
   const errs = entry => validate(sandbox({ project: { 'code-reviewer': entry } })).join('\n');
-  assert.match(errs({ ...base, effort: 'low' }), /effort: "low" contradicts the effort in the model id "gemini-4-hydrogen-high"/);
+  assert.match(errs({ ...base, effort: 'low' }), /model: "gemini-4-hydrogen-high" must be an agy id that ends in its effort "-low"/);
+  // agy refuses --effort for an id without one, and a bare codename is not an id.
+  for (const model of ['claude-opus-4-6-thinking', 'gemini-4-hydrogen', 'hydrogen']) {
+    assert.match(errs({ ...base, model }), new RegExp(`model: "${model}" must be an agy id that ends in its effort "-high"`), model);
+  }
+  assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': { ...base, model: 'gemini-3.8-flash-low', effort: 'low' } } })), []);
   assert.match(errs({ ...base, model: 'Gemini 4 Hydrogen' }), /model: "Gemini 4 Hydrogen" is not an exact agy model id/);
   assert.match(errs({ ...base, model: 'google/gemini-4-hydrogen-high' }), /not an exact agy model id/);
   assert.match(errs({ ...base, model: 'gemini-4-hydrogen-xhigh', effort: 'minimal' }), /"minimal" is not one of agy's/);
@@ -119,4 +122,11 @@ test('Gemini spellings in prose fail, the Gemini CLI does not', () => {
   for (const text of ['the `.gemini/commands/` directory', 'Gemini CLI', 'Gemini']) {
     assert.deepEqual(validate(sandbox({ agents: `${GATE_PROSE}${text}\n` })), [], text);
   }
+});
+
+test('effort variants of one agy model are the same reviewer', () => {
+  const hydrogen = effort => ({ label: `Gemini 4 Hydrogen ${effort}`, harness: 'agy', model: `gemini-4-hydrogen-${effort}`, effort });
+  assert.match(validate(sandbox({ gate: { ...GATE, independent: [hydrogen('high'), hydrogen('low')] } })).join('\n'), /the reviewers must use different models/);
+  const flash = { label: 'Gemini 3.8 Flash', harness: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' };
+  assert.deepEqual(validate(sandbox({ gate: { ...GATE, independent: [hydrogen('high'), flash] } })), []);
 });

@@ -8,9 +8,11 @@
  *
  * Checks (errors block CI):
  *   - both files parse and have the expected shape
- *   - exactly two independent reviewers on different models, plus a synthesis
+ *   - exactly two independent reviewers on different models (agy effort
+ *     variants of one model are the same model), plus a synthesis
  *   - each harness's model id shape and the efforts its CLI accepts; an agy id
- *     that ends in an effort (gemini-4-hydrogen-high) must match the entry's effort
+ *     must end in the entry's effort (gemini-4-hydrogen-high with "high"):
+ *     agy refuses --effort for ids without one, and a different one
  *   - the lines that select reviewers in each AGENTS.md point to the config
  *   - neither AGENTS.md names a model, by a configured label or id or by a
  *     model-like name such as "GPT 6.1 Sol", "Opus 5.5", "Claude Opus" or
@@ -54,6 +56,20 @@ function normalize(text) {
   return text.toLowerCase().replace(/[\s\u00a0\u2010-\u2015_-]+/g, '-');
 }
 
+// "<base>-<effort>" for a harness that puts the effort in the id, else null.
+function splitEffort(model, spec) {
+  const m = model.match(new RegExp(`^(.+)-(${spec.efforts.join('|')})$`));
+  return m ? { base: m[1], effort: m[2] } : null;
+}
+
+// What makes two reviewers the same model: the id, without an agy effort suffix.
+function modelKey(entry) {
+  if (!isObject(entry) || typeof entry.model !== 'string') return undefined;
+  const spec = HARNESSES.get(entry.harness);
+  const parsed = spec && spec.effortInId ? splitEffort(entry.model, spec) : null;
+  return `${entry.harness}:${parsed ? parsed.base : entry.model}`;
+}
+
 function isObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -80,9 +96,11 @@ function checkEntry(entry, where, errors) {
   if (typeof entry.effort === 'string' && !spec.efforts.includes(entry.effort)) {
     errors.push(`${where}.effort: "${entry.effort}" is not one of ${entry.harness}'s ${spec.efforts.join(', ')}`);
   }
-  const suffix = spec.effortInId && typeof entry.model === 'string' && entry.model.match(new RegExp(`-(${spec.efforts.join('|')})$`));
-  if (suffix && typeof entry.effort === 'string' && suffix[1] !== entry.effort) {
-    errors.push(`${where}.effort: "${entry.effort}" contradicts the effort in the model id "${entry.model}"`);
+  if (spec.effortInId && typeof entry.model === 'string' && typeof entry.effort === 'string') {
+    const parsed = splitEffort(entry.model, spec);
+    if (!parsed || parsed.effort !== entry.effort) {
+      errors.push(`${where}.model: "${entry.model}" must be an agy id that ends in its effort "-${entry.effort}", as \`agy models\` lists it`);
+    }
   }
 }
 
@@ -106,7 +124,7 @@ function checkGate(cfg, errors) {
   }
   const independent = Array.isArray(cfg.independent) ? cfg.independent : [];
   independent.forEach((e, i) => checkEntry(e, `${rel}.independent[${i}]`, errors));
-  const models = independent.map(e => isObject(e) ? e.model : undefined);
+  const models = independent.map(modelKey);
   if (new Set(models).size !== models.length) errors.push(`${rel}.independent: the reviewers must use different models`);
   checkEntry(cfg.synthesis, `${rel}.synthesis`, errors);
   return [...independent, cfg.synthesis];
