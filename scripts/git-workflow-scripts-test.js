@@ -732,3 +732,67 @@ test('the reason names no grade but the declared one, in any form', () => {
   assert.strictEqual(check.blastRadius('Blast-radius: high — high traffic checkout path'), 'high', 'the declared grade repeated');
   assert.match(mergeBlockers(view('Blast-radius: high — high traffic checkout path')).blockers.join(), /review required/, 'still routed to review');
 });
+
+test('merge-pr leaves a branch checked out in a worktree to its teardown, and still flags any other failed delete', () => {
+  const { localBranchOutcome } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  assert.strictEqual(localBranchOutcome("error: cannot delete branch 'ENG-1-x' used by worktree at '/w/ENG-1-x'"), 'worktree');
+  assert.strictEqual(localBranchOutcome("error: Cannot delete branch 'ENG-1-x' checked out at '/w/ENG-1-x'"), 'worktree');
+  assert.strictEqual(localBranchOutcome("error: branch 'ENG-1-x' not found"), 'gone');
+  assert.strictEqual(localBranchOutcome("error: the branch 'ENG-1-x' is not fully merged"), 'failed');
+});
+
+test('merge-pr leaves a checked-out branch only to a teardown that will delete it', () => {
+  const { pendingTeardown } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p7-')));
+  const repo = path.join(parent, 'app');
+  fs.mkdirSync(repo);
+  const git = args => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, encoding: 'utf8' });
+  git(['init', '-q', '-b', 'main']);
+  git(['commit', '-q', '--allow-empty', '-m', 'init']);
+  const env = { ...process.env, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'p7-home-')) };
+  const spawn = (name, extra = []) => execFileSync('node', [path.join(__dirname, '..', 'skills', 'development-setup', 'scripts', 'agent-env.js'),
+    'spawn', name, '--owner', 'a', '--persona', 'be', '--no-compose', ...extra], { cwd: repo, env, encoding: 'utf8', stdio: 'pipe' });
+  // the merged PR head: the branch tip as it was merged (here, the branch itself unless a test says otherwise)
+  const head = b => { try { return git(['rev-parse', b]).trim(); } catch { return 'main'; } };
+  // a spawned environment that created its branch: pending its teardown
+  spawn('ENG-1-mine');
+  assert.strictEqual(pendingTeardown('ENG-1-mine', repo, head('ENG-1-mine')), path.join(parent, 'ENG-1-mine'));
+  // a branch checked out in a worktree made by hand: P7 stays open
+  git(['worktree', 'add', '-q', '-b', 'ENG-2-hand', path.join(parent, 'ENG-2-hand'), 'main']);
+  assert.strictEqual(pendingTeardown('ENG-2-hand', repo, head('ENG-2-hand')), null);
+  // a spawned environment on a branch that existed before it: teardown keeps the branch, so P7 stays open
+  git(['branch', 'ENG-3-old']);
+  spawn('ENG-3-old');
+  assert.strictEqual(pendingTeardown('ENG-3-old', repo, head('ENG-3-old')), null);
+  // spawn's worktree replaced by hand at the same path, on the same branch: the mark is gone, so P7 stays open
+  spawn('ENG-4-swap');
+  git(['worktree', 'remove', path.join(parent, 'ENG-4-swap')]);
+  git(['worktree', 'add', '-q', path.join(parent, 'ENG-4-swap'), 'ENG-4-swap']);
+  assert.strictEqual(pendingTeardown('ENG-4-swap', repo, head('ENG-4-swap')), null);
+  // ...also when that registration carries some other mark
+  const admin = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: path.join(parent, 'ENG-4-swap'), encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(admin, 'brain-env-mark'), 'not-spawns');
+  assert.strictEqual(pendingTeardown('ENG-4-swap', repo, head('ENG-4-swap')), null);
+  // a local-only commit beyond the merged head: P7 is open now, not pending teardown
+  spawn('ENG-5-extra');
+  const wt5 = path.join(parent, 'ENG-5-extra');
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'pr'], { cwd: wt5 });
+  const mergedHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: wt5, encoding: 'utf8' }).trim();
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'local only'], { cwd: wt5 });
+  assert.strictEqual(pendingTeardown('ENG-5-extra', repo, mergedHead), null);
+  assert.strictEqual(pendingTeardown('ENG-5-extra', repo, head('ENG-5-extra')), wt5);
+  // the branch rewritten in place to an unrelated history no longer continues spawn's commit: P7 stays open
+  spawn('ENG-6-rewritten');
+  const wt6 = path.join(parent, 'ENG-6-rewritten');
+  const tree = execFileSync('git', ['write-tree'], { cwd: wt6, encoding: 'utf8' }).trim();
+  const orphan = execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit-tree', tree, '-m', 'unrelated'], { cwd: wt6, encoding: 'utf8' }).trim();
+  execFileSync('git', ['reset', '-q', '--hard', orphan], { cwd: wt6 });
+  assert.strictEqual(pendingTeardown('ENG-6-rewritten', repo, head('ENG-6-rewritten')), null);
+  // the branch checked out in the main checkout: P7 stays open
+  assert.strictEqual(pendingTeardown('main', repo, head('main')), null);
+  fs.rmSync(parent, { recursive: true, force: true });
+});

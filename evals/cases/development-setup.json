@@ -11,7 +11,7 @@
         "top_k": 3
       },
       {
-        "prompt": "Tear down the worktree, containers and DB snapshot now that the PR is open",
+        "prompt": "The PR merged: tear down this agent's worktree, containers and DB snapshot",
         "top_k": 3
       },
       {
@@ -50,8 +50,8 @@
     {
       "id": 1,
       "kind": "dialogue",
-      "prompt": "You are the main agent starting backend ticket PROJ-42 (add a webhook endpoint), while a frontend subagent starts ticket PROJ-43 (consume that endpoint) in parallel. Set up and name both agents' environments, say what must exist before you can work in parallel, and describe what you will remove when done.",
-      "expected_output": "Each agent gets a worktree beside the main repository at <workspace-root>/<ticket>-<slug>, sharing <workspace-root> with <workspace-root>/<repo-name> and never nested inside the repository; each main agent and subagent has the visible runtime name `<ticket>-<slug> (<persona>)`, its own worktree basename followed by its persona, so its ticket and persona are apparent during parallel work; own Docker containers and LocalStack for the touched services, a database snapshot or seed, the API contract written first so the frontend mocks it while the backend returns labelled mock data, dependency shapes resolved before code, the app and tests run inside that environment, and the worktree, containers and snapshot removed after the PR is opened",
+      "prompt": "You are the main agent starting backend ticket PROJ-42 (add a webhook endpoint), while a frontend subagent starts ticket PROJ-43 (consume that endpoint) in parallel. Set up and name both agents' environments, say what must exist before you can work in parallel, what you do if your session is resumed tomorrow, and describe what you will remove when done.",
+      "expected_output": "Each agent runs agent-env.js spawn, which gives it a worktree beside the main repository at <workspace-root>/<ticket>-<slug>, sharing <workspace-root> with <workspace-root>/<repo-name> and never nested inside the repository; each main agent and subagent has the visible runtime name `<ticket>-<slug> (<persona>)`, its own worktree basename followed by its persona, so its ticket and persona are apparent during parallel work; own Docker containers and LocalStack for the touched services, a database snapshot or seed, the API contract written first so the frontend mocks it while the backend returns labelled mock data, dependency shapes resolved before code, the app and tests run inside that environment; a resumed session runs spawn again first; and teardown runs after the merge, not when the PR opens, removing only what spawn created: the worktree, the Compose containers and volumes with the snapshot, the merged branch spawn created, and the port claims",
       "expectations": [
         "Each agent's git worktree is created beside the main repository so both share the same parent directory; it is never nested inside the repository or a harness directory",
         "The main agent and every subagent have the visible runtime name <ticket>-<slug> (<persona>): their own worktree basename followed by their persona; the harness id remains separate",
@@ -60,7 +60,8 @@
         "The API contract is written before frontend and backend work in parallel; the frontend mocks it and the backend returns labelled mock data",
         "Any dependency's shape and type is resolved before code is written against it",
         "The app and tests run inside this environment",
-        "After opening the PR, the worktree, containers and snapshot are removed"
+        "Each environment is made by agent-env.js spawn, and a resumed session runs spawn again before working",
+        "Teardown runs after the merge (not when the PR opens) and removes only what spawn created: worktree, Compose containers and volumes with the snapshot, the merged branch spawn created, and port claims"
       ]
     },
     {
