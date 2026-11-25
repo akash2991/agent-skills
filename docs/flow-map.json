@@ -43,10 +43,10 @@
       ]
     },
     {
-      "id": "branch-worktree",
-      "name": "Branch and worktree",
+      "id": "spawn",
+      "name": "Spawn an agent",
       "area": "Git and delivery",
-      "summary": "P5–P7 and DS2–DS3: one branch and one sibling worktree per ticket.",
+      "summary": "DS10 with P5–P6 and DS2–DS5: everything an agent needs before work, in one command that a resumed session runs again.",
       "steps": [
         [
           "Choose the slug",
@@ -61,22 +61,78 @@
           "P5"
         ],
         [
-          "Create the sibling worktree, agent name, lowercase Compose project, free ports",
+          "Reuse the worktree, restore it on the local branch, else check out origin's branch, else branch from the base",
           "det",
-          "skills/development-setup/scripts/new-worktree.js",
-          "P6 DS2 DS3"
+          "skills/development-setup/scripts/agent-env.js",
+          "P6 DS2 DS10"
         ],
         [
-          "Remove the worktree after the PR is open",
+          "Agent name, lowercase Compose project, free host ports kept across spawns",
           "det",
-          "skills/development-setup/scripts/new-worktree.js",
-          "DS2"
+          "skills/development-setup/scripts/agent-env.js",
+          "DS2 DS3"
         ],
         [
-          "Delete the local and remote branch after merge",
+          "Copy .env from the main checkout when git ignores it; install from the root lockfile once",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS10"
+        ],
+        [
+          "Claim the Compose project only when it is empty or already this environment's, then bring it up",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS3 DS4 DS5 DS11"
+        ],
+        [
+          "Declare persona, skills, tools, model, harness, effort",
+          "det",
+          null,
+          "DS10"
+        ]
+      ]
+    },
+    {
+      "id": "teardown",
+      "name": "Tear down an agent",
+      "area": "Git and delivery",
+      "summary": "DS11 with P7: after the merge, or on a canceled ticket, remove only what spawn created.",
+      "steps": [
+        [
+          "Delete the remote branch at merge; leave the checked-out local branch to teardown",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
           "P7"
+        ],
+        [
+          "Merged, or canceled and run with --abandon",
+          "judgment",
+          null,
+          "DS11"
+        ],
+        [
+          "Refuse before the merge without --abandon, and on uncommitted or untracked work",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS1 DS11"
+        ],
+        [
+          "Bring down the Compose project with its volumes and snapshot, only when spawn claimed it and every container came from this worktree",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS3 DS5 DS11"
+        ],
+        [
+          "Remove the worktree; delete the local branch only when spawn created it and it merged; release the ports and the ledger entry",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS2 DS11 P7"
+        ],
+        [
+          "Close the Herdr tabs this agent opened",
+          "det",
+          null,
+          "DS11"
         ]
       ]
     },

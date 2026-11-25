@@ -224,13 +224,16 @@ function main(argv) {
     console.error(`merge-pr: branch ${view.headRefName} lives in the fork and was not deleted; delete it in the fork (P7)`);
     process.exitCode = 1;
   }
-  // The local branch may be checked out in another worktree (P6) or hold unpushed work: report it, do not hide it.
+  // The local branch may be checked out in the agent's worktree (P6), whose teardown deletes it, or hold unpushed work:
+  // report it, do not hide it.
   if (!longLivedHead) {
     try { git(['branch', '-d', view.headRefName]); } catch (err) {
       const text = String(err.stderr || err.message);
-      // No local branch at all (merged from another checkout) is already the outcome P7 asks for.
-      if (!/not found|did not match any/.test(text)) {
-        console.error(`merge-pr: local branch ${view.headRefName} not deleted (${text.trim()}); P7 is not complete: delete it by hand from the worktree that holds it`);
+      const outcome = localBranchOutcome(text);
+      if (outcome === 'worktree') {
+        console.log(`merge-pr: local branch ${view.headRefName} is checked out in a worktree; its teardown deletes it (development-setup agent-env.js teardown)`);
+      } else if (outcome === 'failed') {
+        console.error(`merge-pr: local branch ${view.headRefName} not deleted (${text.trim()}); P7 is not complete: delete it by hand`);
         process.exitCode = 1;
       }
     }
@@ -286,4 +289,13 @@ function deleteRemoteBranch(branch, mergedSha, remote = 'origin') {
   }
 }
 
-module.exports = { argvProblem, mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor };
+// What a failed `git branch -d` of the merged branch means. No local branch at all (merged from another checkout) is
+// already the outcome P7 asks for; a branch checked out in a worktree is deleted by that worktree's teardown, which
+// runs after the merge; anything else (unpushed work, an unmerged branch) leaves P7 incomplete.
+function localBranchOutcome(text) {
+  if (/not found|did not match any/.test(text)) return 'gone';
+  if (/used by worktree at|checked out at/.test(text)) return 'worktree';
+  return 'failed';
+}
+
+module.exports = { argvProblem, mergeBlockers, originRepo, isApproved, reviewState, parseVerdict, isPending, deleteRemoteBranch, remoteFor, localBranchOutcome };

@@ -732,3 +732,11 @@ test('the reason names no grade but the declared one, in any form', () => {
   assert.strictEqual(check.blastRadius('Blast-radius: high — high traffic checkout path'), 'high', 'the declared grade repeated');
   assert.match(mergeBlockers(view('Blast-radius: high — high traffic checkout path')).blockers.join(), /review required/, 'still routed to review');
 });
+
+test('merge-pr leaves a branch checked out in a worktree to its teardown, and still flags any other failed delete', () => {
+  const { localBranchOutcome } = require('../skills/git-workflow-and-versioning/scripts/merge-pr');
+  assert.strictEqual(localBranchOutcome("error: cannot delete branch 'ENG-1-x' used by worktree at '/w/ENG-1-x'"), 'worktree');
+  assert.strictEqual(localBranchOutcome("error: Cannot delete branch 'ENG-1-x' checked out at '/w/ENG-1-x'"), 'worktree');
+  assert.strictEqual(localBranchOutcome("error: branch 'ENG-1-x' not found"), 'gone');
+  assert.strictEqual(localBranchOutcome("error: the branch 'ENG-1-x' is not fully merged"), 'failed');
+});
