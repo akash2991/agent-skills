@@ -92,3 +92,31 @@ test('config shape errors are reported', () => {
 test('an effort one harness accepts and another refuses is judged per harness', () => {
   assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': { ...PROJECT['code-reviewer'], effort: 'minimal' } } })), []);
 });
+
+test('Gemini models are declared through agy (Antigravity) or pi', () => {
+  const hydrogen = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
+  assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': hydrogen } })), []);
+  assert.deepEqual(validate(sandbox({ gate: { ...GATE, independent: [GATE.independent[0], hydrogen] } })), []);
+  const opusOnAgy = { label: 'Opus via Antigravity', harness: 'agy', model: 'claude-opus-4-6-thinking', effort: 'max' };
+  assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': opusOnAgy } })), [], 'an id with no effort suffix takes any agy effort');
+  const argon = { label: 'Gemini 4 Argon', harness: 'pi', model: 'opencode-go/gemini-4-argon', effort: 'high' };
+  assert.deepEqual(validate(sandbox({ project: { 'code-reviewer': argon } })), []);
+});
+
+test('agy entries are checked like the others', () => {
+  const base = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
+  const errs = entry => validate(sandbox({ project: { 'code-reviewer': entry } })).join('\n');
+  assert.match(errs({ ...base, effort: 'low' }), /effort: "low" contradicts the effort in the model id "gemini-4-hydrogen-high"/);
+  assert.match(errs({ ...base, model: 'Gemini 4 Hydrogen' }), /model: "Gemini 4 Hydrogen" is not an exact agy model id/);
+  assert.match(errs({ ...base, model: 'google/gemini-4-hydrogen-high' }), /not an exact agy model id/);
+  assert.match(errs({ ...base, model: 'gemini-4-hydrogen-xhigh', effort: 'minimal' }), /"minimal" is not one of agy's/);
+});
+
+test('Gemini spellings in prose fail, the Gemini CLI does not', () => {
+  for (const text of ['on Gemini 4 Hydrogen', 'gemini-4-hydrogen-high', 'Gemini Flash', 'gemini 3.8 flash', 'Gemini Neon']) {
+    assert.equal(validate(sandbox({ agents: `${GATE_PROSE}${text}\n` })).length, 1, text);
+  }
+  for (const text of ['the `.gemini/commands/` directory', 'Gemini CLI', 'Gemini']) {
+    assert.deepEqual(validate(sandbox({ agents: `${GATE_PROSE}${text}\n` })), [], text);
+  }
+});

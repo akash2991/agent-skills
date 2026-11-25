@@ -9,11 +9,13 @@
  * Checks (errors block CI):
  *   - both files parse and have the expected shape
  *   - exactly two independent reviewers on different models, plus a synthesis
- *   - each harness's model id shape and the efforts its CLI accepts
+ *   - each harness's model id shape and the efforts its CLI accepts; an agy id
+ *     that ends in an effort (gemini-4-hydrogen-high) must match the entry's effort
  *   - the lines that select reviewers in each AGENTS.md point to the config
  *   - neither AGENTS.md names a model, by a configured label or id or by a
- *     model-like name such as "GPT 6.1 Sol", "Opus 5.5" or "Claude Opus"
- *     (a heuristic over the GPT and Claude families, not a guarantee)
+ *     model-like name such as "GPT 6.1 Sol", "Opus 5.5", "Claude Opus" or
+ *     "Gemini 4 Hydrogen" (a heuristic over the GPT, Claude and Gemini
+ *     families, not a guarantee)
  *
  * Usage: node scripts/validate-review-models.js [--root <dir>]
  * Exit codes: 0 = all clear, 1 = one or more errors
@@ -25,10 +27,12 @@ const fs = require('fs');
 const path = require('path');
 
 // Each harness: what an exact model id looks like, and the efforts its CLI accepts
-// (`pi --help` --thinking, `claude --help` --effort).
+// (`pi --help` --thinking, `claude --help` --effort, `agy --help` --effort).
+// agy is Antigravity; its ids are the ones `agy models` lists.
 const HARNESSES = new Map([
   ['pi', { model: /^[a-z0-9-]+\/[a-z0-9][a-z0-9.-]*$/, efforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }],
   ['claude', { model: /^claude-[a-z0-9][a-z0-9-]*$/, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
+  ['agy', { model: /^[a-z][a-z0-9.-]*[a-z0-9]$/, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], effortInId: true }],
 ]);
 const ENTRY_KEYS = ['label', 'harness', 'model', 'effort'];
 // The line that selects each reviewer must point to the config.
@@ -37,9 +41,13 @@ const SELECTION = {
   'project/AGENTS.md': ['except for a `code-reviewer`'],
 };
 // A heuristic, not a guarantee: after normalize(), this catches the usual spellings
-// of the GPT and Claude families ("GPT 6.1 Sol", "Claude Opus", "opus5.5"). The
-// configured labels and ids are matched exactly. Other families are not covered.
-const MODEL_LIKE = /\bgpt-?\d[\w.]*|\bclaude-(?:opus|sonnet|haiku|fable)\b|\b(?:opus|sonnet|haiku|fable)-?\d+(?:\.\d+)?\b/g;
+// of the GPT, Claude and Gemini families ("GPT 6.1 Sol", "Claude Opus", "opus5.5",
+// "Gemini 4 Hydrogen", "Gemini Flash"). The configured labels and ids are matched
+// exactly. Other families are not covered. A bare "gemini" is not a model: it is
+// also the Gemini CLI and its .gemini/ directory.
+const GEMINI_NAMES = 'pro|flash|ultra|nano|hydrogen|helium|lithium|neon|argon|xenon';
+const MODEL_LIKE = new RegExp(String.raw`\bgpt-?\d[\w.]*|\bclaude-(?:opus|sonnet|haiku|fable)\b|\b(?:opus|sonnet|haiku|fable)-?\d+(?:\.\d+)?\b`
+  + String.raw`|\bgemini-?\d[\w.]*|\bgemini-(?:${GEMINI_NAMES})\b`, 'g');
 const FAILED = Symbol('failed');
 
 function normalize(text) {
@@ -71,6 +79,10 @@ function checkEntry(entry, where, errors) {
   }
   if (typeof entry.effort === 'string' && !spec.efforts.includes(entry.effort)) {
     errors.push(`${where}.effort: "${entry.effort}" is not one of ${entry.harness}'s ${spec.efforts.join(', ')}`);
+  }
+  const suffix = spec.effortInId && typeof entry.model === 'string' && entry.model.match(new RegExp(`-(${spec.efforts.join('|')})$`));
+  if (suffix && typeof entry.effort === 'string' && suffix[1] !== entry.effort) {
+    errors.push(`${where}.effort: "${entry.effort}" contradicts the effort in the model id "${entry.model}"`);
   }
 }
 
