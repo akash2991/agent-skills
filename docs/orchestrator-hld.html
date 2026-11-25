@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Orchestrator HLD</title>
+<!-- Built with the lavish skill (lavish-axi: explanation, diagram and table playbooks). Design tokens follow docs/flow-map.html. Edit this file directly; nothing generates it. -->
+<style>
+  /* Layout: one reading column with a sticky section bar; the architecture diagram is the anchor every flow step lights up. Palette follows docs/flow-map.html. */
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5b6573; --line: #dde1e7;
+    --det: #1f6feb; --det-bg: #e3eeff;
+    --agent: #bf6a02; --agent-bg: #fff0d9;
+    --mixed: #8250df; --mixed-bg: #efe6ff;
+    --human: #6e7781; --human-bg: #eceef1;
+    --ok: #1a7f37; --ok-bg: #dcf5e3; --warn: #9a6700; --warn-bg: #fff4d1; --bad: #cf222e; --bad-bg: #ffe4e6;
+    --focus: #1f6feb;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1116; --panel: #161b22; --ink: #e6e9ee; --muted: #9aa4b2; --line: #2b323c;
+      --det: #6aa6ff; --det-bg: #14274a; --agent: #f0a54a; --agent-bg: #3b2a0f;
+      --mixed: #b794ff; --mixed-bg: #2a1f4a; --human: #8b95a3; --human-bg: #232932;
+      --ok: #4ac26b; --ok-bg: #12301c; --warn: #d4a72c; --warn-bg: #33290c; --bad: #ff7b72; --bad-bg: #3a1618;
+      --focus: #6aa6ff; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1116; --panel: #161b22; --ink: #e6e9ee; --muted: #9aa4b2; --line: #2b323c;
+    --det: #6aa6ff; --det-bg: #14274a; --agent: #f0a54a; --agent-bg: #3b2a0f;
+    --mixed: #b794ff; --mixed-bg: #2a1f4a; --human: #8b95a3; --human-bg: #232932;
+    --ok: #4ac26b; --ok-bg: #12301c; --warn: #d4a72c; --warn-bg: #33290c; --bad: #ff7b72; --bad-bg: #3a1618;
+    --focus: #6aa6ff; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  header.top { padding-block: 28px 8px; }
+  h1 { font-size: 26px; margin: 0 0 6px; text-wrap: balance; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 0 0 4px; text-wrap: balance; }
+  h3 { font-size: 15px; margin: 0 0 6px; }
+  p { margin: 0 0 10px; max-width: 72ch; }
+  .sub { color: var(--muted); }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; color: var(--muted); }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .lead { margin-top: 16px; border-left: 3px solid var(--det); }
+
+  nav.sections { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+  nav.sections .wrap { display: flex; gap: 4px; overflow-x: auto; padding-block: 8px; scrollbar-width: thin; }
+  nav.sections a { flex: none; color: var(--muted); text-decoration: none; font-size: 13.5px; padding: 4px 10px; border-radius: 6px; }
+  nav.sections a:hover, nav.sections a.on { color: var(--ink); background: var(--panel); }
+  nav.sections a:focus-visible, button:focus-visible, .node:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  section { padding-block: 28px 8px; scroll-margin-top: 56px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 760px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+  ul.tight { margin: 0; padding-left: 18px; }
+  ul.tight li { margin: 0 0 4px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin: 8px 0 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+
+  /* Architecture */
+  .arch { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 860px) { .arch { grid-template-columns: 1fr; } }
+  .diagram { overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  .node { cursor: pointer; }
+  .node rect { stroke-width: 1.5; transition: opacity .15s, stroke-width .15s; }
+  .node text { font: 600 13px var(--sans); fill: var(--ink); }
+  .node text.s { font: 11.5px var(--mono); fill: var(--muted); font-weight: 400; }
+  .k-human rect { fill: var(--human-bg); stroke: var(--human); }
+  .k-agent rect { fill: var(--agent-bg); stroke: var(--agent); }
+  .k-det rect { fill: var(--det-bg); stroke: var(--det); }
+  .k-mixed rect { fill: var(--mixed-bg); stroke: var(--mixed); }
+  .node.sel rect { stroke-width: 3; }
+  svg.dim .node:not(.lit) { opacity: .28; }
+  svg.dim .edge:not(.lit) { opacity: .18; }
+  .edge path { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+  .edge text { font: 11px var(--sans); fill: var(--muted); }
+  .edge.lit path { stroke: var(--ink); stroke-width: 2; }
+  .edge.lit text { fill: var(--ink); }
+  .detail h3 { display: flex; align-items: center; gap: 8px; }
+  .detail .kind { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 1px 8px; border-radius: 999px; }
+  .detail dl { margin: 10px 0 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font-size: 13.5px; }
+  .detail dt { color: var(--muted); }
+  .detail dd { margin: 0; overflow-wrap: anywhere; }
+
+  /* Flows */
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 12px; }
+  .tabs button { font: inherit; font-size: 13.5px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-color: var(--ink); }
+  ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; counter-reset: s; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; }
+  ol.steps li::before { content: counter(s); font: 600 12px var(--mono); color: var(--muted); padding-top: 2px; }
+  ol.steps li.on { border-color: var(--ink); }
+  ol.steps li .who { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 999px; margin-right: 6px; vertical-align: 1px; }
+  .t-det { background: var(--det-bg); color: var(--det); }
+  .t-agent { background: var(--agent-bg); color: var(--agent); }
+  .t-human { background: var(--human-bg); color: var(--human); }
+  .t-fail { background: var(--bad-bg); color: var(--bad); }
+  .flowhint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+
+  /* State machines */
+  .sm svg { display: block; width: 100%; height: auto; }
+  .sm .st rect { fill: var(--panel); stroke: var(--ink); stroke-width: 1.3; }
+  .sm .st.term rect { stroke-dasharray: 4 3; }
+  .sm .st text { font: 600 12.5px var(--mono); fill: var(--ink); }
+  .sm .tr path { fill: none; stroke: var(--muted); stroke-width: 1.3; }
+  .sm .tr text { font: 11px var(--sans); fill: var(--muted); }
+  .sm marker path, .diagram marker path { fill: var(--muted); }
+
+  /* Tables */
+  .tblwrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .03em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  details { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  details + details { margin-top: 8px; }
+  summary { cursor: pointer; padding: 9px 12px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  summary .sub { font-weight: 400; font-size: 13px; }
+  details .tblwrap { padding: 0 12px 10px; }
+  input[type="search"] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; width: min(100%, 320px); }
+
+  /* Contracts */
+  .contract { border-left: 3px solid var(--det); padding: 2px 0 2px 12px; }
+  .contract + .contract { margin-top: 12px; }
+
+  /* Size chart */
+  .chart svg { display: block; width: 100%; height: auto; }
+  .chart .ax { stroke: var(--line); }
+  .chart text { font: 11px var(--sans); fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart .bc { fill: var(--det); }
+  .chart .bt { fill: var(--mixed); opacity: .75; }
+  .chart .pr { font-weight: 600; fill: var(--ink); }
+  .stat { display: grid; gap: 2px; }
+  .stat .v { font: 600 22px var(--sans); font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 12.5px; color: var(--muted); }
+  .pill { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; }
+  .p-keep { background: var(--ok-bg); color: var(--ok); }
+  .p-cut { background: var(--warn-bg); color: var(--warn); }
+  .p-open { background: var(--human-bg); color: var(--human); }
+  footer { padding-block: 28px 40px; color: var(--muted); font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+  html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Orchestrator: high-level design</h1>
+    <p class="sub">One agent session takes the user's requests and never does the work. For each request it starts a new worker session, resumes a recorded one, or messages a running one, each in its own Herdr tab, and it keeps every session in a SQLite record.</p>
+    <div class="meta">
+      <span class="chip">State <b>merged to main</b> <span class="mono">16fff02</span></span>
+      <span class="chip">Tickets <b>FAC-29 to FAC-33</b></span>
+      <span class="chip">Source <b class="mono">skills/orchestrator/</b></span>
+      <span class="chip">Schema <b>v3</b></span>
+    </div>
+    <div class="panel lead" id="lead">
+      <p><b>The question this page answers:</b> how does the orchestrator route work, what guarantees does it keep, and why is it about 1,700 lines when the pattern it follows is simple?</p>
+      <p style="margin:0"><b>Short answer:</b> the agent makes one judgment per request: new, resume, relaunch or send. One CLI does every exact step against a SQLite record and Herdr. The first version had 1,041 lines. Findings from 29 review rounds added launch rollback, prompt-delivery tracking and race fencing, which brought it to 1,702.</p>
+    </div>
+  </header>
+</div>
+
+<nav class="sections" aria-label="Sections">
+  <div class="wrap">
+    <a href="#goals">Goals</a><a href="#architecture">Architecture</a><a href="#flows">Flows</a><a href="#states">States</a><a href="#data">Data model</a><a href="#commands">Commands</a><a href="#contracts">Contracts</a><a href="#firstmate">Firstmate</a><a href="#size">Size</a><a href="#open">Open items</a><a href="#next">Next</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<section id="goals">
+  <h2>Goals and boundaries</h2>
+  <div class="grid2">
+    <div class="panel">
+      <h3>In scope</h3>
+      <ul class="tight">
+        <li>Route every work request to exactly one session: <b>new</b>, <b>resume</b>, <b>relaunch</b> or <b>send</b>.</li>
+        <li>Keep each line of work in its own session, and bring related work back to the session that already has the context.</li>
+        <li>Record each decision with its reason, the sessions considered, and its outcome. The decision model (FAC-28) will learn from this.</li>
+        <li>Record each worker's prompts, compactions and status through hooks, and keep a summary the worker writes itself.</li>
+        <li>One orchestrator per project. A second one is read-only.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Out of scope</h3>
+      <ul class="tight">
+        <li>Doing work. The orchestrator never reads or edits project code, tickets or PRs.</li>
+        <li>Sessions the user started by hand. They have no hooks, are not in the record, and are never touched.</li>
+        <li>Supervising workers: no heartbeat, no polling, no merge pipeline. The user asks for status when they want it.</li>
+        <li>Parallel subagents inside one task. That is <code>herdr-fanout</code>, used by a worker.</li>
+        <li>Tracking whether a worktree still exists, or which session uses it. A later conversation gets the worktree only as a hint.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <h2>Architecture</h2>
+  <p class="sub">Select a component for its responsibility, files and size. The orchestrator agent makes the judgment calls, and one CLI does every exact step.</p>
+  <div class="legend">
+    <span style="--c: var(--human)">Person</span>
+    <span style="--c: var(--agent)">Agent judgment</span>
+    <span style="--c: var(--det)">Deterministic code</span>
+    <span style="--c: var(--mixed)">External runtime</span>
+  </div>
+  <div class="arch">
+    <div class="panel diagram">
+      <svg id="arch" viewBox="0 0 960 470" role="img" aria-label="Architecture diagram of the orchestrator">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <g class="edge" id="edge-user-agent" data-e="user agent"><title>User to Orchestrator agent</title><path d="M160 70 H196" marker-end="url(#ah)"/><text x="163" y="62">asks</text></g>
+        <g class="edge" id="edge-agent-cli" data-e="agent cli"><title>Orchestrator agent to orch CLI</title><path d="M380 70 H436" marker-end="url(#ah)"/><text x="388" y="62">orch …</text></g>
+        <g class="edge" id="edge-cli-db" data-e="cli db"><title>orch CLI to Record (SQLite)</title><path d="M640 70 H716" marker-end="url(#ah)"/><text x="648" y="62">transactions</text></g>
+        <g class="edge" id="edge-cli-herdr" data-e="cli herdr"><title>orch CLI to Herdr</title><path d="M540 100 V196" marker-end="url(#ah)"/><text x="548" y="150">tab create · agent start · prompt</text></g>
+        <g class="edge" id="edge-herdr-worker" data-e="herdr worker"><title>Herdr to Worker session</title><path d="M470 260 L360 326" marker-end="url(#ah)"/><text x="350" y="285">runs</text></g>
+        <g class="edge" id="edge-user-worker" data-e="user worker"><title>User to Worker session</title><path d="M90 100 V370 H196" marker-end="url(#ah)"/><text x="98" y="240">types in the tab</text></g>
+        <g class="edge" id="edge-worker-hooks" data-e="worker hooks"><title>Worker session to Recorder hooks</title><path d="M380 345 H436" marker-end="url(#ah)"/><text x="388" y="337">events</text></g>
+        <g class="edge" id="edge-hooks-db" data-e="hooks db"><title>Recorder hooks to Record (SQLite)</title><path d="M640 345 H716" marker-end="url(#ah)"/><text x="646" y="337">orch hook</text></g>
+        <g class="edge" id="edge-worker-report" data-e="worker report"><title>Worker session to orch report</title><path d="M380 410 H436" marker-end="url(#ah)"/><text x="388" y="402">calls</text></g>
+        <g class="edge" id="edge-report-db" data-e="report db"><title>orch report to Record (SQLite)</title><path d="M640 410 H716" marker-end="url(#ah)"/><text x="646" y="402">writes</text></g>
+        <g class="edge" id="edge-herdr-db" data-e="herdr db"><title>Herdr to Record (SQLite)</title><path d="M640 230 H716" marker-end="url(#ah)"/><text x="646" y="222">reconcile</text></g>
+
+        <g class="node k-human" id="node-user" data-n="user" tabindex="0" role="button" aria-label="User"><title>User</title><rect x="20" y="40" width="140" height="60" rx="8"/><text x="36" y="66">User</text><text class="s" x="36" y="86">the person</text></g>
+        <g class="node k-agent" id="node-agent" data-n="agent" tabindex="0" role="button" aria-label="Orchestrator agent"><title>Orchestrator agent</title><rect x="200" y="40" width="180" height="60" rx="8"/><text x="216" y="66">Orchestrator agent</text><text class="s" x="216" y="86">SKILL.md</text></g>
+        <g class="node k-det" id="node-cli" data-n="cli" tabindex="0" role="button" aria-label="orch CLI"><title>orch CLI</title><rect x="440" y="40" width="200" height="60" rx="8"/><text x="456" y="66">orch CLI</text><text class="s" x="456" y="86">orchestrator.js</text></g>
+        <g class="node k-det" id="node-db" data-n="db" tabindex="0" role="button" aria-label="Record"><title>Record (SQLite)</title><rect x="720" y="40" width="220" height="400" rx="8"/><text x="736" y="66">Record</text><text class="s" x="736" y="86">store.js · SQLite</text><text class="s" x="736" y="118">owner · project</text><text class="s" x="736" y="138">sessions</text><text class="s" x="736" y="158">prompts · events</text><text class="s" x="736" y="178">decisions</text><text class="s" x="736" y="420">.agent-brain/orchestrator.db</text></g>
+        <g class="node k-mixed" id="node-herdr" data-n="herdr" tabindex="0" role="button" aria-label="Herdr"><title>Herdr</title><rect x="440" y="200" width="200" height="60" rx="8"/><text x="456" y="226">Herdr</text><text class="s" x="456" y="246">tabs · panes · agents</text></g>
+        <g class="node k-agent" id="node-worker" data-n="worker" tabindex="0" role="button" aria-label="Worker"><title>Worker session</title><rect x="200" y="330" width="180" height="96" rx="8"/><text x="216" y="356">Worker session</text><text class="s" x="216" y="376">Claude or Pi</text><text class="s" x="216" y="394">/brain &lt;persona&gt;</text><text class="s" x="216" y="412">its own Herdr tab</text></g>
+        <g class="node k-det" id="node-hooks" data-n="hooks" tabindex="0" role="button" aria-label="Recorder hooks"><title>Recorder hooks</title><rect x="440" y="320" width="200" height="50" rx="8"/><text x="456" y="342">Recorder hooks</text><text class="s" x="456" y="360">--settings · pi -e</text></g>
+        <g class="node k-det" id="node-report" data-n="report" tabindex="0" role="button" aria-label="Worker report"><title>orch report</title><rect x="440" y="388" width="200" height="50" rx="8"/><text x="456" y="410">orch report</text><text class="s" x="456" y="428">summary · ticket · worktree</text></g>
+      </svg>
+    </div>
+    <div class="panel detail" id="detail" aria-live="polite"></div>
+  </div>
+</section>
+
+<section id="flows">
+  <h2>Flows</h2>
+  <p class="sub">Select a step to highlight the components it touches in the architecture diagram above.</p>
+  <div class="tabs" role="tablist" id="flowtabs"></div>
+  <ol class="steps" id="steps"></ol>
+  <p class="flowhint"><span class="tag t-det">code</span>the CLI does it exactly · <span class="tag t-agent">judgment</span>an agent decides · <span class="tag t-human">person</span>only the user can do it · <span class="tag t-fail">failure</span>what happens when a step fails</p>
+</section>
+
+<section id="states">
+  <h2>State machines</h2>
+  <p class="sub">The record has three independent pieces of state per session. Routing state changes only inside a transaction.</p>
+  <div class="grid3">
+    <div class="panel sm" id="sm-status">
+      <h3>Session status</h3>
+      <svg viewBox="0 0 300 250" role="img" aria-label="Session status: open, resolved, superseded">
+        <defs><marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <g class="st"><rect x="105" y="20" width="90" height="34" rx="6"/><text x="128" y="42">open</text></g>
+        <g class="st"><rect x="10" y="180" width="110" height="34" rx="6"/><text x="30" y="202">resolved</text></g>
+        <g class="st"><rect x="175" y="180" width="115" height="34" rx="6"/><text x="190" y="202">superseded</text></g>
+        <g class="tr"><path d="M120 54 L70 178" marker-end="url(#sa)"/><text x="12" y="110">report --resolved</text><text x="40" y="124">or resolve</text></g>
+        <g class="tr"><path d="M50 180 L105 56" marker-end="url(#sa)"/><text x="92" y="150">reopen</text></g>
+        <g class="tr"><path d="M180 54 L235 178" marker-end="url(#sa)"/><text x="214" y="100">child's first</text><text x="214" y="114">worker placed</text></g>
+        <g class="tr"><path d="M245 180 L195 56" marker-end="url(#sa)"/><text x="150" y="160">rollback,</text><text x="140" y="174">no other child</text></g>
+      </svg>
+      <p class="sub" style="font-size:13px">A resolved session is never resumed. Related work starts new with <code>--from</code>. Each reopen bumps <code>succession</code>, and a child records the <code>parent_generation</code> it superseded.</p>
+    </div>
+    <div class="panel sm" id="sm-prompt">
+      <h3>Held prompt</h3>
+      <svg viewBox="0 0 300 250" role="img" aria-label="Held prompt: pending, sending, unknown, delivered">
+        <defs><marker id="sb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <g class="st"><rect x="20" y="20" width="100" height="34" rx="6"/><text x="38" y="42">pending</text></g>
+        <g class="st"><rect x="180" y="20" width="100" height="34" rx="6"/><text x="198" y="42">sending</text></g>
+        <g class="st term"><rect x="180" y="190" width="100" height="34" rx="6"/><text x="190" y="212">delivered</text></g>
+        <g class="st"><rect x="20" y="190" width="100" height="34" rx="6"/><text x="38" y="212">unknown</text></g>
+        <g class="tr"><path d="M120 37 H178" marker-end="url(#sb)"/><text x="126" y="30">deliver</text></g>
+        <g class="tr"><path d="M230 54 V188" marker-end="url(#sb)"/><text x="236" y="110">accepted</text></g>
+        <g class="tr"><path d="M195 54 Q150 90 110 56" marker-end="url(#sb)"/><text x="132" y="96">not sent</text></g>
+        <g class="tr"><path d="M190 54 L105 188" marker-end="url(#sb)"/><text x="148" y="150">any</text><text x="148" y="163">other error</text></g>
+        <g class="tr"><path d="M60 188 V56" marker-end="url(#sb)"/><text x="66" y="110">settle</text><text x="66" y="124">--resend</text></g>
+        <g class="tr"><path d="M120 207 H178" marker-end="url(#sb)" stroke-dasharray="3 3"/><text x="122" y="240">settle --drop</text></g>
+      </svg>
+      <p class="sub" style="font-size:13px">A prompt of unknown delivery is never resent or dropped automatically. <code>send</code>, <code>deliver</code>, <code>resume</code> and <code>relaunch</code> refuse until the orchestrator checks the tab and settles it.</p>
+    </div>
+    <div class="panel sm" id="sm-placement">
+      <h3>Worker placement</h3>
+      <svg viewBox="0 0 300 250" role="img" aria-label="Worker placement: none, placed, live, waiting, uncertain">
+        <defs><marker id="sc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <g class="st"><rect x="20" y="20" width="90" height="34" rx="6"/><text x="46" y="42">none</text></g>
+        <g class="st"><rect x="190" y="20" width="90" height="34" rx="6"/><text x="210" y="42">placed</text></g>
+        <g class="st"><rect x="190" y="105" width="90" height="34" rx="6"/><text x="218" y="127">live</text></g>
+        <g class="st"><rect x="190" y="190" width="90" height="34" rx="6"/><text x="202" y="212">waiting</text></g>
+        <g class="st"><rect x="20" y="190" width="100" height="34" rx="6"/><text x="30" y="212">uncertain</text></g>
+        <g class="tr"><path d="M110 32 H188" marker-end="url(#sc)"/><text x="118" y="25">tab + record</text></g>
+        <g class="tr"><path d="M188 44 H112" marker-end="url(#sc)"/><text x="122" y="64">start failed,</text><text x="122" y="77">tab closed</text></g>
+        <g class="tr"><path d="M235 54 V103" marker-end="url(#sc)"/><text x="241" y="84">started</text></g>
+        <g class="tr"><path d="M280 37 Q300 120 282 200" marker-end="url(#sc)"/><text x="248" y="168">trust or</text><text x="252" y="181">login</text></g>
+        <g class="tr"><path d="M190 50 L100 188" marker-end="url(#sc)"/><text x="68" y="140">tab could</text><text x="68" y="153">not close</text></g>
+        <g class="tr"><path d="M190 120 Q90 120 70 56" marker-end="url(#sc)"/><text x="102" y="110">stop · reconcile</text></g>
+      </svg>
+      <p class="sub" style="font-size:13px">An uncertain tab stays recorded and blocks every later launch until it is gone or adopted. That rule is what stops two workers running one conversation.</p>
+    </div>
+  </div>
+</section>
+
+<section id="data">
+  <h2>Data model</h2>
+  <p class="sub">One SQLite file per project, in WAL mode, gitignored. Migrations run in one transaction under the write lock: v1 is the original schema, v2 adds outcomes, prompt order and supersession generations, and v3 adds the worktree and the project root.</p>
+  <div id="tables"></div>
+</section>
+
+<section id="commands">
+  <h2>Commands</h2>
+  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0 10px">
+    <label for="cmdq" class="sub" style="font-size:13px">Filter</label>
+    <input type="search" id="cmdq" placeholder="launch, prompt, worker…">
+  </div>
+  <div class="panel tblwrap"><table id="cmdtbl"><thead><tr><th>Command</th><th>Who runs it</th><th>What it does</th><th class="num">Lines</th></tr></thead><tbody></tbody></table></div>
+</section>
+
+<section id="contracts">
+  <h2>Contracts</h2>
+  <p class="sub">These are the rules the review rounds converged on. Each one is enforced by tests.</p>
+  <div class="grid2">
+    <div class="panel">
+      <div class="contract"><h3>Routing state is transactional</h3><p>A placement, and the parent's supersession for a session's first worker, commit together. A rollback restores the session's identity and reopens its parent together, and only when the parent is still superseded and no other child holds it.</p></div>
+      <div class="contract"><h3>History is best effort</h3><p>Events and outcomes written after an action print a warning when they fail. They never change a command's result or the guidance it prints.</p></div>
+      <div class="contract"><h3>A request is delivered once</h3><p>A failed launch leaves the record as it was, so the same command can be retried. If the tab closed but the record could not be restored, the error names the one retry that does not resend the request.</p></div>
+    </div>
+    <div class="panel">
+      <div class="contract"><h3>Never two workers on one conversation</h3><p>An uncertain tab blocks launches. Resume and relaunch refuse when Herdr cannot list running agents, and a launch token fences out stale hook events.</p></div>
+      <div class="contract"><h3>Hooks never disturb the session</h3><p>Hooks spawn a detached writer and print nothing. They are bounded and silent on failure, and do nothing outside a session the orchestrator launched.</p></div>
+      <div class="contract"><h3>The user's answers are the user's</h3><p>Trust, login and permission prompts are never answered for the user. <code>stop</code> closes only an idle worker unless the user says <code>--force</code>.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="firstmate">
+  <h2>What came from firstmate</h2>
+  <p>FAC-29 chose option B: take <b>five patterns</b> from firstmate (<code>kunchenguid/firstmate</code>) and write a small orchestrator here. <b>No firstmate code was used.</b> Firstmate is bash, about 148,600 lines across 261 scripts in <code>bin/</code>. The orchestrator is JavaScript written from scratch.</p>
+  <div class="panel tblwrap">
+    <table>
+      <thead><tr><th>Pattern taken</th><th>Firstmate</th><th class="num">Its lines</th><th>Here</th><th class="num">Our lines</th></tr></thead>
+      <tbody>
+        <tr><td>One orchestrator per project (session lock)</td><td><code>fm-lock.sh</code>, <code>fm-session-lock-lib.sh</code>, <code>fm-lock-lib.sh</code>. A lock file plus a session sidecar, checked by process ancestry</td><td class="num">1,445</td><td><code>owner</code> row; the holder is a Herdr pane; it is taken over when the pane is gone (<code>claimOwner</code>, <code>claimOwnership</code>, <code>release</code>)</td><td class="num">~85</td></tr>
+        <tr><td>Separate message and lifecycle channels</td><td><code>fm-send.sh</code> for messages; <code>state/&lt;id&gt;.status</code> event log for lifecycle</td><td class="num">1,375+</td><td><code>send</code> and <code>deliver</code> via <code>herdr agent prompt</code>; lifecycle via hooks and <code>report</code> into the record</td><td class="num">~175</td></tr>
+        <tr><td>Scripts for mechanics, agent for judgment</td><td>261 <code>fm-*</code> scripts under a charter</td><td class="num">148,620</td><td>one CLI; the skill keeps only the routing judgment</td><td class="num">1,758</td></tr>
+        <tr><td>Record checked against live tabs</td><td><code>fm-crew-state.sh</code>, <code>fm-inactive-reconcile.sh</code></td><td class="num">2,506</td><td><code>reconcile()</code> on <code>start</code>: clear closed tabs, adopt by conversation id</td><td class="num">~30</td></tr>
+        <tr><td>Relaunch with a summary when resume fails</td><td><code>fm-secondmate-restart.sh</code> and its lib</td><td class="num">501</td><td><code>relaunch</code> plus <code>brief()</code> and <code>priorContext()</code></td><td class="num">~85</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="font-size:13px;margin-top:8px">Firstmate counts are <code>wc -l</code> of the named scripts. Counts marked ~ are sums of the functions and commands named in that row, so they are approximate.</p>
+  <div class="panel" style="margin-top:14px">
+    <h3>Left out on purpose</h3>
+    <p class="sub" style="margin:0">Supervision daemon and heartbeat · the no-mistakes pipeline and PR polling · secondmates and remote homes · quota and dispatch profiles · landed-work teardown checks · backends other than Herdr · mail, voice and X follow-ups.</p>
+  </div>
+</section>
+
+<section id="size">
+  <h2>Why the code grew</h2>
+  <div class="grid3" style="margin-bottom:14px">
+    <div class="panel stat"><span class="v">1,041 → 1,702</span><span class="l">orchestrator.js + store.js, first commit to now (+64%)</span></div>
+    <div class="panel stat"><span class="v">409 → 2,063</span><span class="l">test lines (5×), including a fake Herdr</span></div>
+    <div class="panel stat"><span class="v">29 rounds</span><span class="l">Sol + Opus + Astra review rounds across 5 PRs</span></div>
+  </div>
+  <div class="panel chart">
+    <h3>Lines after each commit</h3>
+    <div class="legend" style="margin-top:4px"><span style="--c: var(--det)">orchestrator.js + store.js</span><span style="--c: var(--mixed)">tests</span></div>
+    <svg id="sizechart" viewBox="0 0 900 300" role="img" aria-label="Bar chart of code and test lines after each commit"></svg>
+  </div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="panel">
+      <h3>What the review rounds added</h3>
+      <ul class="tight">
+        <li><b>Launch rollback.</b> Close the tab, restore identity, undo supersession, and mark an uncertain tab. <code>launch()</code> is 136 lines, and most of them handle failure.</li>
+        <li><b>The held-prompt state machine.</b> <code>pending / sending / unknown</code>, plus <code>deliver</code> and <code>settle</code>.</li>
+        <li><b>Launch tokens and identity sequencing</b>, so racing hook writers never apply a stale start.</li>
+        <li><b>Supersession generations</b> and a migration backfill (FAC-31).</li>
+        <li><b>Git validation of reported worktrees</b> and a protected checkout (FAC-33).</li>
+      </ul>
+      <p class="sub" style="margin-top:8px">Each item fixes a real failure a reviewer found. Together they turn a router into a small transaction system.</p>
+    </div>
+    <div class="panel">
+      <h3>Where it could shrink</h3>
+      <table>
+        <tbody>
+          <tr><td><span class="pill p-keep">keep</span></td><td>Routing, find, record, hooks, reconcile, ownership</td></tr>
+          <tr><td><span class="pill p-cut">candidate</span></td><td>Replace the held-prompt state machine with "send once; on doubt, point the user at the tab"</td></tr>
+          <tr><td><span class="pill p-cut">candidate</span></td><td>Replace automatic launch rollback with a "needs check" status that the user clears</td></tr>
+          <tr><td><span class="pill p-cut">candidate</span></td><td>Supersede the parent when <code>new --from</code> runs, and drop generations</td></tr>
+        </tbody>
+      </table>
+      <p class="sub" style="margin-top:8px">These are candidates, not decisions. Each one gives up a guarantee that a review round asked for.</p>
+    </div>
+  </div>
+</section>
+
+<section id="open">
+  <h2>Open items</h2>
+  <div class="panel tblwrap">
+    <table>
+      <thead><tr><th>Item</th><th>State</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>FAC-34</td><td><span class="pill p-open">Backlog</span></td><td>Three wording fixes from PR #42: the nested-repository refusal, re-running <code>start</code> after an upgrade, and the hint when a path belongs to another session.</td></tr>
+        <tr><td>FAC-28</td><td><span class="pill p-open">Backlog</span></td><td>A decision model for staleness and for harness, model and effort. It replaces the fixed rule "stale after three compactions or 14 idle days".</td></tr>
+        <tr><td>Model config</td><td><span class="pill p-open">Not filed</span></td><td>Worker defaults are hard-coded in <code>orchestrator.js:35</code> (Claude <code>claude-opus-5-5</code> at medium effort; Pi uses its own model at medium). Review models are written into <code>AGENTS.md</code>. Both should come from config.</td></tr>
+        <tr><td>Simplification</td><td><span class="pill p-open">Not filed</span></td><td>The candidates under "Why the code grew".</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<section id="next">
+  <h2>Where to look next</h2>
+  <div class="panel tblwrap">
+    <table>
+      <tbody>
+        <tr><td><code>skills/orchestrator/SKILL.md</code></td><td>What the orchestrator agent does, and the routing table</td></tr>
+        <tr><td><code>skills/orchestrator/scripts/orchestrator.js</code></td><td>Every command. <code>launch()</code> holds the rollback, and <code>deliverPending()</code> the prompt states</td></tr>
+        <tr><td><code>skills/orchestrator/scripts/store.js</code></td><td>Schema, migrations, transactions and ownership</td></tr>
+        <tr><td><code>skills/orchestrator/scripts/pi-extension.js</code></td><td>The Pi recorder</td></tr>
+        <tr><td><code>scripts/orchestrator-test.js</code></td><td>77 tests against a fake Herdr and real git, plus forced lock races</td></tr>
+        <tr><td>PRs #38 to #42</td><td>Review rounds, the decision on each finding, and the syntheses behind the contracts</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+</main>
+
+<footer class="wrap">Generated from <code>main</code> at <span class="mono">16fff02</span> on 25 Nov 2026. Line counts come from <code>wc -l</code>; firstmate counts are from <code>kunchenguid/firstmate</code> at <span class="mono">427056c4</span>.</footer>
+
+<script>
+(() => {
+  const N = {
+    user: { name: 'User', kind: 'Person', cls: 't-human', what: 'Gives the orchestrator requests and asks where things stand. Answers what only a person may answer: trust, login and permission prompts, and --force on stop. Can also type straight into a worker tab, and the hooks record that too.' },
+    agent: { name: 'Orchestrator agent', kind: 'Judgment', cls: 't-agent', what: 'A Claude or Pi session started with /orchestrator. For each message it decides: new, resume, relaunch or send, or status, resolve, stop. Splits unrelated asks. Records a reason and the sessions it considered. Never reads project code.', files: 'skills/orchestrator/SKILL.md (143 lines)', key: 'classify → find → judge same line of work → route → reply with session and tab' },
+    cli: { name: 'orch CLI', kind: 'Code', cls: 't-det', what: 'Does every exact step: ownership, the record, tab creation, agent launch and resume, prompt delivery, stopping and reconciling. Prints JSON on --json. Exit 3 means another orchestrator holds the project.', files: 'skills/orchestrator/scripts/orchestrator.js (1,299 lines)', key: 'launch(), deliverPending(), reconcile(), decided(), brief(), workingTree()' },
+    db: { name: 'Record', kind: 'Code', cls: 't-det', what: 'A SQLite file per project, holding sessions, prompts, events, decisions, the owner and the project root. Writes take BEGIN IMMEDIATE with a retry budget. Schema migrations run in one transaction.', files: 'skills/orchestrator/scripts/store.js (403 lines) · .agent-brain/orchestrator.db', key: 'transaction(), MIGRATIONS, claimOwner(), recordHookEvent(), otherSuccessor()' },
+    herdr: { name: 'Herdr', kind: 'External', cls: 't-human', what: 'The terminal workspace. Creates tabs with the worker environment, starts agents, sends prompts and reports agent state. Its error codes decide whether a prompt was accepted, not sent, or unknown.', files: 'herdr CLI (external)', key: 'tab create · agent start · agent prompt · agent list · pane get · tab close/rename' },
+    worker: { name: 'Worker session', kind: 'Judgment', cls: 't-agent', what: 'A full agent in its own tab, opened with /brain <persona>. It works under the project rules (ticket first, its own worktree, a PR), reports its summary, ticket and worktree, and marks the session resolved when the ticket is Done or the PR merges.', files: 'launched by harnessArgs(); env ORCHESTRATOR_DB, _SESSION, _LAUNCH, _CLI', key: 'Claude resumes by id; Pi by session file. Relaunch seeds a new conversation from the brief.' },
+    hooks: { name: 'Recorder hooks', kind: 'Code', cls: 't-det', what: 'Loaded only into workers the orchestrator launched: Claude through --settings, Pi through -e. Each event spawns a detached orch hook writer that waits for the record, fails silently and prints nothing.', files: 'claudeSettings() · pi-extension.js (56 lines) · commands.hook', key: 'SessionStart, UserPromptSubmit, PreCompact, Stop, SessionEnd; Pi: session_start, input, session_compact, agent_settled, session_shutdown' },
+    report: { name: 'orch report', kind: 'Code', cls: 't-det', what: "The worker's own update: summary, title, ticket, worktree, and resolved or open. --worktree is validated by git and must be a linked worktree, never a main tree or the protected checkout. It renames the tab to the DS2 label.", files: 'commands.report · workingTree() · tabLabel()', key: '<worktree> (<persona>) once a worktree is reported; <ticket> S<id> <slug> (<persona>) before' },
+  };
+  const svg = document.getElementById('arch');
+  const detail = document.getElementById('detail');
+  const nodes = [...svg.querySelectorAll('.node')];
+  const edges = [...svg.querySelectorAll('.edge')];
+
+  function show(id) {
+    const n = N[id];
+    nodes.forEach(g => g.classList.toggle('sel', g.dataset.n === id));
+    detail.innerHTML = `<h3>${n.name} <span class="kind ${n.cls}">${n.kind}</span></h3><p>${n.what}</p>` +
+      `<dl>${n.files ? `<dt>Source</dt><dd><code>${esc(n.files)}</code></dd>` : ''}${n.key ? `<dt>Key</dt><dd>${esc(n.key)}</dd>` : ''}</dl>`;
+  }
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function light(ids) {
+    if (!ids) { svg.classList.remove('dim'); nodes.forEach(g => g.classList.remove('lit')); edges.forEach(g => g.classList.remove('lit')); return; }
+    const set = new Set(ids);
+    svg.classList.add('dim');
+    nodes.forEach(g => g.classList.toggle('lit', set.has(g.dataset.n)));
+    edges.forEach(g => { const [a, b] = g.dataset.e.split(' '); g.classList.toggle('lit', set.has(a) && set.has(b)); });
+  }
+  nodes.forEach(g => {
+    g.addEventListener('click', () => show(g.dataset.n));
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(g.dataset.n); } });
+  });
+  show('cli');
+
+  const F = {
+    route: { label: 'Route a request', steps: [
+      ['human', 'The user asks for work: a fix, a feature, an investigation or a review.', ['user', 'agent']],
+      ['det', '<code>orch find --all --query "…"</code> ranks sessions by shared words, with status, live tab, staleness and summary age.', ['agent', 'cli', 'db']],
+      ['agent', 'The agent judges whether a candidate is the same line of work (feature, bug, ticket, area). A shared word alone is not enough. It splits unrelated asks.', ['agent']],
+      ['agent', 'It picks a route: live tab → <b>send</b>; open with a closed tab and not stale → <b>resume</b>; stale or only resolved → <b>new --from</b>; nothing fits → <b>new</b>.', ['agent']],
+      ['det', 'The CLI records the decision (request, action, reason, considered) before it acts.', ['cli', 'db']],
+      ['det', 'The CLI runs the route: launch a worker, or deliver the prompt to a live one.', ['cli', 'herdr', 'worker']],
+      ['det', 'The decision gets its outcome: the action, <code>waiting: …</code>, <code>failed: …</code>, <code>uncertain: …</code> and so on. A retry is a new decision.', ['cli', 'db']],
+      ['agent', 'The agent replies in one or two lines with the session id and tab label, and does not wait for the worker.', ['agent', 'user']],
+    ]},
+    launch: { label: 'Launch a worker', steps: [
+      ['det', 'Preconditions: this pane owns the project, the session is open, no prompt has unknown delivery, and no live or uncertain tab exists. Resume and relaunch also need Herdr to list the running agents.', ['cli', 'db', 'herdr']],
+      ['det', '<code>herdr tab create</code> with the DS2 label and the environment: <code>ORCHESTRATOR_DB</code>, <code>_SESSION</code>, <code>_LAUNCH</code> (a fresh token) and <code>_CLI</code>.', ['cli', 'herdr']],
+      ['det', 'One transaction: the placement (tab, pane, agent name, launch count, token), the prompts to hold, and, for the first worker of <code>new --from</code>, the parent marked superseded.', ['cli', 'db']],
+      ['det', '<code>herdr agent start</code> with the harness arguments: Claude <code>--settings</code> hooks and a session id, or Pi <code>-e</code> extension and a session file. Resume reopens the recorded conversation.', ['herdr', 'worker', 'hooks']],
+      ['human', 'The agent may ask about trust or login first. The launch returns <code>waiting: user</code>, and after the user answers, <code>orch deliver</code> sends the held prompts.', ['worker', 'user']],
+      ['fail', 'Start fails: close the tab, then restore identity and undo the parent\'s supersession in one transaction. If the tab cannot be closed, it stays recorded as <b>uncertain</b> and blocks launches.', ['cli', 'herdr', 'db']],
+      ['det', 'Deliver held prompts in order: the brief (persona, request, summary, ticket, worktree hint) and then the request. Each is <code>pending → sending →</code> delivered, held, or unknown.', ['cli', 'herdr', 'worker', 'db']],
+    ]},
+    record: { label: 'Record a worker', steps: [
+      ['det', 'The worker\'s harness fires an event: session start, a prompt, a compaction, stop, or end. That includes prompts the user types straight into the tab.', ['worker', 'hooks']],
+      ['det', 'The hook spawns <code>orch hook claude|pi</code>, detached. It never prints and never fails the session.', ['hooks']],
+      ['det', 'The writer checks the launch token and drops a start older than one already applied. It records the conversation id, transcript path, prompt (with its order) or compaction.', ['hooks', 'db']],
+      ['agent', 'The worker keeps its own record current: <code>orch report --summary … --ticket … --worktree …</code>.', ['worker', 'report', 'db']],
+      ['det', '<code>--worktree</code> is checked by git: a linked worktree only, never a main tree or the checkout <code>start</code> ran in. The tab is renamed to <code>&lt;worktree&gt; (&lt;persona&gt;)</code>.', ['report', 'db', 'herdr']],
+    ]},
+    close: { label: 'Close and reconcile', steps: [
+      ['agent', 'The worker reports <code>--resolved</code> when its ticket is Done or its PR is merged.', ['worker', 'report', 'db']],
+      ['human', 'The user confirms the work is finished, or the orchestrator sees a resolved worker sitting idle.', ['user', 'agent']],
+      ['det', '<code>orch stop S&lt;id&gt;</code> closes the tab only when the worker is idle. A working or blocked worker needs <code>--force</code>, on the user\'s word. A tab now running another conversation is detached, not closed.', ['agent', 'cli', 'herdr', 'db']],
+      ['det', '<code>start</code> and <code>reconcile</code> match the record to live agents: clear tabs that are gone, and adopt a running agent by its conversation id.', ['cli', 'herdr', 'db']],
+    ]},
+  };
+  const tabs = document.getElementById('flowtabs');
+  const list = document.getElementById('steps');
+  const TAG = { det: ['t-det', 'code'], agent: ['t-agent', 'judgment'], human: ['t-human', 'person'], fail: ['t-fail', 'failure'] };
+  function flow(key) {
+    [...tabs.children].forEach(b => b.setAttribute('aria-selected', String(b.dataset.f === key)));
+    list.innerHTML = '';
+    F[key].steps.forEach(([k, text, who], i) => {
+      const li = document.createElement('li');
+      li.tabIndex = 0;
+      li.innerHTML = `<div><span class="tag ${TAG[k][0]}">${TAG[k][1]}</span>${text}<span class="who">${who.map(w => N[w].name).join(' · ')}</span></div>`;
+      const pick = () => { [...list.children].forEach(x => x.classList.remove('on')); li.classList.add('on'); light(who); };
+      li.addEventListener('click', pick);
+      li.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      list.appendChild(li);
+    });
+    light(null);
+  }
+  Object.entries(F).forEach(([key, f]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.role = 'tab'; b.dataset.f = key; b.textContent = f.label;
+    b.addEventListener('click', () => flow(key));
+    tabs.appendChild(b);
+  });
+  flow('route');
+
+  const T = [
+    ['sessions', 'one row per line of work', [
+      ['id', 'S<id>'], ['title, intent', 'what later requests are matched against'], ['summary, summary_at', "the worker's own summary and when it wrote it"],
+      ['status', 'open · resolved · superseded'], ['harness, model, effort, persona', 'how its worker runs'], ['ticket, worktree', 'reported by the worker; worktree since v3'],
+      ['native_session_id, transcript_path', 'the conversation to resume (Claude id, Pi file)'], ['cwd', 'where the tab opens'], ['tab_id, pane_id, agent_name', 'its current placement'],
+      ['launches, launch_token, identity_seq', 'fence stale hook writes'], ['pending', 'held prompts, JSON with state'], ['parent_id, parent_generation, succession', 'new --from lineage; generations since v2'],
+      ['compactions, last_compacted_at, last_active_at', 'staleness inputs'], ['started_at, resolved_at', '']]],
+    ['decisions', 'one row per route', [['request, action, reason, considered', 'new · resume · send · relaunch'], ['session_id', 'where it went'], ['outcome, outcome_at', 'what actually happened (v2)']]],
+    ['prompts', 'every prompt a worker received', [['session_id, at, seq', 'seq orders racing writers (v2)'], ['source', 'orchestrator · direct'], ['text', 'capped at 4,000 characters']]],
+    ['events', 'history', [['session_id, at, kind, detail', 'tab-created, launched, resumed, start-failed, superseded, tab-adopted, …']]],
+    ['owner', 'one row: the project\'s orchestrator', [['pane_id, tab_id, workspace_id, agent_session, at', 'taken over when the pane is gone']]],
+    ['project', 'one row (v3)', [['root', 'the checkout start ran in; never accepted as a worktree']]],
+  ];
+  document.getElementById('tables').innerHTML = T.map(([name, sub, cols], i) =>
+    `<details${i === 0 ? ' open' : ''}><summary><code>${name}</code><span class="sub">${sub}</span></summary><div class="tblwrap"><table><thead><tr><th>Columns</th><th>Purpose</th></tr></thead><tbody>` +
+    cols.map(([c, p]) => `<tr><td><code>${esc(c)}</code></td><td>${esc(p)}</td></tr>`).join('') + '</tbody></table></div></details>').join('');
+
+  const C = [
+    ['start', 'orchestrator', 'Take ownership, record the project root, reconcile, list open sessions', 24],
+    ['release', 'orchestrator', 'Give ownership up', null],
+    ['find', 'anyone', 'Rank sessions against a request by shared words', 17],
+    ['new', 'orchestrator', 'Create a session (optionally --from a parent) and launch its first worker', 49],
+    ['resume', 'orchestrator', 'Reopen an open session\'s conversation in a new tab; carries held prompts', 66],
+    ['relaunch', 'orchestrator', 'Give an open session a new conversation, seeded from the record', 43],
+    ['send', 'orchestrator', 'Hold a request and deliver it to a live worker', 25],
+    ['deliver', 'orchestrator', 'Send prompts held while the worker or the user was busy', 29],
+    ['settle', 'orchestrator', 'Resolve a prompt of unknown delivery: --resend or --drop', 19],
+    ['status', 'orchestrator', 'Record, prompts, events and decisions; --ask asks an idle worker to update', 45],
+    ['stop', 'orchestrator', 'Close an idle worker\'s tab; --force on the user\'s word', 31],
+    ['resolve · reopen', 'orchestrator', 'Change session status; reopen bumps succession', null],
+    ['reconcile', 'orchestrator', 'Match the record to live Herdr agents', 30],
+    ['report', 'worker', 'Summary, title, ticket, worktree (git-validated), resolved or open', 37],
+    ['hook', 'recorder', 'Write one hook event; always exits 0, prints nothing', 37],
+  ];
+  const tb = document.querySelector('#cmdtbl tbody');
+  tb.innerHTML = C.map(([c, w, d, l]) => `<tr><td><code>${c}</code></td><td>${w}</td><td>${d}</td><td class="num">${l ?? '—'}</td></tr>`).join('');
+  document.getElementById('cmdq').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    [...tb.rows].forEach(r => { r.hidden = q && !r.textContent.toLowerCase().includes(q); });
+  });
+
+  const S = [
+    ['1673b01', 'v1', 1041, 409, '#38'], ['2555179', '', 1250, 677, ''], ['679fb85', '', 1400, 834, ''], ['7bbc04c', '', 1417, 912, ''],
+    ['ca24fc9', '', 1424, 937, ''], ['a93cbbd', '', 1428, 947, ''], ['d10255a', '', 1428, 987, 'merged'], ['d13cc97', '', 1627, 1850, '#41'], ['16fff02', '', 1702, 2063, '#42'],
+  ];
+  const ch = document.getElementById('sizechart');
+  const W = 900, H = 300, L = 48, R = 12, Tp = 16, B = 52, max = 2200;
+  const y = v => Tp + (H - Tp - B) * (1 - v / max);
+  let out = '';
+  for (let v = 0; v <= 2000; v += 500) out += `<line class="ax" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toLocaleString()}</text>`;
+  const gw = (W - L - R) / S.length, bw = Math.min(26, gw / 3);
+  S.forEach(([sha, , code, test, pr], i) => {
+    const cx = L + gw * i + gw / 2;
+    out += `<rect class="bc" x="${cx - bw - 1}" y="${y(code)}" width="${bw}" height="${y(0) - y(code)}"><title>${sha}: ${code} code lines</title></rect>`;
+    out += `<rect class="bt" x="${cx + 1}" y="${y(test)}" width="${bw}" height="${y(0) - y(test)}"><title>${sha}: ${test} test lines</title></rect>`;
+    out += `<text x="${cx}" y="${y(Math.max(code, test)) - 5}" text-anchor="middle">${code.toLocaleString()}</text>`;
+    out += `<text x="${cx}" y="${H - B + 16}" text-anchor="middle" class="mono">${sha}</text>`;
+    if (pr) out += `<text class="pr" x="${cx}" y="${H - B + 32}" text-anchor="middle">${pr}</text>`;
+  });
+  ch.innerHTML = out;
+
+  const links = [...document.querySelectorAll('nav.sections a')];
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => {
+    es.forEach(e => { if (e.isIntersecting) links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id)); });
+  }, { rootMargin: '-40% 0px -55% 0px' }) : null;
+  if (io) document.querySelectorAll('main section').forEach(s => io.observe(s));
+})();
+</script>
+</body>
+</html>
