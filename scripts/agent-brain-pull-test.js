@@ -58,6 +58,7 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.equal(res.status, 0, res.stderr);
   assert.ok(fs.existsSync(path.join(target, 'AGENTS.md')));
   assert.ok(fs.existsSync(path.join(target, 'SOUL.md')));
+  assert.deepEqual(fs.readFileSync(path.join(target, 'review-models.json')), fs.readFileSync(path.join(ROOT, 'project/review-models.json')));
   assert.ok(fs.existsSync(path.join(target, '.agents/skills/coding-standards/SKILL.md')));
   assert.ok(!fs.existsSync(path.join(target, 'skills')));
   assert.ok(!fs.existsSync(path.join(target, 'agents')));

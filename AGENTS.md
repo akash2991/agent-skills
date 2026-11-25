@@ -7,7 +7,8 @@ This repository is where the brain is built: the personas in `agents/`, the skil
 ```
 AGENTS.md        this file: how to work on the repository
 CLAUDE.md        points here
-project/         files copied as they are to a project's root: AGENTS.md (the organization; the build fills in the installed skills and personas), SOUL.md, .env.example
+project/         files copied as they are to a project's root: AGENTS.md (the organization; the build fills in the installed skills and personas), SOUL.md, .env.example, review-models.json
+review-models.json  the models for this repository's double-pass review
 agents/          personas, one file per role (docs/persona-anatomy.md)
 skills/          the flat skill dump (docs/skill-anatomy.md)
 references/      shared checklists and the way-of-working contracts
@@ -28,6 +29,7 @@ docs/            anatomies and per-tool setup guides
 | Persona anatomy and manifest | `node scripts/validate-agents.js` |
 | Reference links | `node scripts/validate-reference-links.js` |
 | Command parity across tools | `node scripts/validate-commands.js` |
+| Review models are config, never prose | `node scripts/validate-review-models.js` |
 | Trigger and routing evals | `node scripts/run-evals.js --min-rank1 80` |
 | Assemble the brain from `manifest.json` | `node scripts/build-brain.js` → `build/` |
 | Flow map (which flows are code, agent, or mixed): edit `docs/flow-map.json`, then | `node scripts/build-flow-map.js` → `docs/flow-map.html` |
@@ -41,11 +43,11 @@ docs/            anatomies and per-tool setup guides
 This gate applies to the brain repository itself, not automatically to projects consuming it. Changes here can propagate to every repository that installs or updates from the brain, so every change—including documentation and instruction changes—must follow this workflow:
 
 1. **Raise the PR.** The authoring agent opens a PR with the changes and verification evidence.
-2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one using **GPT-6.1 Sol**, the other using **Opus 5.5**. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
-3. **Third-agent synthesis.** A separate agent using **GPT-6 Astra** examines the original PR and both submitted reviews, reconciles conflicting findings, and posts a combined assessment and required fixes on the PR. It does not substitute for either independent pass.
+2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one for each entry under `independent` in [review-models.json](review-models.json), on its harness, model, and effort. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
+3. **Third-agent synthesis.** A separate agent on the `synthesis` entry in [review-models.json](review-models.json) examines the original PR and both submitted reviews, reconciles conflicting findings, and posts a combined assessment and required fixes on the PR. It does not substitute for either independent pass.
 4. **Resolve before merge.** Address the required fixes and record their disposition and verification on the PR. Reviews and synthesis must cover the final revision; changed content must receive the applicable review passes and synthesis before merge.
 
-This is mandatory, including for changes already in progress. Local checks or a single review do not satisfy it. Use authenticated, exact model identifiers when launching the agents; if a required model is unavailable or its identifier is unclear, stop at that gate and ask the user rather than substitute another model or claim completion. Do not merge until both independent passes and the third-agent synthesis are complete.
+This is mandatory, including for changes already in progress. Local checks or a single review do not satisfy it. Launch each agent with the exact model identifier from `review-models.json`, authenticated; if a model there is unavailable or its identifier is unclear, stop at that gate and ask the user rather than substitute another model or claim completion. The models are always the latest available: when a newer one ships, change `review-models.json` (and `project/review-models.json` for projects) in its own PR, never the prose here; `node scripts/validate-review-models.js` fails if either AGENTS.md names a model. Do not merge until both independent passes and the third-agent synthesis are complete.
 
 ## Conventions for this repository
 

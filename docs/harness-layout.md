@@ -14,7 +14,7 @@ Before changing installation layout, inspect the consumer's tracked files, relev
 | Personas | `agents/<name>.md` |
 | Shared references | `references/` |
 | Document templates | `templates/` |
-| Organization, soul, environment example | `project/AGENTS.md`, `project/SOUL.md`, `project/.env.example` |
+| Organization, soul, environment example, reviewer models | `project/AGENTS.md`, `project/SOUL.md`, `project/.env.example`, `project/review-models.json` |
 | Selection | `manifest.json` |
 | Skill/persona anatomy guides (source-only; not installed) | `docs/skill-anatomy.md`, `docs/persona-anatomy.md` |
 | Dev machines: provisioning, scripts, policy (source-only; not installed) | `infra/dev-machines/` |
