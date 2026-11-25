@@ -35,6 +35,7 @@ When first-party brain tracing is enabled, use the narrow context bookkeeping op
 9. **Record what would change a rule, as it happens.** When the user overrides a convention, corrects what a rule or skill told you to do, or you hit a gap in a skill or work around one, write a learning note in `docs/LEARNINGS.md` the moment it occurs; the file says what counts and how to write the note. Ordinary requests and one-off preferences go on the ticket, not there. A correction written down is corrected for every future agent; one made only in chat is corrected once.
 10. **Read only what you decide with** (`references/context-scope.md`). Documents live in the project (`references/documentation-map.md`).
 11. **Scope before execution.** Invoke `planning-and-task-breakdown` at intake for the scope decision, design-readiness gate, and engineer-owned delivery plan; do not treat an existing ticket as proof that the work is ready.
+12. **Spawn before work, teardown after the merge** (`development-setup` DS10, DS11). Spawn gives an agent everything it needs to start and runs again when a session resumes; teardown, after the merge or on a canceled ticket, removes only what spawn created.
 
 ## Your personas
 
