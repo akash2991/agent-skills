@@ -346,7 +346,7 @@ function changedFiles(args, cwd) {
 // The run owns the lock from its first check to its last state write, and works only from <head>, the code branch's
 // tip on origin: it re-checks that tip, builds one commit on it in a fresh worktree, validates that exact commit, and
 // pushes it to <branch>-artifacts without overwriting anything it did not publish itself.
-function run({ root, branch, base: given, head, token }, deps = {}) {
+function run({ root, branch, head, token }, deps = {}) {
   const exec = deps.spawnSync || spawnSync;
   const dir = stateDir(root);
   const lock = path.join(dir, `${safeName(branch)}.lock`);
@@ -355,9 +355,10 @@ function run({ root, branch, base: given, head, token }, deps = {}) {
   try {
     const state = readState(dir, branch);
     if (state.synced === head) return `${head.slice(0, 7)} is already synced`;
-    const base = baselineFor(root, state, head) || given;
+    const base = baselineFor(root, state, head);
+    if (!base) throw new Error(`cannot establish where ${branch}'s outstanding artifact work starts (no recorded baseline and no default branch ref); fetch the default branch and retry`);
     const keep = settled(root, state, head) ? { baseline: head } : {};
-    if (state.published && state.publishedFor && settled(root, state, head)) writeState(dir, branch, { baseline: state.publishedFor });
+    if (state.published && state.publishedFor && settled(root, state, head) && base !== state.baseline) writeState(dir, branch, { baseline: base });
     const tipOf = deps.remoteTip || (b => remoteTip(root, b));
     const checkTip = () => {
       const live = tipOf(branch);
@@ -477,7 +478,8 @@ function mergeExempt(root, number, deps = {}) {
   if (first.reasons.length) return { merged: null, reasons: first.reasons };
   const ran = (deps.checks || (n => {
     const r = spawnSync('gh', ['pr', 'checks', String(n), '--repo', repo, '--json', 'name,bucket'], { cwd: root, encoding: 'utf8' });
-    try { return JSON.parse(r.stdout || '[]'); } catch { return []; }
+    // gh exits non-zero while checks are pending or failing; the buckets say which. No JSON at all is a refusal.
+    try { return JSON.parse(r.stdout); } catch { return []; }
   }))(number);
   const reasons = [];
   if (!ran.some(c => c.name === REQUIRED_CHECK && c.bucket === 'pass')) reasons.push(`the ${REQUIRED_CHECK} job has not passed on this head`);
@@ -524,6 +526,15 @@ async function main(argv) {
   }
   if (cmd === 'due') {
     const p = plan(option(args, '--cwd') || process.cwd());
+    if (!p.skip) {
+      const lock = path.join(p.dir, `${safeName(p.branch)}.lock`);
+      let held = null;
+      try { held = fs.readFileSync(lock, 'utf8'); } catch { /* free */ }
+      if (held !== null) {
+        const stale = held.startsWith('starting:') ? Date.now() - fs.statSync(lock).mtimeMs >= STALE_START_MS : !alive(Number(held));
+        console.log(stale ? `blocked by a stale lock: remove ${lock} to resume` : `a sync is running (${held})`);
+      }
+    }
     console.log(p.skip ? `nothing to do: ${p.skip}` : p.due.length ? p.due.map(d => `${d.path}  <-  ${d.changed.join(', ')}`).join('\n') : 'no artifact is due');
     return 0;
   }

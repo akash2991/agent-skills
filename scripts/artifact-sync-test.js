@@ -348,6 +348,26 @@ test('a PR head that lags the push is retried before it counts as a mismatch', (
   assert.equal(lists, 3);
 });
 
+test('run refuses when it cannot establish the baseline itself, whatever base it is handed', () => {
+  const r = repo();
+  git(['update-ref', '-d', 'refs/remotes/origin/main'], r.root);
+  git(['branch', '-D', 'main'], r.root);
+  assert.throws(() => runIt(r, { base: r.base }), /cannot establish where FAC-1-feature's outstanding artifact work starts/);
+  assert.equal(remote(r.root, `${BRANCH}-artifacts`), '', 'nothing published');
+});
+
+test('with a publication outstanding and no default-branch ref, a manual run refuses and leaves the publication alone', () => {
+  const r = repo();
+  runIt(r);
+  const first = remote(r.root, `${BRANCH}-artifacts`);
+  git(['update-ref', '-d', 'refs/remotes/origin/main'], r.root);
+  git(['branch', '-D', 'main'], r.root);
+  const head2 = pushChange(r.root, 'web/app.js');
+  assert.throws(() => runIt(r, { base: r.head, head: head2, edit: cwd => fs.writeFileSync(path.join(cwd, 'docs/page.html'), '<p>v2</p>\n') }), /cannot establish where/);
+  assert.equal(remote(r.root, `${BRANCH}-artifacts`), first);
+  assert.notEqual(readState(r.root).synced, head2);
+});
+
 test('a mode change is refused, and so is a code branch that moved while the agent worked', () => {
   const r = repo();
   assert.throws(() => runIt(r, { edit: cwd => { edit(cwd); fs.chmodSync(path.join(cwd, 'docs/map.md'), 0o755); } }),
