@@ -291,7 +291,13 @@ function sh(command, cwd) {
 function freshWorktree(root, head) {
   const holder = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-sync-'));
   const dir = path.join(holder, 'wt');
-  git(['worktree', 'add', '--quiet', '--detach', dir, head], root);
+  // Checkout hooks off: nothing may change the files between the commit and what is read or checked.
+  git(['-c', `core.hooksPath=${os.devNull}`, 'worktree', 'add', '--quiet', '--detach', dir, head], root);
+  if (git(['status', '--porcelain', '--untracked-files=all'], dir) !== '' || git(['rev-parse', 'HEAD'], dir) !== head) {
+    tryGit(['worktree', 'remove', '--force', dir], root);
+    fs.rmSync(holder, { recursive: true, force: true });
+    throw new Error(`the worktree for ${head.slice(0, 7)} does not match the commit`);
+  }
   return { dir, remove: () => { tryGit(['worktree', 'remove', '--force', dir], root); fs.rmSync(holder, { recursive: true, force: true }); tryGit(['worktree', 'prune'], root); } };
 }
 
@@ -471,8 +477,8 @@ function prScope(root, number, deps = {}) {
   return { view, reasons };
 }
 
-// The exemption, used: scope the PR; run the flow map's own check in a fresh worktree at its head (GitHub CI is off
-// for now, so the check runs here, never assumed); refuse if GitHub reports any check that is not green; scope again
+// The exemption, used: scope the PR; run the flow map's own check in a fresh worktree at its head (the check
+// runs here, never assumed); refuse if GitHub reports any check that is not green; scope again
 // and require the same base and head; then merge exactly that head. Anything else declines.
 function mergeExempt(root, number, deps = {}) {
   const repo = deps.repo || originRepo(root);

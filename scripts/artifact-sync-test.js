@@ -460,6 +460,16 @@ test('merge --pr refuses a hand-edited flow-map page: the real check fails at th
   assert.match(out.reasons.join(), /the flow map's check fails at this head/);
 });
 
+test('a checkout hook cannot change what the merge check reads', () => {
+  const { r, view } = publishedFlow();
+  // A clone-wide post-checkout hook that would "fix" the page in any new worktree.
+  fs.writeFileSync(path.join(r.root, '.git/hooks/post-checkout'), '#!/bin/sh\ncp docs/flow-map.json docs/flow-map.html 2>/dev/null; exit 0\n', { mode: 0o755 });
+  const sha = forge(r, { 'docs/flow-map.html': 'stale\n' });
+  const out = sync.mergeExempt(r.root, 1, { ...view({ headSha: sha }), repo: 'o/r', checks: () => [], merge: () => true });
+  assert.equal(out.merged, null);
+  assert.match(out.reasons.join(), /the flow map's check fails at this head/);
+});
+
 test('scope: only the flow map is exempt; Markdown, HTML, models.json and both ends of a rename are not', () => {
   const r = repo();
   git(['checkout', '-qb', 'x'], r.root);
