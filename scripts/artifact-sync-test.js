@@ -42,6 +42,9 @@ function repo({ change = 'src/a.js' } = {}) {
   for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.com'], ['commit.gpgsign', 'false']]) git(['config', k, v], root);
   for (const d of ['src', 'docs', 'web', 'lib']) fs.mkdirSync(path.join(root, d));
   fs.writeFileSync(path.join(root, 'lib/x.js'), '1\n');
+  fs.mkdirSync(path.join(root, 'scripts'));
+  // A stand-in for the brain's renderer: --check passes when the page is the data.
+  fs.writeFileSync(path.join(root, 'scripts/build-flow-map.js'), "const fs = require('fs');\nconst d = fs.readFileSync('docs/flow-map.json', 'utf8');\nif (process.argv.includes('--check')) process.exit(fs.readFileSync('docs/flow-map.html', 'utf8') === d ? 0 : 1);\nfs.writeFileSync('docs/flow-map.html', d);\n");
   fs.writeFileSync(path.join(root, 'docs/flow-map.json'), '{"v":1}\n');
   fs.writeFileSync(path.join(root, 'docs/flow-map.html'), '{"v":1}\n');
   fs.writeFileSync(path.join(root, 'models.json'), JSON.stringify(CONFIG));
@@ -421,24 +424,24 @@ test("scope --pr: exempt only for this clone's published commit on <base>-artifa
   assert.ok(published);
 });
 
-test('merge --pr merges only a green, re-confirmed flow-map PR, at exactly the checked head', () => {
+test('merge --pr runs the flow map check at the head, refuses red checks or a moved pair, and merges exactly that head', () => {
   const { r, published, view } = publishedFlow();
-  const green = [{ name: 'checks', bucket: 'pass' }, { name: 'test-plugin-install', bucket: 'pass' }];
   const merges = [];
-  const deps = (over = {}) => ({ ...view(), repo: 'o/r', checks: () => green, merge: (n, head) => { merges.push(head); return true; }, ...over });
+  const deps = (over = {}) => ({ ...view(), repo: 'o/r', checks: () => [], merge: (n, head) => { merges.push(head); return true; }, ...over });
+  // With GitHub CI off, no checks are reported: the local flow-map check (run for real here) is what decides.
   assert.deepEqual(sync.mergeExempt(r.root, 1, deps()), { merged: published, reasons: [] });
   assert.deepEqual(merges, [published]);
-  for (const [checks, re] of [
-    [[], /the checks job has not passed/],
-    [[{ name: 'checks', bucket: 'pending' }], /checks job has not passed[\s\S]*checks \(pending\)|checks not green: checks \(pending\)/],
-    [[{ name: 'checks', bucket: 'pass' }, { name: 'other', bucket: 'fail' }], /checks not green: other \(fail\)/],
+  for (const [over, re] of [
+    [{ localCheck: () => 'docs/flow-map.html is out of date' }, /the flow map's check fails at this head: docs\/flow-map\.html is out of date/],
+    [{ checks: () => [{ name: 'checks', bucket: 'fail' }] }, /checks not green: checks \(fail\)/],
+    [{ checks: () => [{ name: 'checks', bucket: 'pending' }] }, /checks not green: checks \(pending\)/],
+    [{ checks: () => null }, /could not read the PR checks/],
   ]) {
-    const out = sync.mergeExempt(r.root, 1, deps({ checks: () => checks }));
+    const out = sync.mergeExempt(r.root, 1, deps(over));
     assert.equal(out.merged, null);
     assert.match(out.reasons.join('\n'), re);
   }
-  // The base moves between the first scope and the second, to a commit the PR still scopes cleanly against: the
-  // earlier verdict is not used.
+  // The base moves between the first scope and the second, to a commit the PR still scopes cleanly against.
   git(['checkout', '-q', BRANCH], r.root);
   const base2 = pushChange(r.root, 'src/a.js');
   let views = 0;
@@ -449,12 +452,12 @@ test('merge --pr merges only a green, re-confirmed flow-map PR, at exactly the c
   assert.equal(merges.length, 1, 'nothing else merged');
 });
 
-test('scope --pr: a hand-edited flow-map page on the published branch is not exempt', () => {
+test('merge --pr refuses a hand-edited flow-map page: the real check fails at that head', () => {
   const { r, view } = publishedFlow();
   const sha = forge(r, { 'docs/flow-map.html': '<script>x</script>\n' });
-  // The forged commit is recorded as published here only to reach the path check; it still must pass CI to merge.
-  assert.deepEqual(sync.prScope(r.root, 1, view({ headSha: sha })).reasons, []);
-  assert.equal(sync.mergeExempt(r.root, 1, { ...view({ headSha: sha }), repo: 'o/r', checks: () => [{ name: 'checks', bucket: 'fail' }], merge: () => true }).merged, null);
+  const out = sync.mergeExempt(r.root, 1, { ...view({ headSha: sha }), repo: 'o/r', checks: () => [], merge: () => true });
+  assert.equal(out.merged, null);
+  assert.match(out.reasons.join(), /the flow map's check fails at this head/);
 });
 
 test('scope: only the flow map is exempt; Markdown, HTML, models.json and both ends of a rename are not', () => {

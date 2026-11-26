@@ -12,7 +12,8 @@
 //   due [--cwd <dir>]                     print what `hook` would sync now, without starting anything
 //   scope --pr <number>                   exit 0 when the PR is this clone's published sync commit on <base>-artifacts,
 //                                         from the same repository, and changes only the brain's flow map
-//   merge --pr <number>                   scope, require green checks, scope again, then merge exactly that head
+//   merge --pr <number>                   scope, run the flow map's check at the head, refuse any red GitHub check,
+//                                         scope again, then merge exactly that head
 //
 // Code decides everything but the edit: which artifacts are due, the worktree, the commit, the push, and the PR.
 // Only the edit itself is the agent's. BRAIN_ARTIFACT_SYNC=1 marks the sync agent, so its own finish starts nothing.
@@ -428,11 +429,11 @@ function run({ root, branch, head, token }, deps = {}) {
   }
 }
 
-// What may skip review: the brain's flow map, and nothing else. CI re-renders it (build-flow-map.js --check in the
-// `checks` job), so its data is validated and its page proven by the same checks a merge must pass. Every other
-// mapping, Markdown and HTML pages included, is still synced but keeps the normal review.
+// What may skip review: the brain's flow map, and nothing else. Its own check (build-flow-map.js --check) validates the
+// data and proves the page; merge runs it at the exact head before merging. Every other mapping, Markdown and HTML
+// pages included, is still synced but keeps the normal review.
 const EXEMPT = ['docs/flow-map.json', 'docs/flow-map.html'];
-const REQUIRED_CHECK = 'checks';
+const FLOW_MAP_CHECK = 'node scripts/build-flow-map.js --check';
 
 function exemptPaths(artifacts) {
   const mapped = new Set(artifacts.flatMap(a => [a.path, ...(a.outputs || [])]));
@@ -470,21 +471,29 @@ function prScope(root, number, deps = {}) {
   return { view, reasons };
 }
 
-// The exemption, used: scope the PR, require every check on its head to have passed (the `checks` job among them),
-// scope it again and require the same base and head, then merge exactly that head. Anything else declines.
+// The exemption, used: scope the PR; run the flow map's own check in a fresh worktree at its head (GitHub CI is off
+// for now, so the check runs here, never assumed); refuse if GitHub reports any check that is not green; scope again
+// and require the same base and head; then merge exactly that head. Anything else declines.
 function mergeExempt(root, number, deps = {}) {
   const repo = deps.repo || originRepo(root);
   const first = prScope(root, number, deps);
   if (first.reasons.length) return { merged: null, reasons: first.reasons };
+  const reasons = [];
+  const local = (deps.localCheck || (head => {
+    const wt = freshWorktree(root, head);
+    try { sh(FLOW_MAP_CHECK, wt.dir); return null; } catch (err) { return err.message; } finally { wt.remove(); }
+  }))(first.view.headSha);
+  if (local) reasons.push(`the flow map's check fails at this head: ${local}`);
   const ran = (deps.checks || (n => {
     const r = spawnSync('gh', ['pr', 'checks', String(n), '--repo', repo, '--json', 'name,bucket'], { cwd: root, encoding: 'utf8' });
-    // gh exits non-zero while checks are pending or failing; the buckets say which. No JSON at all is a refusal.
-    try { return JSON.parse(r.stdout); } catch { return []; }
+    if (r.status !== 0 && /no checks reported/i.test(r.stderr || '')) return [];
+    try { return JSON.parse(r.stdout); } catch { return null; }
   }))(number);
-  const reasons = [];
-  if (!ran.some(c => c.name === REQUIRED_CHECK && c.bucket === 'pass')) reasons.push(`the ${REQUIRED_CHECK} job has not passed on this head`);
-  const notGreen = ran.filter(c => c.bucket !== 'pass' && c.bucket !== 'skipping');
-  if (notGreen.length) reasons.push(`checks not green: ${notGreen.map(c => `${c.name} (${c.bucket})`).join(', ')}`);
+  if (ran === null) reasons.push('could not read the PR checks');
+  else {
+    const notGreen = ran.filter(c => c.bucket !== 'pass' && c.bucket !== 'skipping');
+    if (notGreen.length) reasons.push(`checks not green: ${notGreen.map(c => `${c.name} (${c.bucket})`).join(', ')}`);
+  }
   if (reasons.length) return { merged: null, reasons };
   const again = prScope(root, number, deps);
   if (again.reasons.length) return { merged: null, reasons: again.reasons };
