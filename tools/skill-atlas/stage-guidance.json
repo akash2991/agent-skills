@@ -1,0 +1,252 @@
+{
+  "methodology": "Qualitative fits grounded in the catalog's source summaries, methods and dependencies, not measured rankings. Exact skill IDs link recommendations to source evidence. Contexts suggest small complementary stacks, not installation requirements; they neither hide other stage skills nor override user choices. Use each skill's setup and approval gates.",
+  "stages": {
+    "Discover": {
+      "contexts": [
+        {
+          "id": "new-app-idea",
+          "label": "New app idea",
+          "reason": "Use this when the product direction is still rough and framework choices need current evidence.",
+          "picks": [
+            {"skill": "addy/idea-refine", "role": "Product direction", "reason": "Converges candidate ideas into MVP scope, exclusions and validation questions.", "alternativeGroup": null},
+            {"skill": "matt/research", "role": "Source research", "reason": "Produces a cited note from official documentation, source and specifications.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "existing-app-discovery",
+          "label": "Unfamiliar existing app",
+          "reason": "Use this when a requested change needs both an accurate goal and a source-grounded system map.",
+          "picks": [
+            {"skill": "cursor/in-your-own-words", "role": "Goal confirmation", "reason": "Restates the user's goal before solving the wrong problem.", "alternativeGroup": null},
+            {"skill": "cursor/how", "role": "System exploration", "reason": "Explains architecture and runtime flow from source, scaling exploration to scope.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Plan": {
+      "contexts": [
+        {
+          "id": "single-app-spec",
+          "label": "Single app feature",
+          "reason": "Use this when a feature needs an approved specification followed by small, verifiable implementation tasks.",
+          "picks": [
+            {"skill": "addy/spec-driven-development", "role": "Specification gate", "reason": "Defines objectives, commands, tests and boundaries, then stops for later human approval.", "alternativeGroup": null},
+            {"skill": "addy/planning-and-task-breakdown", "role": "Task slicing", "reason": "Turns the approved specification into vertical slices with acceptance criteria and verification commands.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "tracker-backed-delivery",
+          "label": "Tracker backed delivery",
+          "reason": "Use this with Matt's tracker setup when an existing design conversation must become an executable ticket graph.",
+          "picks": [
+            {"skill": "matt/to-spec", "role": "Tracker specification", "reason": "Synthesizes existing decisions into a specification and confirms high test seams.", "alternativeGroup": null},
+            {"skill": "matt/to-tickets", "role": "Dependency mapping", "reason": "Publishes user-approved tracer-bullet tickets with explicit blocking edges.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "reviewed-multiservice-plan",
+          "label": "Reviewed multi-service design",
+          "reason": "Use this after design review when the team already uses Linear and Akash's ownership conventions.",
+          "picks": [
+            {"skill": "akash/planning-and-task-breakdown", "role": "Sprint planning", "reason": "Sequences shared foundations before disjoint tasks with owned paths, contracts and tests.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Design": {
+      "contexts": [
+        {
+          "id": "module-and-api-design",
+          "label": "App module boundaries",
+          "reason": "Use this when internal modules and their exposed contracts need clear, testable boundaries.",
+          "picks": [
+            {"skill": "matt/codebase-design", "role": "Module structure", "reason": "Designs deep modules with small interfaces and deliberate test seams.", "alternativeGroup": null},
+            {"skill": "addy/api-and-interface-design", "role": "External contracts", "reason": "Specifies boundary parsing, consistent errors, compatibility and safe idempotency behavior.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "uncertain-ui-design",
+          "label": "Uncertain interaction design",
+          "reason": "Use this when a UI decision needs a disposable interactive demonstration rather than production implementation.",
+          "picks": [
+            {"skill": "matt/prototype", "role": "Interaction prototype", "reason": "Tests a design question with a shareable state demo or multiple UI variants.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "service-design-sequence",
+          "label": "Reviewed multi-service PRD",
+          "reason": "Use this with Akash's design conventions to move sequentially from reviewed product requirements to service details.",
+          "picks": [
+            {"skill": "akash/hld", "role": "Service ownership", "reason": "Assigns responsibilities and interactions while deferring implementation internals.", "alternativeGroup": null},
+            {"skill": "akash/lld", "role": "Service detail", "reason": "Expands reviewed high-level design into contracts, schemas, state machines and test seams.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Build": {
+      "contexts": [
+        {
+          "id": "existing-multiservice-app",
+          "label": "Existing multi-service app",
+          "reason": "Use this for incremental feature work in an existing app that already follows Akash's service conventions.",
+          "picks": [
+            {"skill": "akash/incremental-implementation", "role": "Implementation loop", "reason": "Delivers usable vertical slices with verification, green builds and safe feature flags.", "alternativeGroup": null},
+            {"skill": "akash/coding-standards", "role": "Code conventions", "reason": "Separates API, domain and database models while enforcing typed boundaries and injected dependencies.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "solo-ui-feature",
+          "label": "Solo UI feature",
+          "reason": "Use this for a single developer adding a user-facing feature without a parallel-worker workflow.",
+          "picks": [
+            {"skill": "addy/incremental-implementation", "role": "Implementation loop", "reason": "Implements, tests and verifies one usable slice at a time.", "alternativeGroup": null},
+            {"skill": "addy/frontend-ui-engineering", "role": "UI layer", "reason": "Adds intentional layout, accessible interactions and loading, empty and error states.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "parallel-ticket-delivery",
+          "label": "Parallel ticket delivery",
+          "reason": "Use this with Matt's tracker setup and a ready ticket graph when independent work can use separate worktrees.",
+          "picks": [
+            {"skill": "matt/implement-spec", "role": "Worker coordination", "reason": "Runs ready ticket frontiers in separate worktrees, merges results and reviews integration.", "alternativeGroup": null},
+            {"skill": "cursor/principle-separate-before-serializing-shared-state", "role": "Write ownership", "reason": "Separates owned files, branches or keys before introducing shared-state locks.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "lightweight-typed-code",
+          "label": "Lightweight typed code",
+          "reason": "Use this for a bounded TypeScript change that needs explicit type discipline without a broad orchestration workflow.",
+          "picks": [
+            {"skill": "cursor/typescript-best-practices", "role": "Type conventions", "reason": "Uses discriminated unions, validated brands, schema-derived types and exhaustive narrowing.", "alternativeGroup": null},
+            {"skill": "cursor/principle-sequence-verifiable-units", "role": "Change sequencing", "reason": "Verifies each work unit before proceeding and orders commits around executable evidence.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Verify": {
+      "contexts": [
+        {
+          "id": "browser-feature-proof",
+          "label": "Browser feature change",
+          "reason": "Use this when behavior needs both failing-test proof and evidence from the running browser.",
+          "picks": [
+            {"skill": "addy/test-driven-development", "role": "Regression proof", "reason": "Uses actual repository commands and red-green-refactor to prove behavior changes.", "alternativeGroup": null},
+            {"skill": "addy/browser-testing-with-devtools", "role": "Live browser evidence", "reason": "Captures DOM, console, network and accessibility evidence in an isolated browser profile.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "reproducible-app-failure",
+          "label": "Unexplained app failure",
+          "reason": "Use this when debugging needs a discriminating executable signal before any proposed fix.",
+          "picks": [
+            {"skill": "matt/diagnosing-bugs", "role": "Failure diagnosis", "reason": "Proves a failing signal, ranks hypotheses and instruments one prediction at a time.", "alternativeGroup": null},
+            {"skill": "cursor/principle-prove-it-works", "role": "Final artifact proof", "reason": "Checks the real output rather than relying on proxies or worker self-reports.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "measured-performance-change",
+          "label": "Measured performance change",
+          "reason": "Use this when a suspected user-visible bottleneck needs profiling and a defensible before-and-after comparison.",
+          "picks": [
+            {"skill": "addy/performance-optimization", "role": "Optimization loop", "reason": "Profiles one measured bottleneck and keeps or reverts targeted changes after remeasurement.", "alternativeGroup": null},
+            {"skill": "cursor/benchmark-checklist", "role": "Measurement audit", "reason": "Checks harness fairness, machine load, repeated trials, errors and end-to-end relevance.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Review": {
+      "contexts": [
+        {
+          "id": "routine-feature-review",
+          "label": "Routine feature diff",
+          "reason": "Use this for a bounded change that needs a general quality review without multiple broad review workflows.",
+          "picks": [
+            {"skill": "addy/code-review-and-quality", "role": "Quality review", "reason": "Assesses correctness, readability, architecture, security and performance against context and evidence.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "exposed-boundary-review",
+          "label": "Exposed trust boundary",
+          "reason": "Use this when a small-looking change touches external inputs, authorization or another consequential safety assumption.",
+          "picks": [
+            {"skill": "addy/security-and-hardening", "role": "Threat review", "reason": "Maps assets and trust boundaries, then checks authorization, secrets and destructive paths.", "alternativeGroup": null},
+            {"skill": "cursor/blast-radius", "role": "Safety assumption proof", "reason": "Traces the hidden safety assumption beyond direct callers into source and executable evidence.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Ship": {
+      "contexts": [
+        {
+          "id": "production-app-launch",
+          "label": "Production app launch",
+          "reason": "Use this when automated checks must support an explicit staged rollout and rollback decision.",
+          "picks": [
+            {"skill": "addy/ci-cd-and-automation", "role": "Pipeline checks", "reason": "Automates lint, types, tests and builds with deployment feedback and previews.", "alternativeGroup": null},
+            {"skill": "addy/shipping-and-launch", "role": "Rollout gates", "reason": "Checks readiness, staged cohorts, production behavior and rollback preparation.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "small-team-pr",
+          "label": "Small team PR",
+          "reason": "Use this when delivery mainly needs understandable commits and a reviewable pull request with concrete proof.",
+          "picks": [
+            {"skill": "addy/git-workflow-and-versioning", "role": "Change history", "reason": "Keeps branches short-lived and commits atomic while preserving versions and changelogs.", "alternativeGroup": null},
+            {"skill": "matt/pr", "role": "PR evidence", "reason": "Writes a visual PR body with before-and-after proof and explicit merge risk.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Operate": {
+      "contexts": [
+        {
+          "id": "production-service-operations",
+          "label": "Production service operations",
+          "reason": "Use this when on-call questions need actionable telemetry rather than a new workflow integration.",
+          "picks": [
+            {"skill": "addy/observability-and-instrumentation", "role": "Production signals", "reason": "Connects logs, metrics, traces and symptom alerts to on-call questions and runbooks.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "langfuse-ai-app",
+          "label": "Langfuse AI app",
+          "reason": "Use this for an AI application using Langfuse that also needs broader service-health visibility.",
+          "picks": [
+            {"skill": "akash/langfuse", "role": "AI evaluation operations", "reason": "Uses current docs and CLI schemas for datasets, experiments, prompts and instrumentation.", "alternativeGroup": null},
+            {"skill": "addy/observability-and-instrumentation", "role": "Service health", "reason": "Adds service-level telemetry and exercised symptom alerts beyond AI evaluation workflows.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "configured-benny-triage",
+          "label": "Configured Benny triage",
+          "reason": "Use this only with an installed Benny pack, Cursor Automations, Slack and working tracker adapters.",
+          "picks": [
+            {"skill": "cursor/triage-issue-reports", "role": "Report routing", "reason": "Classifies one Slack thread and creates a ticket only for a clear, new bug.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    },
+    "Learn": {
+      "contexts": [
+        {
+          "id": "recurring-agent-mistakes",
+          "label": "Recurring agent mistakes",
+          "reason": "Use this when session failures should improve the development environment rather than accumulate as instructions.",
+          "picks": [
+            {"skill": "matt/retro", "role": "Session retrospective", "reason": "Identifies navigation, enforcement and tool-cost failures from sessions and current checks.", "alternativeGroup": null},
+            {"skill": "cursor/principle-encode-lessons-in-structure", "role": "Durable enforcement", "reason": "Turns repeated instructions into lint, metadata, runtime checks or scripts where possible.", "alternativeGroup": null}
+          ]
+        },
+        {
+          "id": "team-change-handoff",
+          "label": "Team change handoff",
+          "reason": "Use this when teammates need both durable decision records and a paced explanation of a shipped change.",
+          "picks": [
+            {"skill": "addy/documentation-and-adrs", "role": "Decision record", "reason": "Preserves alternatives, consequences and public behavior using existing documentation conventions.", "alternativeGroup": null},
+            {"skill": "cursor/teach", "role": "Human explanation", "reason": "Explains a change through source-grounded how and why, with incremental diagrams.", "alternativeGroup": null}
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+// DOM-only or optional browser adapter. Never launches a browser itself.
+const checks=[];
+async function verify(name,fn){if(!await page.eval(fn))throw Error(name);checks.push(name)}
+await page.click('[data-view="compare"]');
+await page.eval(()=>{document.querySelector('#compare-topic').value='testing';document.querySelector('#compare-topic').dispatchEvent(new Event('change'))});
+await verify('TDD has four source-backed columns',()=>document.querySelectorAll('.column-skills').length===4&&document.querySelectorAll('[data-cell-repo]').length>=20);
+await verify('No invented overall winner',()=>document.querySelectorAll('.fit-badge').length===0);
+await verify('Short text in every cell',()=>[...document.querySelectorAll('.decision-cell>span')].every(x=>x.textContent.trim().split(/\s+/).length<=11));
+await verify('Key phrases highlighted',()=>document.querySelectorAll('.decision-table mark').length>0);
+await page.click('.scenario-tabs button:nth-child(2)');
+await verify('Scenario spotlights recommended column',()=>document.querySelectorAll('.fit-badge').length>0&&document.querySelector('.recommendation').textContent.includes('SOURCE-BASED FIT'));
+await page.click('[data-cell-repo="cursor"]');
+await verify('Cell opens small evidence dialog',()=>document.querySelector('dialog').open&&document.querySelector('dialog').classList.contains('compact-evidence')&&document.querySelector('.evidence-card a').href.includes('/blob/'));
+await page.click('#close-detail');
+await page.eval(()=>{const x=document.querySelector('#highlight-words');x.checked=false;x.dispatchEvent(new Event('change'))});
+await verify('Highlight toggle',()=>document.querySelectorAll('.decision-table mark').length===0);
+await page.eval(()=>{const x=document.querySelector('#highlight-words');x.checked=true;x.dispatchEvent(new Event('change'))});
+await page.click('[data-keep="cursor"]');
+await verify('Column shortlist adds selected skills',()=>document.querySelector('[data-keep="cursor"]').textContent.includes('Shortlisted'));
+await page.click('[data-keep="cursor"]');
+await page.eval(()=>{const el=document.querySelector('#compare-topic');el.value='data';el.dispatchEvent(new Event('change'))});
+await verify('Niche group has explicit empty columns',()=>document.querySelectorAll('.not-mapped').length>=3&&document.querySelectorAll('[data-keep]').length===1);
+await page.click('[data-stage="Design"]');
+await verify('Topic filter by SDLC stage',()=>[...document.querySelector('#compare-topic').options].every(x=>['architecture','domain','prototyping','contracts','data'].includes(x.value)));
+await page.click('[data-stage="All"]');
+await page.fill('#search','no-such-skill-987654');
+await verify('Search empty state',()=>document.querySelector('.no-results')!==null);
+await page.fill('#search','');
+await page.eval(()=>{const el=document.querySelector('#compare-topic');el.value='testing';el.dispatchEvent(new Event('change'))});
+console.log(JSON.stringify({comparisonChecks:checks.length,checks},null,2));

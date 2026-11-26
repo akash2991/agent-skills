@@ -1,0 +1,56 @@
+{
+  "protocol": [
+    "Offline artifact evaluation only: this starter makes no API calls and runs no agents. No measured results are included.",
+    "Compare no-skill control against one explicitly recorded skill treatment; hold model/version, system prompt, tools, fixture hash, 20-minute wall-clock and 12000-token total budget constant. Skill text counts toward the budget.",
+    "Use three paired seeds: 17, 29, 43. If provider seeds are unavailable, record that limitation and use three independent paired replicate IDs without claiming deterministic generation. Counterbalance control/treatment ordering.",
+    "Give agents only the case prompt, copied fixture and submission instructions in evals/README.md. Keep evals/private, harness, selftest and grader acceptance criteria outside their workspace; hidden means withheld during runs, not secret in this repository.",
+    "Preserve original fixture, submitted artifacts, exact skill bytes/hash, environment versions, full ordered tool transcript, stdout/stderr, elapsed time, tokens and grader evidence. Grade anonymized submissions using the same rubric; resolve disagreements with cited evidence.",
+    "Report all three paired outcomes, raw rubric dimensions and uncertainty; do not infer causal generalization from three runs. Functional checks are not quality scores. Unrun and missing evidence are not passes."
+  ],
+  "cases": [
+    {
+      "id": "planning", "title": "Plan a safe local task export", "stage": "Plan",
+      "prompt": "Read SPEC.md. Produce plan.md and plan.json using its structure. Plan a scoped, dependency-ordered delivery for two engineers within the stated capacity. Do not implement code or contact a tracker. Explain milestones, ownership, acceptance, verification, risks and deferrals. Follow the common artifact submission instructions.",
+      "checks": ["Plan JSON is well formed; IDs resolve and dependencies are acyclic.", "Concurrent tasks own disjoint paths and sprint work fits eight points with prerequisites included.", "Human checks first usable JSON slice, safe publication, CSV edge cases or explicit deferral, and approval/rollback evidence."],
+      "rubric": [
+        {"name":"Delivery and scope", "weight":35, "description":"A usable JSON first milestone with realistic eight-point scope and reasoned CSV deferral or delivery; no invented implementation claims."},
+        {"name":"Dependencies and ownership", "weight":30, "description":"Shared contract settled first, integration order sound, disjoint concurrent ownership and meaningful task granularity."},
+        {"name":"Acceptance and risk", "weight":35, "description":"Concrete verification for no-clobber, failed writes, serialization and compatibility; risk mitigation, rollback and approval gate."}
+      ],
+      "fixture":"evals/fixtures/planning", "command":"python3 evals/harness.py planning SUBMISSION --output REPORT.json"
+    },
+    {
+      "id":"tdd", "title":"Fix discount rounding with red–green evidence", "stage":"Verify",
+      "prompt":"The discount function returns 0 for discount(1, 50), but the customer expects 1. Read index.cjs for the complete contract. Use a focused regression test before changing production code, fix the implementation and verify nearby behavior. Submit index.cjs, regression.cjs (runs with node regression.cjs), notes.md, and ordered tool evidence. Do not add dependencies. Follow the common artifact submission instructions.",
+      "checks":["Held-out tests cover rounding boundaries, input validation and normal discounts.", "Submitted regression fails on the untouched fixture and passes on the candidate.", "Human verifies original failure reason and actual test-before-production chronology from captured tool evidence."],
+      "rubric":[
+        {"name":"Behavior", "weight":45, "description":"Correct rounding and validation without regressions or dependencies."},
+        {"name":"Red–green evidence", "weight":35, "description":"Focused meaningful test with a contract failure before production edits and passing execution after; replay alone cannot prove chronology."},
+        {"name":"Scope and clarity", "weight":20, "description":"Small coherent fix, public behavior assertions and concise accurate evidence report."}
+      ],
+      "fixture":"evals/fixtures/tdd", "command":"python3 evals/harness.py tdd SUBMISSION --output REPORT.json"
+    },
+    {
+      "id":"review", "title":"Review tenant-scoped list changes", "stage":"Review",
+      "prompt":"Review before.cjs versus after.cjs against SPEC.md. Do not modify either file. Submit review.json as {\"findings\":[{\"file\":\"after.cjs\",\"line\":1,\"severity\":\"high\",\"axis\":\"spec\",\"claim\":\"...\",\"reproduction\":\"...\",\"impact\":\"...\",\"fix\":\"...\"}],\"summary\":\"...\"} and notes.md. Separate standards judgments from spec defects; cite exact lines and concrete inputs/expected versus actual behavior. Include a runnable repro.cjs if helpful. Avoid speculative findings. Follow the common artifact submission instructions.",
+      "checks":["Review JSON findings have valid source locations and evidence fields.", "Human matches findings to independently reproduced defects and assesses severity and false positives.", "No implementation changes; no credit merely for issue-related words."],
+      "rubric":[
+        {"name":"Defect coverage", "weight":45, "description":"Identifies cross-tenant/deleted-record exposure and input mutation, with source locations and observable reproductions."},
+        {"name":"Precision", "weight":30, "description":"No unsupported or duplicate findings; respects caller guarantees and documented ordinary-array preference."},
+        {"name":"Actionability", "weight":25, "description":"Correct impact, severity, minimal remedies, and distinct spec versus standards judgments."}
+      ],
+      "fixture":"evals/fixtures/review", "command":"python3 evals/harness.py review SUBMISSION --output REPORT.json"
+    },
+    {
+      "id":"debugging", "title":"Diagnose loader cross-talk and sticky failures", "stage":"Operate",
+      "prompt":"A loader returns another tenant's value for certain names, and a transient fetch failure persists after the upstream recovers. Read index.cjs for the contract. Reproduce, localize and fix the causes without disabling caching. Keep successful-value caching and concurrent request coalescing. Use deterministic dependency-free tests, not sleeps. Submit index.cjs, regression.cjs (node regression.cjs), notes.md describing hypotheses, observations and verification, plus ordered tool evidence. Follow the common artifact submission instructions.",
+      "checks":["Held-out tests exercise ambiguous tenant/key pairs, retry after rejection, empty values and concurrent coalescing.", "Submitted regression fails on original fixture and passes on fixed candidate.", "Human checks evidence distinguishes root causes from symptoms and that fix preserves cache semantics."],
+      "rubric":[
+        {"name":"Root-cause diagnosis", "weight":30, "description":"Minimal reproductions and observations explain key collisions and rejected-promise persistence; claims match tool evidence."},
+        {"name":"Behavior preservation", "weight":45, "description":"Isolation, retry, caching and deterministic coalescing all hold, without broad cache removal."},
+        {"name":"Regression and scope", "weight":25, "description":"Tests exercise both failures, avoid timing flakiness, preserve evidence and verify a bounded fix."}
+      ],
+      "fixture":"evals/fixtures/debugging", "command":"python3 evals/harness.py debugging SUBMISSION --output REPORT.json"
+    }
+  ]
+}

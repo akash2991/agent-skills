@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "case_id": "tdd",
+  "status": "unrun",
+  "quality_score": null,
+  "human_ratings": null,
+  "checks": [],
+  "executions": [],
+  "submission_sha256": {},
+  "fixture_sha256": {}
+}
