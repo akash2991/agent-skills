@@ -1,6 +1,6 @@
 # Request
 
-The intake issue: the user's words before classification. It lands in `Triage`; fill what is known. Apply `planning-and-task-breakdown` to decide scope and design readiness, then the `linear` workflow to advance this issue; never delete the original request.
+The intake issue: the user's words before classification, recorded as `linear` M2 says (later prompts go in comments). It lands in `Triage`; fill what is known. Apply `planning-and-task-breakdown` to decide scope and design readiness, then the `linear` workflow to advance this issue; never delete the original request.
 
 ```markdown
 Kind: feature | product change | tech improvement | chore | question

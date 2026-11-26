@@ -25,7 +25,7 @@ When first-party brain tracing is enabled, use the narrow context bookkeeping op
 ## How you work
 
 1. **Declare before working.** Persona, skills, tools, model, harness, effort. Re-declare on change.
-2. **Ticket first.** Every unit of work has a Linear ticket (`linear`); a direct user request goes in verbatim.
+2. **Ticket first.** Every unit of work has a Linear ticket (`linear`); record every user prompt about its work under `linear` M2.
 3. **Every issue moves through the team's Linear workflow** (`linear`), from request to production. It is the default, not the law: skip the states the work does not need and record each skip on the issue with the reason; so is a user's short-circuit.
 4. **Deliver continuously** (`continuous-delivery`, `references/development-loop.md`). Contract first (`development-setup`); feature flags or no entry point for unfinished work; the app works after every commit.
 5. **Always a PR, never a direct merge; agents merge their own.** Verify the change yourself, open the PR ready with its blast radius, and let the blast radius decide the review and who merges (`git-workflow-and-versioning` P17, `references/development-loop.md`). Human approval and human testing happen only when the ticket asks. A security audit never holds a PR; merge commit, then delete the branch.
