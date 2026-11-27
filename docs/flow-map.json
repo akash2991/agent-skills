@@ -43,10 +43,10 @@
       ]
     },
     {
-      "id": "branch-worktree",
-      "name": "Branch and worktree",
+      "id": "spawn",
+      "name": "Spawn an agent",
       "area": "Git and delivery",
-      "summary": "P5–P7 and DS2–DS3: one branch and one sibling worktree per ticket.",
+      "summary": "DS10 with P5–P6 and DS2–DS5: everything an agent needs before work, in one command that a resumed session runs again.",
       "steps": [
         [
           "Choose the slug",
@@ -61,22 +61,96 @@
           "P5"
         ],
         [
-          "Create the sibling worktree, agent name, lowercase Compose project, free ports",
+          "Refuse a legacy new-worktree.js entry before changing anything",
           "det",
-          "skills/development-setup/scripts/new-worktree.js",
-          "P6 DS2 DS3"
+          "skills/development-setup/scripts/agent-env.js",
+          "DS10"
         ],
         [
-          "Remove the worktree after the PR is open",
+          "Record the environment in the ledger before the first side effect",
           "det",
-          "skills/development-setup/scripts/new-worktree.js",
-          "DS2"
+          "skills/development-setup/scripts/agent-env.js",
+          "DS10"
         ],
         [
-          "Delete the local and remote branch after merge",
+          "Claim host ports machine-wide; a resumed spawn keeps the ones it holds",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS3"
+        ],
+        [
+          "Reuse the worktree only when its registration carries spawn's mark and its checkout points back to it; otherwise restore it, else check out origin's branch, else branch from the base, with the mark recorded first and held as git's lock reason",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "P6 DS2 DS10"
+        ],
+        [
+          "Copy .env without AWS credentials when git ignores it; install when the checkout or a lockfile is new",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS4 DS10"
+        ],
+        [
+          "For a checkout with a compose file: reserve the project name machine-wide on the pinned Docker daemon (re-read under the lock), only when it is empty or already this environment's; bring it up",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS3 DS5 DS11"
+        ],
+        [
+          "Declare persona, skills, tools, model, harness, effort",
+          "det",
+          null,
+          "DS10"
+        ]
+      ]
+    },
+    {
+      "id": "teardown",
+      "name": "Tear down an agent",
+      "area": "Git and delivery",
+      "summary": "DS11 with P7: after the merge, or on a canceled ticket, remove only what spawn created.",
+      "steps": [
+        [
+          "Delete the remote branch at merge; leave the local branch to teardown only when its tip is in the merged head and that teardown will delete it",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
           "P7"
+        ],
+        [
+          "Merged, or canceled and run with --abandon",
+          "judgment",
+          null,
+          "DS11"
+        ],
+        [
+          "Check everything first: owner, spawn's mark, a clean worktree on its branch, the merge, the Compose reservation on a reachable, matching daemon",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS1 DS11"
+        ],
+        [
+          "Remove the worktree with everything in it, ignored files included",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS2 DS11"
+        ],
+        [
+          "Decide the local branch once and record it: delete it only when spawn created it, it continues spawn's recorded commit, it merged, nothing holds it, and it is still at the checked tip; a kept merged branch leaves P7 open",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS11 P7"
+        ],
+        [
+          "Bring down the reserved Compose project with its volumes and snapshot, then release the reservation, the ports, and the ledger entry",
+          "det",
+          "skills/development-setup/scripts/agent-env.js",
+          "DS3 DS5 DS11"
+        ],
+        [
+          "Close the Herdr tabs this agent opened (herdr-fanout)",
+          "det",
+          null,
+          ""
         ]
       ]
     },
@@ -153,7 +227,7 @@
           "P13"
         ],
         [
-          "Link the PR on the ticket; high or ticket-requested: hand the code-reviewer (model from review-models.json) the PR to review and merge, under its assignment name",
+          "Link the PR on the ticket; high or ticket-requested: hand the code-reviewer (model from models.json) the PR to review and merge, under its assignment name",
           "det",
           null,
           "P10 P17"
@@ -272,7 +346,7 @@
       "id": "linear-intake",
       "name": "Take in a request",
       "area": "Linear",
-      "summary": "M1–M2: the request lands in Triage verbatim, then is classified.",
+      "summary": "M1–M2: the request lands in Triage verbatim, then is classified; every later prompt follows as a verbatim comment.",
       "steps": [
         [
           "Record the prompt verbatim on a Triage issue",
@@ -291,6 +365,12 @@
           "judgment",
           null,
           "M1"
+        ],
+        [
+          "Record each later prompt about the work verbatim, as a comment on the issue",
+          "judgment",
+          null,
+          "M2"
         ]
       ]
     },
@@ -463,6 +543,44 @@
           "human",
           null,
           ""
+        ]
+      ]
+    },
+    {
+      "id": "artifact-sync",
+      "name": "Keep artifacts current",
+      "area": "Planning and design",
+      "summary": "W12: when an agent finishes, a hook decides which mapped artifacts are stale; a cheaper model updates them in its own PR, asynchronously to the code.",
+      "steps": [
+        [
+          "An agent finishes: compare the branch's pushed commits since the last sync with the artifact map in models.json",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          "W12"
+        ],
+        [
+          "Start the artifact-sync model in the background, in a fresh worktree at the pushed tip",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          "W12"
+        ],
+        [
+          "Update the due artifacts to match the code",
+          "judgment",
+          null,
+          "W12"
+        ],
+        [
+          "Render with then, refuse edits outside the map, commit once on the tip, check that commit, push it without overwriting, and open the PR",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          "W12"
+        ],
+        [
+          "Merge the artifact PR into the code branch",
+          "judgment",
+          null,
+          "W12"
         ]
       ]
     },
@@ -644,10 +762,16 @@
       "id": "double-pass",
       "name": "Double-pass review of a brain PR",
       "area": "Reviews and audits",
-      "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in review-models.json.",
+      "summary": "AGENTS.md gate: two independent reviewers, then a synthesis, on the models in models.json.",
       "steps": [
         [
-          "Start both reviewers on the same revision with the models in review-models.json",
+          "Flow-map artifact PR: merge --pr checks the published head, runs build-flow-map --check at it, confirms base and head again, then merges exactly that head without the double pass",
+          "det",
+          "skills/documentation/scripts/artifact-sync.js",
+          ""
+        ],
+        [
+          "Start both reviewers on the same revision with the models in models.json",
           "det",
           null,
           ""
@@ -733,6 +857,12 @@
           "judgment",
           null,
           ""
+        ],
+        [
+          "Hand each issue's writer the M2-redacted quotation as context, not an assignment, for any message about its work (linear M2)",
+          "judgment",
+          null,
+          "M2"
         ],
         [
           "Launch, resume, or restart the worker under its session id with hooks and held prompts; message a live one",
@@ -835,7 +965,7 @@
         [
           "Review models are config; no AGENTS.md names a model",
           "det",
-          "scripts/validate-review-models.js",
+          "scripts/validate-models.js",
           ""
         ],
         [

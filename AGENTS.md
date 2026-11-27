@@ -7,8 +7,8 @@ This repository is where the brain is built: the personas in `agents/`, the skil
 ```
 AGENTS.md        this file: how to work on the repository
 CLAUDE.md        points here
-project/         files copied as they are to a project's root: AGENTS.md (the organization; the build fills in the installed skills and personas), SOUL.md, .env.example, review-models.json
-review-models.json  the models for this repository's double-pass review
+project/         files copied as they are to a project's root: AGENTS.md (the organization; the build fills in the installed skills and personas), SOUL.md, .env.example, models.json
+models.json      the models for this repository's double-pass review and artifact sync, and its artifact map
 agents/          personas, one file per role (docs/persona-anatomy.md)
 skills/          the flat skill dump (docs/skill-anatomy.md)
 references/      shared checklists and the way-of-working contracts
@@ -29,25 +29,28 @@ docs/            anatomies and per-tool setup guides
 | Persona anatomy and manifest | `node scripts/validate-agents.js` |
 | Reference links | `node scripts/validate-reference-links.js` |
 | Command parity across tools | `node scripts/validate-commands.js` |
-| Review models are config, never prose | `node scripts/validate-review-models.js` |
+| Models and the artifact map are config, never prose | `node scripts/validate-models.js` |
+| Artifacts due for a sync on this branch (`documentation` W12) | `node skills/documentation/scripts/artifact-sync.js due` |
 | Trigger and routing evals | `node scripts/run-evals.js --min-rank1 80` |
 | Assemble the brain from `manifest.json` | `node scripts/build-brain.js` → `build/` |
 | Flow map (which flows are code, agent, or mixed): edit `docs/flow-map.json`, then | `node scripts/build-flow-map.js` → `docs/flow-map.html` |
 
 ## The interactive flow map is maintained
 
-`docs/flow-map.json` is the source: one entry per flow, each step classified as deterministic, judgment or human, with the script that runs it named when one exists. `docs/flow-map.html` is generated from it by `node scripts/build-flow-map.js` and is the page people read. Whenever a flow changes (a skill's procedure, a rule that becomes or stops being a script, a new script or hook, a step that moves between agent and code), update `docs/flow-map.json` in the same change, rebuild the HTML, and commit both. Never edit the HTML by hand. CI runs `node scripts/build-flow-map.js --check`, so a stale page fails the build.
+`docs/flow-map.json` is the source: one entry per flow, each step classified as deterministic, judgment or human, with the script that runs it named when one exists. `docs/flow-map.html` is generated from it by `node scripts/build-flow-map.js` and is the page people read. Whenever a flow changes (a skill's procedure, a rule that becomes or stops being a script, a new script or hook, a step that moves between agent and code), update `docs/flow-map.json` in the same change, rebuild the HTML, and commit both. Never edit the HTML by hand. CI runs `node scripts/build-flow-map.js --check`, so a stale page fails the build. `docs/flow-map.json` is an artifact in `models.json`: when an agent finishes, the artifact sync (`documentation` W12) opens a PR that brings it up to date if the change did not.
 
 ## Mandatory double-pass PR review
 
 This gate applies to the brain repository itself, not automatically to projects consuming it. Changes here can propagate to every repository that installs or updates from the brain, so every change—including documentation and instruction changes—must follow this workflow:
 
 1. **Raise the PR.** The authoring agent opens a PR with the changes and verification evidence.
-2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one for each entry under `independent` in [review-models.json](review-models.json), on its harness, model, and effort. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
-3. **Third-agent synthesis.** A separate agent on the `synthesis` entry in [review-models.json](review-models.json) examines the original PR and both submitted reviews, reconciles conflicting findings, and posts a combined assessment and required fixes on the PR. It does not substitute for either independent pass.
+2. **Two independent review passes.** Two separate, fresh agent instances review the same PR revision independently: one for each entry under `independent` in [models.json](models.json), on its harness, model, and effort. Neither reviewer is the author, and neither receives the other's findings before submitting its own. Each submits its findings on the PR, including an explicit no-findings result when applicable.
+3. **Third-agent synthesis.** A separate agent on the `synthesis` entry in [models.json](models.json) examines the original PR and both submitted reviews, reconciles conflicting findings, and posts a combined assessment and required fixes on the PR. It does not substitute for either independent pass.
 4. **Resolve before merge.** Address the required fixes and record their disposition and verification on the PR. Reviews and synthesis must cover the final revision; changed content must receive the applicable review passes and synthesis before merge.
 
-This is mandatory, including for changes already in progress. Local checks or a single review do not satisfy it. Launch each agent with the exact model identifier from `review-models.json`, authenticated; if a model there is unavailable or its identifier is unclear, stop at that gate and ask the user rather than substitute another model or claim completion. The models are always the latest available: when a newer one ships, change `review-models.json` (and `project/review-models.json` for projects) in its own PR, never the prose here; `node scripts/validate-review-models.js` flags configured model names and common GPT, Claude and Gemini spellings in either AGENTS.md. Each entry's `harness` is `pi`, `claude` (Claude Code) or `agy` (Antigravity, for Gemini models among others; use an id listed by `agy models` that ends in the configured effort), with that CLI's exact model id and effort. A PR that changes `review-models.json` is reviewed on the base branch's configuration, unless the owner explicitly approves reviewing it on the proposed one; record that approval on the PR. Do not merge until both independent passes and the third-agent synthesis are complete.
+This is mandatory, including for changes already in progress. Local checks or a single review do not satisfy it. Launch each agent with the exact model identifier from `models.json`, authenticated; if a model there is unavailable or its identifier is unclear, stop at that gate and ask the user rather than substitute another model or claim completion. The models are always the latest available: when a newer one ships, change `models.json` (and `project/models.json` for projects) in its own PR, never the prose here; `node scripts/validate-models.js` flags configured model names and common GPT, Claude and Gemini spellings in either AGENTS.md. Each entry's `harness` is `pi`, `claude` (Claude Code) or `agy` (Antigravity, for Gemini models among others; use an id listed by `agy models` that ends in the configured effort), with that CLI's exact model id and effort. A PR that changes `models.json` is reviewed on the base branch's configuration, unless the owner explicitly approves reviewing it on the proposed one; record that approval on the PR. Do not merge until both independent passes and the third-agent synthesis are complete.
+
+**Exception: artifact PRs.** A PR opened by the artifact sync (`documentation` W12) skips the two passes and the synthesis only when it is merged with `node skills/documentation/scripts/artifact-sync.js merge --pr <number>`, run in the clone whose sync published it. That command checks the PR's own base and head commits: the same repository, the head branch `<base>-artifacts`, the head commit the sync recorded as published, and changes to the flow map only (`docs/flow-map.json` and `docs/flow-map.html`). It runs `node scripts/build-flow-map.js --check` in a fresh worktree at that head, refuses if GitHub reports any check that is not green, confirms the base and head again, and merges exactly that head. Any other artifact, a Markdown or HTML page or `models.json` included, means the full gate applies. The exemption covers review only, and the code PR it merges into keeps its own final-revision rule.
 
 ## Conventions for this repository
 

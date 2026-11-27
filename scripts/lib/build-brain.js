@@ -108,7 +108,7 @@ function buildBrain(options = {}) {
   validateSourceTree(root, 'references');
   validateSourceTree(root, 'templates');
   validateSourceTree(root, 'runtime/langfuse');
-  for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example', 'review-models.json']) validateManagedRelPath(rel, 'source path');
+  for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json']) validateManagedRelPath(rel, 'source path');
   for (const dir of ['.claude/commands', '.gemini/commands', 'commands', '.pi/prompts', '.codex/prompts']) {
     for (const f of brainCommandFiles(root, dir)) validateManagedRelPath(`${dir}/${f}`, 'source path');
   }
@@ -135,7 +135,7 @@ function buildBrain(options = {}) {
   for (const f of ['references', 'templates', 'runtime/langfuse']) copy(path.join(root, f), path.join(out, f));
   copy(path.join(root, 'project', 'SOUL.md'), path.join(out, 'SOUL.md'));
   copy(path.join(root, 'project', '.env.example'), path.join(out, '.env.example'));
-  copy(path.join(root, 'project', 'review-models.json'), path.join(out, 'review-models.json'));
+  copy(path.join(root, 'project', 'models.json'), path.join(out, 'models.json'));
   const skillList = skills.map(s => `- \`skills/${s}/SKILL.md\``).join('\n');
   const org = fs.readFileSync(path.join(root, 'project', 'AGENTS.md'), 'utf8')
     .replace(/^<!-- brain:skills.*$/m, skillList);

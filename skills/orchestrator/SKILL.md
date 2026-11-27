@@ -35,6 +35,8 @@ If `start` is refused (exit 3), another orchestrator is running in this project.
 
 ### 2. Classify every user message
 
+For any message about an issue's work, hand its writer the quotation under `linear` M2 whatever the action below, or use M2's no-writer fallback; a work-ending decision goes before you resolve or stop. Unrelated session commands are not recorded.
+
 | The user… | You |
 |---|---|
 | asks for work: a fix, a feature, an investigation, a review | route it (step 3) |
@@ -60,7 +62,7 @@ Run `orch find --all --query "<the request's key words>"`. Read the top candidat
 
 **Stale**, until the decision model (FAC-28) takes this over: compacted three times or more, or idle for more than 14 days. A stale session is cheaper to restart from its summary and ticket than to resume with its long context.
 
-When one message holds unrelated asks, split it and route each part separately. Mixing them in one session is the failure this skill exists to prevent. When two open sessions fit equally well, ask the user one question naming both.
+When one message holds unrelated asks, split it and route each part separately. Mixing them in one session is the failure this skill exists to prevent. Keep the assignments separate, but pass each worker the M2-redacted quotation of the user's message for that worker's issue, as context and not as another assignment, so it can record the prompt (`linear` M2); use that redacted text from the start, in the routing record too; do the same for a work-ending decision before you resolve or stop a session. When two open sessions fit equally well, ask the user one question naming both.
 
 Every route records a decision, and the decision records its outcome once the route has run: the action printed (for example `new`, `resumed`, `relaunched`, `sent`, or `waiting: user`), or what went wrong (for example `held: …`, `unknown: …`, `failed: …` when no worker started, `uncertain: …` when one may have, `started-then-failed: …` when one started but recording or delivering failed). A retry is a new decision. A command refused before it routes anything records none. Outcomes, and events written after an action (a launch, a delivery, a stop), are history: one that cannot be written prints a warning and never changes a command's result or its guidance. Events committed with a routing change, such as a new tab and its parent's supersession, belong to that change and are written or rolled back with it. If `new --from` fails before any worker started, the parent is left as it was (open, unless another session with a worker, or one that may have a worker, already superseded it; a parent an older record marked superseded by a session that never got a worker is reopened, since supersession needs a first worker), and `find` shows both: retry the new one as its error says (`resume S<new>`), rather than choosing between them again. The exception is a failure whose record could not be restored: the parent stays superseded, and the error names the retry (`relaunch S<new>`). Pass `--reason` with one line on why, and `--considered S3,S7` with the sessions you weighed. That history is what the decision model will learn from.
 

@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 /**
- * validate-review-models.js
+ * validate-models.js
  *
- * The review models live in config, never in prose:
- *   review-models.json          this repository's double-pass gate (AGENTS.md)
- *   project/review-models.json  a project's default code-reviewer (project/AGENTS.md)
+ * The models and the artifact map live in config, never in prose:
+ *   models.json          this repository's double-pass gate (AGENTS.md), its artifact-sync model and artifacts
+ *   project/models.json  a project's default code-reviewer and artifact-sync model; its artifacts start empty
  *
  * Checks (errors block CI):
  *   - both files parse and have the expected shape
  *   - exactly two independent reviewers on different models (agy effort
  *     variants of one model are the same model), plus a synthesis
+ *   - an artifact-sync entry, and artifacts as { path, sources, then?, outputs? } (documentation W12); in this
+ *     repository every artifact path and output exists
  *   - each harness's model id shape and the efforts its CLI accepts; an agy id
  *     must end in the entry's effort (gemini-4-hydrogen-high with "high"):
  *     agy refuses --effort for ids without one, and a different one
@@ -19,7 +21,7 @@
  *     "Gemini 4 Hydrogen" (a heuristic over the GPT, Claude and Gemini
  *     families, not a guarantee)
  *
- * Usage: node scripts/validate-review-models.js [--root <dir>]
+ * Usage: node scripts/validate-models.js [--root <dir>]
  * Exit codes: 0 = all clear, 1 = one or more errors
  */
 
@@ -113,11 +115,46 @@ function readJson(file, rel, errors) {
   catch (err) { errors.push(`${rel}: invalid JSON (${err.message})`); return FAILED; }
 }
 
-function checkGate(cfg, errors) {
-  const rel = 'review-models.json';
+const ARTIFACT_KEYS = ['path', 'sources', 'then', 'outputs'];
+
+function safeRel(value) {
+  return typeof value === 'string' && value.length > 0 && !value.startsWith('/') && !value.includes('\\')
+    && value.split('/').every(p => p && p !== '.' && p !== '..');
+}
+
+// root is set for this repository, where every artifact must exist; a project's list is filled in by the project.
+function checkArtifacts(list, rel, errors, root) {
+  if (!Array.isArray(list)) { errors.push(`${rel}.artifacts: must be an array (empty when nothing is mapped yet)`); return; }
+  const seen = new Set();
+  list.forEach((a, i) => {
+    const where = `${rel}.artifacts[${i}]`;
+    if (!isObject(a)) { errors.push(`${where}: must be an object with path and sources`); return; }
+    const extra = Object.keys(a).filter(k => !ARTIFACT_KEYS.includes(k));
+    if (extra.length) errors.push(`${where}: unknown field(s) ${extra.join(', ')}`);
+    if (!safeRel(a.path)) errors.push(`${where}.path: required repository-relative path`);
+    else if (a.path === 'models.json') errors.push(`${where}.path: models.json is config, never an artifact`);
+    else if (seen.has(a.path)) errors.push(`${where}.path: ${a.path} is mapped twice`);
+    else seen.add(a.path);
+    if (!Array.isArray(a.sources) || !a.sources.length || !a.sources.every(s => typeof s === 'string' && s.trim())) {
+      errors.push(`${where}.sources: required non-empty array of globs`);
+    }
+    if (a.then !== undefined && (typeof a.then !== 'string' || !a.then.trim())) errors.push(`${where}.then: must be a non-empty command`);
+    if (a.outputs !== undefined && (!Array.isArray(a.outputs) || !a.outputs.every(safeRel))) errors.push(`${where}.outputs: must be an array of repository-relative paths`);
+    if (Array.isArray(a.outputs) && a.outputs.includes('models.json')) errors.push(`${where}.outputs: models.json is config, never an artifact`);
+    if (a.outputs !== undefined && a.then === undefined) errors.push(`${where}.outputs: only a then command writes outputs`);
+    if (root) {
+      for (const f of [a.path, ...(Array.isArray(a.outputs) ? a.outputs : [])]) {
+        if (safeRel(f) && !fs.existsSync(path.join(root, f))) errors.push(`${where}: ${f} does not exist`);
+      }
+    }
+  });
+}
+
+function checkGate(cfg, errors, root) {
+  const rel = 'models.json';
   if (cfg === FAILED) return [];
   if (!isObject(cfg)) { errors.push(`${rel}: must be an object`); return []; }
-  const extra = Object.keys(cfg).filter(k => !['independent', 'synthesis'].includes(k));
+  const extra = Object.keys(cfg).filter(k => !['independent', 'synthesis', 'artifact-sync', 'artifacts'].includes(k));
   if (extra.length) errors.push(`${rel}: unknown field(s) ${extra.join(', ')}`);
   if (!Array.isArray(cfg.independent) || cfg.independent.length !== 2) {
     errors.push(`${rel}.independent: needs exactly two independent reviewers (AGENTS.md's double pass)`);
@@ -127,17 +164,21 @@ function checkGate(cfg, errors) {
   const models = independent.map(modelKey);
   if (new Set(models).size !== models.length) errors.push(`${rel}.independent: the reviewers must use different models`);
   checkEntry(cfg.synthesis, `${rel}.synthesis`, errors);
-  return [...independent, cfg.synthesis];
+  checkEntry(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
+  checkArtifacts(cfg.artifacts, rel, errors, root);
+  return [...independent, cfg.synthesis, cfg['artifact-sync']];
 }
 
 function checkProject(cfg, errors) {
-  const rel = 'project/review-models.json';
+  const rel = 'project/models.json';
   if (cfg === FAILED) return [];
   if (!isObject(cfg)) { errors.push(`${rel}: must be an object`); return []; }
-  const extra = Object.keys(cfg).filter(k => k !== 'code-reviewer');
+  const extra = Object.keys(cfg).filter(k => !['code-reviewer', 'artifact-sync', 'artifacts'].includes(k));
   if (extra.length) errors.push(`${rel}: unknown field(s) ${extra.join(', ')}`);
   checkEntry(cfg['code-reviewer'], `${rel}.code-reviewer`, errors);
-  return [cfg['code-reviewer']];
+  checkEntry(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
+  checkArtifacts(cfg.artifacts, rel, errors);
+  return [cfg['code-reviewer'], cfg['artifact-sync']];
 }
 
 function checkProse(root, rel, entries, errors) {
@@ -148,7 +189,7 @@ function checkProse(root, rel, entries, errors) {
   for (const anchor of SELECTION[rel]) {
     const at = lines.findIndex(l => l.includes(anchor));
     if (at === -1) errors.push(`${rel}: cannot find the reviewer-selection instruction containing ${anchor}`);
-    else if (!lines[at].includes('review-models.json')) errors.push(`${rel}:${at + 1}: the reviewer-selection instruction must point to review-models.json`);
+    else if (!lines[at].includes('models.json')) errors.push(`${rel}:${at + 1}: the reviewer-selection instruction must point to models.json`);
   }
   const named = new Set();
   for (const e of entries) {
@@ -160,14 +201,14 @@ function checkProse(root, rel, entries, errors) {
     const hits = new Set();
     for (const n of named) if (norm.includes(n)) hits.add(n);
     for (const m of norm.matchAll(MODEL_LIKE)) hits.add(m[0]);
-    if (hits.size) errors.push(`${rel}:${i + 1}: names a model (${[...hits].map(h => `"${h}"`).join(', ')}); name the role and point to review-models.json`);
+    if (hits.size) errors.push(`${rel}:${i + 1}: names a model (${[...hits].map(h => `"${h}"`).join(', ')}); name the role and point to models.json`);
   });
 }
 
 function validate(root) {
   const errors = [];
-  const gate = checkGate(readJson(path.join(root, 'review-models.json'), 'review-models.json', errors), errors);
-  const project = checkProject(readJson(path.join(root, 'project', 'review-models.json'), 'project/review-models.json', errors), errors);
+  const gate = checkGate(readJson(path.join(root, 'models.json'), 'models.json', errors), errors, root);
+  const project = checkProject(readJson(path.join(root, 'project', 'models.json'), 'project/models.json', errors), errors);
   const all = [...gate, ...project];
   checkProse(root, 'AGENTS.md', all, errors);
   checkProse(root, 'project/AGENTS.md', all, errors);
@@ -185,7 +226,7 @@ if (require.main === module) {
     console.error(`\n${errors.length} error(s)`);
     process.exit(1);
   }
-  console.log('review models: config valid, no model named in AGENTS.md or project/AGENTS.md');
+  console.log('models: config valid, artifacts mapped, no model named in AGENTS.md or project/AGENTS.md');
 }
 
 module.exports = { validate };

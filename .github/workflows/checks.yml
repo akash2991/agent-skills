@@ -19,7 +19,7 @@ jobs:
       - run: node scripts/validate-reference-links.js
       - run: node scripts/validate-artifact-paths.js
       - run: node scripts/validate-commands.js
-      - run: node scripts/validate-review-models.js
+      - run: node scripts/validate-models.js
       - run: node scripts/build-flow-map.js --check
       - run: node scripts/run-evals.js --min-rank1 80
       - run: |
@@ -28,13 +28,14 @@ jobs:
           node --test scripts/validate-reference-links-test.js
           node --test scripts/validate-artifact-paths-test.js
           node --test scripts/validate-commands-test.js
-          node --test scripts/validate-review-models-test.js
+          node --test scripts/validate-models-test.js
+          node --test scripts/artifact-sync-test.js
           node --test scripts/agent-brain-pull-test.js
           node --test scripts/validate-agents-test.js
           node --test scripts/git-workflow-scripts-test.js
           node --test scripts/flow-map-test.js
           node --test scripts/linear-status-test.js
-          node --test scripts/new-worktree-test.js
+          node --test scripts/agent-env-test.js
           node --test scripts/orchestrator-test.js
       - name: Prepare pinned metadata tracing SDKs
         run: npm ci --prefix runtime/langfuse --ignore-scripts --no-audit --no-fund --legacy-peer-deps
