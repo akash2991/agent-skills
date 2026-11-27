@@ -25,14 +25,16 @@ function readSettings(file, missingValue = {}) {
 
 function atomicJSON(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  let mode = 0o644;
+  let mode = null;
   try {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unsafe native settings path');
     mode = stat.mode & 0o777;
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const temp = `${file}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode, flag: 'wx' });
+  // A new file gets what the umask allows; an existing file keeps its mode, which creation alone would cut by the umask.
+  fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: mode === null ? 0o644 : mode, flag: 'wx' });
+  if (mode !== null) fs.chmodSync(temp, mode);
   fs.renameSync(temp, file);
 }
 

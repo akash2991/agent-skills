@@ -14,8 +14,10 @@ const CLAUDE_GUARD_MATCHER = '^(?:Bash|Monitor)$';
 // `|| exit 2` makes a missing or crashing hook block the call: Claude treats exit 2 as a refusal.
 const CLAUDE_GUARD_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.agent-brain/guard/claude-hook.cjs" || exit 2';
 const PI_GUARD_EXTENSION = '../.agent-brain/guard/pi.cjs';
-const isGuardHook = hook => hook && typeof hook.command === 'string' && /(?:^|[/"])(?:\.agent-brain|runtime)\/guard\/claude-hook\.cjs\b/.test(hook.command);
-const isGuardExtension = value => typeof value === 'string' && /(?:^|\/)(?:\.agent-brain|runtime)\/guard\/pi\.cjs$/.test(value);
+// An earlier registration is only what this installer writes: exactly its command, and exactly its extension path.
+// Anything else, even a command that also runs the guard or a file with the same name elsewhere, is the project's.
+const isGuardHook = hook => hook && hook.command === CLAUDE_GUARD_COMMAND;
+const isGuardExtension = value => value === PI_GUARD_EXTENSION;
 
 function checkGuardSettings(target) {
   for (const rel of ['.claude', '.pi']) {
