@@ -36,6 +36,7 @@ jobs:
           node --test scripts/flow-map-test.js
           node --test scripts/linear-status-test.js
           node --test scripts/agent-env-test.js
+          node --test scripts/branch-guard-test.js
           node --test scripts/orchestrator-test.js
       - name: Prepare pinned metadata tracing SDKs
         run: npm ci --prefix runtime/langfuse --ignore-scripts --no-audit --no-fund --legacy-peer-deps

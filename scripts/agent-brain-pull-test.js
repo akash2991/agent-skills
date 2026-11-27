@@ -319,7 +319,7 @@ test('brain files are replaced on first install and subsequent pulls without bac
   assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), expected);
   assert.deepEqual(fs.readFileSync(path.join(target, '.env.example')), fs.readFileSync(path.join(ROOT, 'project/.env.example')));
   assert.equal(fs.readFileSync(path.join(target, '.env'), 'utf8'), 'PROJECT_PRIVATE=untouched\n');
-  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')).sort(), ['install-state.json', 'observability']);
+  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')).sort(), ['guard', 'install-state.json', 'observability']);
 });
 
 test('updates and retired file pruning ignore local edits to brain-owned files', () => {
