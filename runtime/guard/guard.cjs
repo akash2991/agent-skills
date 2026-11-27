@@ -282,6 +282,14 @@ const WRAPPERS = new Map([
 // The index of the program a command runs: its name, or, after wrappers, the first word that is not a wrapper's option,
 // option value or assignment (`sudo -u deploy git`, `timeout 30 git`, `sudo /usr/bin/grep git` runs grep). An unreadable
 // name is passed over like a wrapper without options, since it may be one. -1 when there is none.
+// Whether an option word takes the next word as its value: `-u`, `--user`, or a cluster that ends in such a letter
+// (`-nu deploy`). A value letter earlier in the cluster has its value attached (`-udeploy`).
+function takesNextWord(t, values) {
+  if (values.includes(t)) return true;
+  if (!/^-[A-Za-z]{2,}$/.test(t)) return false;
+  const first = [...t].findIndex((l, i) => i > 0 && values.includes(`-${l}`));
+  return first === t.length - 1;
+}
 function programIndex(words, head) {
   let i = head;
   for (;;) {
@@ -293,7 +301,7 @@ function programIndex(words, head) {
     let duration = name === 'timeout';
     for (; j < words.length; j++) {
       const x = words[j];
-      if (/^[-+]/.test(x.text)) { if (!x.unknown && values.includes(x.text)) j++; continue; }
+      if (/^[-+]/.test(x.text)) { if (!x.unknown && takesNextWord(x.text, values)) j++; continue; }
       if (!x.unknown && ASSIGNMENT.test(x.text)) continue;
       if (duration && !x.unknown) { duration = false; continue; }
       break;
@@ -474,7 +482,11 @@ function checkWords(words, src, depth, hidden) {
   // action. Elsewhere (`npm view git "$FIELD"`, `xargs grep -n git`) the word may be data, so only a literal
   // guarded command after it is refused.
   const program = programIndex(words, head);
-  const isFind = program >= 0 && base(words[program]) === 'find';
+  // find runs a program per action; each is found the same way, through any wrapper (`find . -exec env git ... ;`).
+  const programs = new Set([program]);
+  if (program >= 0 && base(words[program]) === 'find') {
+    words.forEach((x, i) => { if (i > program && !x.unknown && EXEC_ACTIONS.has(x.text)) programs.add(programIndex(words, i + 1)); });
+  }
   for (let k = 0; k < words.length; k++) {
     const w = words[k];
     // An argument of a data command is data: `echo git branch -D x` prints, `git branch feature/bash` names a branch.
@@ -534,7 +546,7 @@ function checkWords(words, src, depth, hidden) {
     const tail = words.slice(k + 1);
     // xargs appends words read from stdin, which the guard cannot see.
     if (xargs) tail.push({ text: '', unknown: true, quoted: false });
-    const position = k === program || (isFind && k > program && EXEC_ACTIONS.has(words[k - 1].text));
+    const position = programs.has(k);
     if (w.unknown || name === 'git') { const r = gitRule(tail, name === 'git' && position); if (r) return r; }
     if (w.unknown || name === 'gh') { const r = ghRule(tail, name === 'gh' && position); if (r) return r; }
     // git's own programs: `git-branch -D x`, `"$(git --exec-path)/git-branch" -D x`.
