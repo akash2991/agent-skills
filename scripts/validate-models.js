@@ -8,14 +8,21 @@
  *
  * Checks (errors block CI):
  *   - both files parse and have the expected shape
- *   - exactly two independent reviewers on different models, plus a synthesis
- *   - an artifact-sync entry, and artifacts as { path, sources, then?, outputs? } (documentation W12); in this
+ *   - exactly two independent reviewers on different models (agy effort
+ *     variants of one model are the same model), plus a synthesis
+ *   - an artifact-sync entry on a harness the sync runner can start (artifact-sync.js: claude, pi; not agy),
+ *     and artifacts as { path, sources, then?, outputs? } (documentation W12); in this
  *     repository every artifact path and output exists
- *   - each harness's model id shape and the efforts its CLI accepts
+ *   - each model family runs on one harness: Codex models on pi, Claude
+ *     models on claude (Claude Code), Gemini models on agy (Antigravity)
+ *   - each harness's model id shape and the efforts its CLI accepts; an agy id
+ *     must end in the entry's effort (gemini-4-hydrogen-high with "high"):
+ *     agy refuses --effort for ids without one, and a different one
  *   - the lines that select reviewers in each AGENTS.md point to the config
  *   - neither AGENTS.md names a model, by a configured label or id or by a
- *     model-like name such as "GPT 6.1 Sol", "Opus 5.5" or "Claude Opus"
- *     (a heuristic over the GPT and Claude families, not a guarantee)
+ *     model-like name such as "GPT 6.1 Sol", "Opus 5.5", "Claude Opus" or
+ *     "Gemini 4 Hydrogen" (a heuristic over the GPT, Claude and Gemini
+ *     families, not a guarantee)
  *
  * Usage: node scripts/validate-models.js [--root <dir>]
  * Exit codes: 0 = all clear, 1 = one or more errors
@@ -26,12 +33,17 @@
 const fs = require('fs');
 const path = require('path');
 
-// Each harness: what an exact model id looks like, and the efforts its CLI accepts
-// (`pi --help` --thinking, `claude --help` --effort).
+// Each harness runs one model family (the owner's rule: Claude and Gemini models on
+// their native harness, Codex models on pi): what an exact model id looks like, and
+// the efforts its CLI accepts (`pi --help` --thinking, `claude --help` --effort,
+// `agy --help` --effort). agy is Antigravity; its ids are the ones `agy models` lists.
 const HARNESSES = new Map([
-  ['pi', { model: /^[a-z0-9-]+\/[a-z0-9][a-z0-9.-]*$/, efforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }],
-  ['claude', { model: /^claude-[a-z0-9][a-z0-9-]*$/, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
+  ['pi', { model: /^openai-codex\/[a-z0-9][a-z0-9.-]*$/, ids: 'openai-codex/<id> (Codex models)', efforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }],
+  ['claude', { model: /^claude-[a-z0-9][a-z0-9-]*$/, ids: 'claude-<id> (Claude models)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
+  ['agy', { model: /^gemini-[a-z0-9.-]*[a-z0-9]$/, ids: 'gemini-<id> (Gemini models)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], effortInId: true }],
 ]);
+// The artifact sync launches its own agent, so its entry is limited to the harnesses its runner can start.
+const SYNC_HARNESSES = Object.keys(require('../skills/documentation/scripts/artifact-sync').HARNESSES);
 const ENTRY_KEYS = ['label', 'harness', 'model', 'effort'];
 // The line that selects each reviewer must point to the config.
 const SELECTION = {
@@ -39,13 +51,31 @@ const SELECTION = {
   'project/AGENTS.md': ['except for a `code-reviewer`'],
 };
 // A heuristic, not a guarantee: after normalize(), this catches the usual spellings
-// of the GPT and Claude families ("GPT 6.1 Sol", "Claude Opus", "opus5.5"). The
-// configured labels and ids are matched exactly. Other families are not covered.
-const MODEL_LIKE = /\bgpt-?\d[\w.]*|\bclaude-(?:opus|sonnet|haiku|fable)\b|\b(?:opus|sonnet|haiku|fable)-?\d+(?:\.\d+)?\b/g;
+// of the GPT, Claude and Gemini families ("GPT 6.1 Sol", "Claude Opus", "opus5.5",
+// "Gemini 4 Hydrogen", "Gemini Flash"). The configured labels and ids are matched
+// exactly. Other families are not covered. A bare "gemini" is not a model: it is
+// also the Gemini CLI and its .gemini/ directory.
+const GEMINI_NAMES = 'pro|flash|ultra|nano|hydrogen|helium|lithium|neon|argon|xenon';
+const MODEL_LIKE = new RegExp(String.raw`\bgpt-?\d[\w.]*|\bclaude-(?:opus|sonnet|haiku|fable)\b|\b(?:opus|sonnet|haiku|fable)-?\d+(?:\.\d+)?\b`
+  + String.raw`|\bgemini-?\d[\w.]*|\bgemini-(?:${GEMINI_NAMES})\b`, 'g');
 const FAILED = Symbol('failed');
 
 function normalize(text) {
   return text.toLowerCase().replace(/[\s\u00a0\u2010-\u2015_-]+/g, '-');
+}
+
+// "<base>-<effort>" for a harness that puts the effort in the id, else null.
+function splitEffort(model, spec) {
+  const m = model.match(new RegExp(`^(.+)-(${spec.efforts.join('|')})$`));
+  return m ? { base: m[1], effort: m[2] } : null;
+}
+
+// What makes two reviewers the same model: the id, without an agy effort suffix.
+function modelKey(entry) {
+  if (!isObject(entry) || typeof entry.model !== 'string') return undefined;
+  const spec = HARNESSES.get(entry.harness);
+  const parsed = spec && spec.effortInId ? splitEffort(entry.model, spec) : null;
+  return `${entry.harness}:${parsed ? parsed.base : entry.model}`;
 }
 
 function isObject(v) {
@@ -68,11 +98,25 @@ function checkEntry(entry, where, errors) {
     errors.push(`${where}.harness: "${entry.harness}" is not one of ${[...HARNESSES.keys()].join(', ')}`);
     return;
   }
-  if (typeof entry.model === 'string' && !spec.model.test(entry.model)) {
-    errors.push(`${where}.model: "${entry.model}" is not an exact ${entry.harness} model id`);
+  const idOk = typeof entry.model === 'string' && spec.model.test(entry.model);
+  if (typeof entry.model === 'string' && !idOk) {
+    errors.push(`${where}.model: "${entry.model}" is not an exact ${entry.harness} model id; ${entry.harness} runs ${spec.ids}`);
   }
   if (typeof entry.effort === 'string' && !spec.efforts.includes(entry.effort)) {
     errors.push(`${where}.effort: "${entry.effort}" is not one of ${entry.harness}'s ${spec.efforts.join(', ')}`);
+  }
+  if (spec.effortInId && idOk && typeof entry.effort === 'string') {
+    const parsed = splitEffort(entry.model, spec);
+    if (!parsed || parsed.effort !== entry.effort) {
+      errors.push(`${where}.model: "${entry.model}" must be an agy id that ends in its effort "-${entry.effort}", as \`agy models\` lists it`);
+    }
+  }
+}
+
+function checkSync(entry, where, errors) {
+  checkEntry(entry, where, errors);
+  if (isObject(entry) && HARNESSES.has(entry.harness) && !SYNC_HARNESSES.includes(entry.harness)) {
+    errors.push(`${where}.harness: "${entry.harness}" cannot run the artifact sync; its runner starts ${SYNC_HARNESSES.join(', ')}`);
   }
 }
 
@@ -131,10 +175,10 @@ function checkGate(cfg, errors, root) {
   }
   const independent = Array.isArray(cfg.independent) ? cfg.independent : [];
   independent.forEach((e, i) => checkEntry(e, `${rel}.independent[${i}]`, errors));
-  const models = independent.map(e => isObject(e) ? e.model : undefined);
+  const models = independent.map(modelKey);
   if (new Set(models).size !== models.length) errors.push(`${rel}.independent: the reviewers must use different models`);
   checkEntry(cfg.synthesis, `${rel}.synthesis`, errors);
-  checkEntry(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
+  checkSync(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
   checkArtifacts(cfg.artifacts, rel, errors, root);
   return [...independent, cfg.synthesis, cfg['artifact-sync']];
 }
@@ -146,7 +190,7 @@ function checkProject(cfg, errors) {
   const extra = Object.keys(cfg).filter(k => !['code-reviewer', 'artifact-sync', 'artifacts'].includes(k));
   if (extra.length) errors.push(`${rel}: unknown field(s) ${extra.join(', ')}`);
   checkEntry(cfg['code-reviewer'], `${rel}.code-reviewer`, errors);
-  checkEntry(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
+  checkSync(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
   checkArtifacts(cfg.artifacts, rel, errors);
   return [cfg['code-reviewer'], cfg['artifact-sync']];
 }
