@@ -267,11 +267,13 @@ class Parser {
 }
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const EXEC_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'time']);
 // Words that run the words after them as a command.
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'ionice', 'timeout', 'stdbuf', 'setsid', 'caffeinate', 'find', 'xargs', 'parallel', 'watch', 'eval']);
 // The index of a simple command's name: after variable assignments and shell keywords (`if git ...; then`).
-const headIndex = words => words.findIndex(w => w.unknown || !(ASSIGNMENT.test(w.text) || (!w.quoted && KEYWORDS.has(w.text))));
+const headIndex = words => words.findIndex((w, i) => w.unknown || !(ASSIGNMENT.test(w.text) || (!w.quoted && KEYWORDS.has(w.text))
+  || (w.text.startsWith('-') && i > 0 && !words[i - 1].unknown && words[i - 1].text === 'time'))); // `time -p git ...`
 const base = w => (w.unknown ? null : w.text.split('/').pop());
 // A cluster of short options (`-qd`). After a letter that takes a value (`-odeploy`), the rest is that value, not flags.
 const cluster = (t, letters, valueLetters = '') => {
@@ -459,9 +461,9 @@ function checkWords(words, src, depth, hidden) {
         const at = after.findIndex((x, i) => x.unknown || (!option(x) && !(i > 0 && SHELL_VALUE_OPTIONS.has(after[i - 1].text))));
         // No script operand: after xargs it comes from input the guard cannot see.
         if (at < 0) { if (xargs && hidden()) return UNSEEN; continue; }
-        // The positional data ends where this invocation does: at the end of the command, or at the `;` that closes a
+        // The positional data ends where this invocation does: at the end of the command, or at the `;` or `+` that closes a
         // `find -exec` action, after which the next action is read.
-        const close = words.findIndex((x, i) => i > k + 1 + at && !x.unknown && x.text === ';');
+        const close = words.findIndex((x, i) => i > k + 1 + at && !x.unknown && (x.text === ';' || (x.text === '+' && words[i - 1].text === '{}')));
         if (after[at].unknown) { if (hidden()) return UNSEEN; }
         else { const r = analyze(after[at].text, depth + 1); if (r) return r; }
         if (close < 0) break;
@@ -500,7 +502,11 @@ function checkWords(words, src, depth, hidden) {
     const tail = words.slice(k + 1);
     // xargs appends words read from stdin, which the guard cannot see.
     if (xargs) tail.push({ text: '', unknown: true, quoted: false });
-    const position = k === head || wrapped;
+    // After a wrapper, the command is the first word that is not the wrapper's own option, number, path or assignment
+    // (`sudo -n git`, `timeout 30 git`, `xargs -I{} git`), or the word after find's -exec. Past another program's name
+    // (`xargs grep -n git`, `timeout 30 npm view git`) the word is that program's data.
+    const position = k === head || (wrapped && k > head && (EXEC_ACTIONS.has(words[k - 1].text)
+      || words.slice(head + 1, k).every(x => x.unknown || /^(?:[-+./~\d]|\{\})/.test(x.text) || ASSIGNMENT.test(x.text) || WRAPPERS.has(base(x)))));
     if (w.unknown || name === 'git') { const r = gitRule(tail, name === 'git' && position); if (r) return r; }
     if (w.unknown || name === 'gh') { const r = ghRule(tail, name === 'gh' && position); if (r) return r; }
     // git's own programs: `git-branch -D x`, `"$(git --exec-path)/git-branch" -D x`.
