@@ -273,7 +273,13 @@ const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', '
 // The index of a simple command's name: after variable assignments and shell keywords (`if git ...; then`).
 const headIndex = words => words.findIndex(w => w.unknown || !(ASSIGNMENT.test(w.text) || (!w.quoted && KEYWORDS.has(w.text))));
 const base = w => (w.unknown ? null : w.text.split('/').pop());
-const cluster = (t, letters) => /^-[A-Za-z]+$/.test(t) && [...letters].some(l => t.includes(l));
+// A cluster of short options (`-qd`). After a letter that takes a value (`-odeploy`), the rest is that value, not flags.
+const cluster = (t, letters, valueLetters = '') => {
+  if (!/^-[A-Za-z]+$/.test(t)) return false;
+  const stop = [...t].findIndex((l, i) => i > 0 && valueLetters.includes(l));
+  const flags = stop < 0 ? t : t.slice(0, stop);
+  return [...letters].some(l => flags.includes(l));
+};
 const longPrefix = (t, option) => t.length >= 3 && t.startsWith('--') && option.startsWith(t);
 const literally = (w, text) => w.unknown || w.text === text;
 
@@ -284,12 +290,12 @@ function updateRefDelete(t) {
   return t === '-d' || longPrefix(t, '--stdin') || cluster(t, 'd');
 }
 function pushDelete(t) {
-  return cluster(t, 'd') || longPrefix(t, '--delete') || longPrefix(t, '--prune') || longPrefix(t, '--mirror');
+  return cluster(t, 'd', 'o') || longPrefix(t, '--delete') || longPrefix(t, '--prune') || longPrefix(t, '--mirror');
 }
 function ghDelete(t) {
   if (t === '-d' || t === '--delete-branch') return true;
   if (t.startsWith('--delete-branch=')) return t !== '--delete-branch=false';
-  return cluster(t, 'd');
+  return cluster(t, 'd', 'tbFAR');
 }
 
 // `git <global options> <subcommand> <args>`; `args` starts after `git`.
@@ -453,10 +459,14 @@ function checkWords(words, src, depth, hidden) {
         const at = after.findIndex((x, i) => x.unknown || (!option(x) && !(i > 0 && SHELL_VALUE_OPTIONS.has(after[i - 1].text))));
         // No script operand: after xargs it comes from input the guard cannot see.
         if (at < 0) { if (xargs && hidden()) return UNSEEN; continue; }
-        if (after[at].unknown) { if (hidden()) return UNSEEN; break; }
-        const r = analyze(after[at].text, depth + 1);
-        if (r) return r;
-        break;
+        // The positional data ends where this invocation does: at the end of the command, or at the `;` that closes a
+        // `find -exec` action, after which the next action is read.
+        const close = words.findIndex((x, i) => i > k + 1 + at && !x.unknown && x.text === ';');
+        if (after[at].unknown) { if (hidden()) return UNSEEN; }
+        else { const r = analyze(after[at].text, depth + 1); if (r) return r; }
+        if (close < 0) break;
+        k = close;
+        continue;
       }
       // Without -c: a literal operand is a script file, which the guard does not read (a known limit). With no
       // operand, or `-s`, or a word it cannot see, the shell reads its commands from somewhere the guard cannot.
