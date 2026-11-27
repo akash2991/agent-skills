@@ -6,7 +6,10 @@
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],
     "UserPromptExpansion": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],
-    "PreToolUse": [{ "matcher": "^(?:Agent|Task|Skill)$", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],
+    "PreToolUse": [
+      { "matcher": "^(?:Agent|Task|Skill)$", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] },
+      { "matcher": "^(?:Bash|Monitor)$", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/guard/claude-hook.cjs\" || exit 2", "timeout": 10 }] }
+    ],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],
     "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],
     "SubagentStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/runtime/langfuse/bootstrap-claude.cjs\"", "timeout": 8 }] }],

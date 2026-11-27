@@ -1,5 +1,6 @@
 {
   "extensions": [
-    "../runtime/langfuse/pi.js"
+    "../runtime/langfuse/pi.js",
+    "../runtime/guard/pi.cjs"
   ]
 }

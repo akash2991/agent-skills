@@ -4,9 +4,10 @@
 const path = require('path');
 const { pullInstall } = require('./lib/pull-install');
 const { RUNTIME_PATH, planLangfuseMarker, preflightLangfuse, installLangfuse } = require('./lib/langfuse');
+const { GUARD_PATH, checkGuardSettings, installGuard } = require('./lib/guard-install');
 
 function help() {
-  console.log(`Usage: agent-brain pull [--target <existing-dir>] [--dry-run] [--langfuse [--capture-mode metadata-only|full-content]] [--worktree-bootstrap]\n\nPull the complete agent brain into a repository.\nReplaces brain-owned files; preserves only AGENTS.md's "## This project" section.\nNo backups are created. Use Git to review or revert changes.\n\nOptions:\n  --target <existing-dir>  Install into this existing directory (default: current directory)\n  --dry-run                Show the planned changes without writing files\n  --langfuse               Register first-party Pi + Claude tracing (new opt-ins: metadata-only)\n  --capture-mode <mode>    With --langfuse: metadata-only or explicit full-content consent\n                           Full-content retains PII with best-effort credential redaction,\n                           private durable retries and bounded available native content.\n                           Omission preserves the existing policy, including disabled.\n  --worktree-bootstrap     With --langfuse, explicitly register the project-gated Pi user\n                           bootstrap for old worktree bases; remove known legacy user exporter\n  --help, -h               Show help\n`);
+  console.log(`Usage: agent-brain pull [--target <existing-dir>] [--dry-run] [--langfuse [--capture-mode metadata-only|full-content]] [--worktree-bootstrap]\n\nPull the complete agent brain into a repository.\nReplaces brain-owned files; preserves only AGENTS.md's "## This project" section.\nAlways registers the branch guard in .claude/settings.json and .pi/settings.json (FAC-47).\nNo backups are created. Use Git to review or revert changes.\n\nOptions:\n  --target <existing-dir>  Install into this existing directory (default: current directory)\n  --dry-run                Show the planned changes without writing files\n  --langfuse               Register first-party Pi + Claude tracing (new opt-ins: metadata-only)\n  --capture-mode <mode>    With --langfuse: metadata-only or explicit full-content consent\n                           Full-content retains PII with best-effort credential redaction,\n                           private durable retries and bounded available native content.\n                           Omission preserves the existing policy, including disabled.\n  --worktree-bootstrap     With --langfuse, explicitly register the project-gated Pi user\n                           bootstrap for old worktree bases; remove known legacy user exporter\n  --help, -h               Show help\n`);
 }
 
 function parse(argv) {
@@ -56,9 +57,13 @@ try {
   const tracingOptions = { worktreeBootstrap: parsed.worktreeBootstrap, captureMode: parsed.captureMode };
   const policy = parsed.langfuse ? planLangfuseMarker(parsed.target, tracingOptions) : null;
   if (parsed.langfuse && !parsed.dryRun) preflightLangfuse(parsed.target, undefined, tracingOptions);
+  checkGuardSettings(parsed.target);
   const result = pullInstall({ target: parsed.target, dryRun: parsed.dryRun });
   console.log(result.message);
   console.log(`target: ${result.targetRoot}`);
+  console.log(parsed.dryRun
+    ? `would register the branch guard from ${GUARD_PATH} in .claude/settings.json and .pi/settings.json`
+    : installGuard(result.targetRoot));
   if (parsed.langfuse) {
     console.log(parsed.dryRun
       ? `would register Pi/Claude adapters from ${RUNTIME_PATH}; ${policy.enabled ? policy.captureMode : `disabled (configured ${policy.captureMode}; refusal preserved)`}; disable known legacy project exporters; no credentials copied${policy.captureMode === 'full-content' ? '\nfull-content consent retains PII; best-effort credential redaction, private durable retries and bounded available native content' : ''}${parsed.worktreeBootstrap ? '\nwould explicitly register a project-gated Pi user bootstrap for old worktrees and remove known legacy user package' : ''}`

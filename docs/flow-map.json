@@ -111,6 +111,12 @@
       "summary": "DS11 with P7: after the merge, or on a canceled ticket, remove only what spawn created.",
       "steps": [
         [
+          "A raw branch delete (`git branch -d/-D`, `git update-ref -d`) or worktree removal (`git worktree remove|prune`) from an agent's shell is refused by the branch guard; cleanup goes through merge-pr.js and agent-env.js teardown",
+          "det",
+          "runtime/guard/guard.cjs",
+          "P7 DS11"
+        ],
+        [
           "Delete the remote branch at merge; leave the local branch to teardown only when its tip is in the merged head and that teardown will delete it",
           "det",
           "skills/git-workflow-and-versioning/scripts/merge-pr.js",
@@ -290,6 +296,12 @@
       "area": "Git and delivery",
       "summary": "P12, P15, P17: a merge commit with the ticket id, when green and, for a high blast radius, approved; the author or the reviewer merges.",
       "steps": [
+        [
+          "A raw `gh pr merge --delete-branch` from an agent's shell is refused by the branch guard (Claude PreToolUse hook, Pi extension); the merge goes through merge-pr.js",
+          "det",
+          "runtime/guard/guard.cjs",
+          "P7"
+        ],
         [
           "Ready (not a draft), one graded blast radius, CI green, no outstanding change request, and approved when high or the ticket asks",
           "det",
@@ -951,7 +963,7 @@
           ""
         ],
         [
-          "Pull the brain into a repository",
+          "Pull the brain into a repository and register the branch guard in .claude/settings.json and .pi/settings.json",
           "det",
           "scripts/agent-brain.js",
           ""
@@ -1013,6 +1025,12 @@
           "det",
           null,
           ""
+        ],
+        [
+          "Refuse a raw branch delete, worktree removal or `gh pr merge --delete-branch` before it runs (Claude PreToolUse on Bash and Monitor, Pi tool_call on bash)",
+          "det",
+          "runtime/guard/guard.cjs",
+          "P7"
         ]
       ]
     },

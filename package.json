@@ -24,6 +24,7 @@
     "runtime/langfuse/package.json",
     "runtime/langfuse/package-lock.json",
     "runtime/langfuse/README.md",
+    "runtime/guard/*.cjs",
     "agents/**",
     "references/**",
     "templates/**",
@@ -44,7 +45,9 @@
     "scripts/lib/install-paths.js",
     "scripts/lib/persona-tools.js",
     "scripts/lib/skill-lint.js",
-    "scripts/lib/langfuse.js"
+    "scripts/lib/langfuse.js",
+    "scripts/lib/native-settings.js",
+    "scripts/lib/guard-install.js"
   ],
   "scripts": {
     "build": "node scripts/build-brain.js",

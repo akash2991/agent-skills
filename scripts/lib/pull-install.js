@@ -161,6 +161,10 @@ function collectBuildFiles(buildRoot) {
       add(`.agent-brain/observability/${relative.slice('runtime/langfuse/'.length)}`, info);
       continue;
     }
+    if (relative.startsWith('runtime/guard/')) {
+      add(`.agent-brain/guard/${relative.slice('runtime/guard/'.length)}`, info);
+      continue;
+    }
     if (relative.startsWith('skills/')) {
       for (const host of skillHosts) add(`${host}/${relative}`, relocateSharedLinks(relative, info));
       continue;
