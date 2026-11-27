@@ -11,6 +11,7 @@ const test = require('node:test');
 const { buildBrain, assertSafeOutput, splitFrontmatter } = require('./lib/build-brain');
 const { stripFencedCodeBlocks, frontmatterYamlErrors, parseFrontmatter } = require('./lib/skill-lint');
 const { pullInstall, planInstall, validateRelPath, mergeProjectAgents, STATE_PATH } = require('./lib/pull-install');
+const { CLAUDE_COMMAND, PI_EXTENSION } = require('./lib/artifact-sync-settings');
 const { labelErrors, nativeTools, nativePersona } = require('./lib/persona-tools');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -58,7 +59,7 @@ test('fresh install uses full tool-local copies, state, idempotence, and no glob
   assert.equal(res.status, 0, res.stderr);
   assert.ok(fs.existsSync(path.join(target, 'AGENTS.md')));
   assert.ok(fs.existsSync(path.join(target, 'SOUL.md')));
-  assert.deepEqual(fs.readFileSync(path.join(target, 'review-models.json')), fs.readFileSync(path.join(ROOT, 'project/review-models.json')));
+  assert.deepEqual(fs.readFileSync(path.join(target, 'models.json')), fs.readFileSync(path.join(ROOT, 'project/models.json')));
   assert.ok(fs.existsSync(path.join(target, '.agents/skills/coding-standards/SKILL.md')));
   assert.ok(!fs.existsSync(path.join(target, 'skills')));
   assert.ok(!fs.existsSync(path.join(target, 'agents')));
@@ -160,7 +161,10 @@ test('existing harness folders do not trigger extra copies; managed duplicates a
     assert.ok(!fs.existsSync(path.join(target, host, 'skills/adrs')));
     assert.ok(!fs.existsSync(path.join(target, host, 'references')));
     assert.equal(fs.readFileSync(path.join(target, host, 'skills/custom/SKILL.md'), 'utf8'), 'unrelated third-party skill');
-    assert.equal(fs.readFileSync(path.join(target, host, 'settings.json'), 'utf8'), '{"keep":"unchanged"}\n');
+    // Pi's settings gain only the artifact sync extension; the others are not touched.
+    const expected = host === '.pi' ? { keep: 'unchanged', extensions: [PI_EXTENSION] } : null;
+    if (expected) assert.deepEqual(readJson(path.join(target, host, 'settings.json')), expected);
+    else assert.equal(fs.readFileSync(path.join(target, host, 'settings.json'), 'utf8'), '{"keep":"unchanged"}\n');
   }
   assert.ok(fs.existsSync(path.join(target, '.agents/skills/adrs/SKILL.md')));
   assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
@@ -731,4 +735,101 @@ test('the installer reads persona frontmatter the way the validator does', () =>
     const gemini = nativePersona(fs.readFileSync(path.join(ROOT, 'agents', file), 'utf8'), 'gemini');
     assert.deepEqual(frontmatterYamlErrors(gemini), [], file);
   }
+});
+
+test('pull registers only the artifact sync hook in project settings, idempotently', () => {
+  const target = tmpDir('artifact-sync-settings');
+  fs.mkdirSync(path.join(target, '.claude'));
+  const theirs = { type: 'command', command: 'echo theirs' };
+  fs.writeFileSync(path.join(target, '.claude/settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'] }, hooks: { Stop: [{ hooks: [theirs] }], PreToolUse: [{ matcher: 'Bash', hooks: [theirs] }] } }));
+  pullInstall({ sourceRoot: ROOT, target });
+  const once = readJson(path.join(target, '.claude/settings.json'));
+  assert.deepEqual(once.permissions, { allow: ['Bash(ls)'] });
+  assert.deepEqual(once.hooks.PreToolUse, [{ matcher: 'Bash', hooks: [theirs] }]);
+  for (const event of ['Stop', 'SubagentStop']) {
+    const commands = once.hooks[event].flatMap(e => e.hooks.map(h => h.command));
+    assert.equal(commands.filter(c => c === CLAUDE_COMMAND).length, 1, event);
+  }
+  assert.deepEqual(once.hooks.Stop[0], { hooks: [theirs] });
+  assert.ok(fs.existsSync(path.join(target, '.claude/skills/documentation/scripts/artifact-sync.js')), 'the hook script is installed where the command points');
+  assert.ok(fs.existsSync(path.join(target, '.pi', PI_EXTENSION)), 'the Pi extension path resolves from .pi/');
+  const again = pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(path.join(target, '.claude/settings.json')), once);
+  assert.deepEqual(again.plan.settings, []);
+  fs.writeFileSync(path.join(target, '.claude/settings.json'), '{not json');
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /artifact sync hook: .*not valid JSON/);
+});
+
+test("models.json keeps the project's artifacts and takes the brain's models", () => {
+  const target = tmpDir('models-artifacts');
+  pullInstall({ sourceRoot: ROOT, target });
+  const mine = [{ path: 'docs/HLD.md', sources: ['src/**'] }];
+  const edited = { ...readJson(path.join(target, 'models.json')), artifacts: mine, 'code-reviewer': { label: 'old', harness: 'pi', model: 'x/y', effort: 'low' } };
+  fs.writeFileSync(path.join(target, 'models.json'), JSON.stringify(edited));
+  pullInstall({ sourceRoot: ROOT, target });
+  const after = readJson(path.join(target, 'models.json'));
+  assert.deepEqual(after.artifacts, mine);
+  assert.deepEqual(after['code-reviewer'], readJson(path.join(ROOT, 'project/models.json'))['code-reviewer']);
+  assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
+});
+
+test('an install from before the rename upgrades: review-models.json is pruned and models.json installed', () => {
+  const target = tmpDir('legacy-models');
+  const legacy = Buffer.from('{"code-reviewer":{}}\n');
+  fs.writeFileSync(path.join(target, 'review-models.json'), legacy);
+  fs.mkdirSync(path.join(target, '.agent-brain'));
+  fs.writeFileSync(path.join(target, STATE_PATH), JSON.stringify({ schema: 1, files: [{ path: 'review-models.json', sha256: crypto.createHash('sha256').update(legacy).digest('hex'), mode: '0644' }] }));
+  const first = pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(first.plan.prunes, ['review-models.json']);
+  assert.ok(!fs.existsSync(path.join(target, 'review-models.json')));
+  assert.ok(fs.existsSync(path.join(target, 'models.json')));
+  assert.ok(!state(target).files.some(f => f.path === 'review-models.json'));
+  assert.equal(pullInstall({ sourceRoot: ROOT, target }).plan.writes.length, 0);
+});
+
+test("settings: a project's own wrapper is kept, malformed entries are refused, and the file mode is kept", () => {
+  const target = tmpDir('settings-ownership');
+  fs.mkdirSync(path.join(target, '.claude'));
+  const wrapper = { type: 'command', command: 'mywrap node .claude/skills/documentation/scripts/artifact-sync.js hook --verbose' };
+  const file = path.join(target, '.claude/settings.json');
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ matcher: 'x', hooks: [wrapper] }] } }), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  pullInstall({ sourceRoot: ROOT, target });
+  const after = readJson(file);
+  assert.deepEqual(after.hooks.Stop[0], { matcher: 'x', hooks: [wrapper] });
+  assert.equal(after.hooks.Stop[1].hooks[0].command, CLAUDE_COMMAND);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  fs.writeFileSync(file, JSON.stringify({ hooks: { SubagentStop: [{ command: 'not wrapped' }] } }));
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /hooks\.SubagentStop must be an array of \{ hooks/);
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: null } }));
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /hooks\.Stop must be an array/);
+  // The exact command inside the project's own matched group is the project's: kept as it is, ours added beside it.
+  const theirs = { matcher: 'Explore', hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 42 }] };
+  fs.writeFileSync(file, JSON.stringify({ hooks: { SubagentStop: [theirs] } }));
+  pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(file).hooks.SubagentStop, [theirs, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }]);
+  const again = pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(again.plan.settings, []);
+  // An unmatched group with the same command but the project's own options is the project's too.
+  const custom = { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 60, statusMessage: 'docs' }] };
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [custom] } }));
+  pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(file).hooks.Stop, [custom, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }]);
+  pullInstall({ sourceRoot: ROOT, target });
+  assert.deepEqual(readJson(file).hooks.Stop, [custom, { hooks: [{ type: 'command', command: CLAUDE_COMMAND, timeout: 10 }] }], 'survives a second pull');
+});
+
+test("an unmanaged models.json, or an edited review-models.json, stops the pull before anything is written", () => {
+  const target = tmpDir('models-collision');
+  fs.writeFileSync(path.join(target, 'models.json'), '{"gpt-4":{"max_tokens":8192}}');
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target }), /models\.json: an existing file the brain did not install/);
+  assert.equal(fs.readFileSync(path.join(target, 'models.json'), 'utf8'), '{"gpt-4":{"max_tokens":8192}}');
+  assert.ok(!fs.existsSync(path.join(target, STATE_PATH)));
+  const legacyTarget = tmpDir('legacy-edited');
+  const legacy = Buffer.from('{"code-reviewer":{}}\n');
+  fs.writeFileSync(path.join(legacyTarget, 'review-models.json'), '{"code-reviewer":{"model":"mine"}}\n');
+  fs.mkdirSync(path.join(legacyTarget, '.agent-brain'));
+  fs.writeFileSync(path.join(legacyTarget, STATE_PATH), JSON.stringify({ schema: 1, files: [{ path: 'review-models.json', sha256: crypto.createHash('sha256').update(legacy).digest('hex'), mode: '0644' }] }));
+  assert.throws(() => pullInstall({ sourceRoot: ROOT, target: legacyTarget }), /review-models\.json: edited since it was installed/);
+  assert.ok(fs.existsSync(path.join(legacyTarget, 'review-models.json')));
 });

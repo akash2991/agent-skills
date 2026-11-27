@@ -14,7 +14,7 @@
     "project/AGENTS.md",
     "project/SOUL.md",
     "project/.env.example",
-    "project/review-models.json",
+    "project/models.json",
     "skills/**",
     "!skills/**/.terraform/**",
     "!skills/**/*.tfstate*",
@@ -47,7 +47,8 @@
     "scripts/lib/skill-lint.js",
     "scripts/lib/langfuse.js",
     "scripts/lib/native-settings.js",
-    "scripts/lib/guard-install.js"
+    "scripts/lib/guard-install.js",
+    "scripts/lib/artifact-sync-settings.js"
   ],
   "scripts": {
     "build": "node scripts/build-brain.js",

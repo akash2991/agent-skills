@@ -45,7 +45,7 @@ function validateManagedRelPath(rel, label = 'path') {
     throw new Error(`invalid ${label}: reserved or unsafe path: ${rel}`);
   }
   const name = '[a-z0-9]+(?:-[a-z0-9]+)*';
-  const allowed = runtimeFile || (['source path', 'build path'].includes(label) && parts[0] === 'runtime' && ((runtimeName && parts[1] === 'langfuse') || (guardName && parts[1] === 'guard'))) || ['AGENTS.md', 'SOUL.md', '.env.example', 'review-models.json', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md'].includes(rel)
+  const allowed = runtimeFile || (['source path', 'build path'].includes(label) && parts[0] === 'runtime' && ((runtimeName && parts[1] === 'langfuse') || (guardName && parts[1] === 'guard'))) || ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md'].includes(rel)
     || new RegExp(`^skills/${name}/.+$`).test(rel)
     || new RegExp(`^agents/${name}\\.md$`).test(rel)
     || /^(references|templates)\/.+/.test(rel)
@@ -54,7 +54,9 @@ function validateManagedRelPath(rel, label = 'path') {
     || /^\.(agents|claude|gemini|pi|hermes)\/(references|templates)\/.+/.test(rel)
     || /^(\.claude\/commands|\.pi\/prompts|\.codex\/prompts)\/(brain|brain-status|orchestrator)\.md$/.test(rel)
     || /^(\.gemini\/commands|commands)\/(brain|brain-status|orchestrator)\.toml$/.test(rel);
-  if (!allowed) throw new Error(`invalid ${label}: outside managed brain layout: ${rel}`);
+  // review-models.json became models.json (FAC-39): an older install's state still lists it, so the pull can prune it.
+  const retired = label === 'state path' && rel === 'review-models.json';
+  if (!allowed && !retired) throw new Error(`invalid ${label}: outside managed brain layout: ${rel}`);
   return rel;
 }
 

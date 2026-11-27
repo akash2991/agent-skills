@@ -17,6 +17,10 @@
       {
         "prompt": "Add the new service's design doc to the document index and make sure it lives in the repo, not in Notion",
         "top_k": 3
+      },
+      {
+        "prompt": "Keep the HLD and its HTML page current whenever the payments code changes; map them so the artifact sync updates them",
+        "top_k": 3
       }
     ],
     "negative": [

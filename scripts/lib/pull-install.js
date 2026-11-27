@@ -7,6 +7,7 @@ const path = require('path');
 const { buildBrain } = require('./build-brain');
 const { lstatIfPresent, isWithin, canonicalPath, validateManagedRelPath } = require('./install-paths');
 const { nativePersona } = require('./persona-tools');
+const { planArtifactSyncSettings, applyArtifactSyncSettings } = require('./artifact-sync-settings');
 
 const STATE_DIR = '.agent-brain';
 const STATE_PATH = '.agent-brain/install-state.json';
@@ -218,6 +219,16 @@ function mergeProjectAgents(incoming, existing) {
   return incoming.slice(0, source.start) + existing.slice(project.start, project.end) + incoming.slice(source.end);
 }
 
+// models.json comes from the brain, except its artifacts: those are the project's own map (documentation W12).
+function mergeProjectModels(incoming, existing) {
+  let mine;
+  try { mine = JSON.parse(existing); } catch { throw new Error('models.json is not valid JSON; fix it or remove it'); }
+  const models = JSON.parse(incoming);
+  if (!mine || !Array.isArray(mine.artifacts) || JSON.stringify(mine.artifacts) === JSON.stringify(models.artifacts)) return incoming;
+  models.artifacts = mine.artifacts;
+  return `${JSON.stringify(models, null, 2)}\n`;
+}
+
 function planInstall(sourceRoot, targetRoot, buildRoot) {
   assertExistingTarget(targetRoot);
   assertNoSourceTargetOverlap(sourceRoot, targetRoot);
@@ -261,6 +272,21 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
         continue;
       }
     }
+    // A models.json the brain never installed is the project's own file: never parse it as brain config.
+    if (rel === 'models.json' && existing && !state.files.has(rel) && !sameInfo(existing, desiredInfo)) {
+      conflicts.push(`${rel}: an existing file the brain did not install; move it aside, then pull`);
+      continue;
+    }
+    if (rel === 'models.json' && existing) {
+      try {
+        desiredInfo.content = Buffer.from(mergeProjectModels(desiredInfo.content.toString('utf8'), existing.content.toString('utf8')));
+        desiredInfo.sha256 = sha256Buffer(desiredInfo.content);
+        nextState.set(rel, { sha256: desiredInfo.sha256, mode: desiredInfo.mode });
+      } catch (err) {
+        conflicts.push(`${rel}: ${err.message}`);
+        continue;
+      }
+    }
     if (!sameInfo(existing, desiredInfo)) writes.push(rel);
     else if (!state.files.has(rel)) adopts.push(rel);
     else unchanged.push(rel);
@@ -272,7 +298,12 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
     try {
       checkPathComponents(targetRoot, rel);
       if (!lstatIfPresent(destAbs)) continue;
-      fileInfo(destAbs); // Still refuse symlinks and nonregular paths.
+      const current = fileInfo(destAbs); // Still refuse symlinks and nonregular paths.
+      // The renamed review-models.json is pruned only as installed; an edited copy holds settings to carry over.
+      if (rel === 'review-models.json' && !sameInfo(current, state.files.get(rel))) {
+        conflicts.push(`${rel}: edited since it was installed; models.json replaces it and keeps only a project's own artifacts across pulls (the models come from the brain). Delete it, then pull`);
+        continue;
+      }
       prunes.push(rel);
     } catch (err) {
       conflicts.push(`${rel}: ${err.message}`);
@@ -326,6 +357,8 @@ function formatPlan(plan, dryRun) {
   if (plan.adopts.length) lines.push(`adopt identical:\n${plan.adopts.map(p => `  ${p}`).join('\n')}`);
   if (plan.prunes.length) lines.push(`prune retired:\n${plan.prunes.map(p => `  ${p}`).join('\n')}`);
   lines.push('AGENTS.md: preserve the existing "## This project" section; replace shared instructions');
+  lines.push('models.json: preserve the project\'s artifacts; replace the models');
+  if (plan.settings && plan.settings.length) lines.push(`${dryRun ? 'would register' : 'registered'} the artifact sync hook in: ${plan.settings.map(w => w.rel).join(', ')}`);
   if (!plan.writes.length && !plan.adopts.length && !plan.prunes.length) lines.push('already up to date');
   return lines.join('\n');
 }
@@ -351,12 +384,17 @@ function pullInstall(options = {}) {
     const buildDir = path.join(tmp, 'build');
     buildBrain({ root: sourceRoot, out: buildDir });
     const plan = planInstall(sourceRoot, targetRoot, buildDir);
+    try { plan.settings = planArtifactSyncSettings(targetRoot); }
+    catch (err) { plan.conflicts.push(`artifact sync hook: ${err.message}`); }
     if (plan.conflicts.length) {
       const err = new Error(formatConflicts(plan.conflicts));
       err.code = 'PULL_CONFLICT';
       throw err;
     }
-    if (!dryRun) applyPlan(targetRoot, plan);
+    if (!dryRun) {
+      applyPlan(targetRoot, plan);
+      applyArtifactSyncSettings(plan.settings);
+    }
     return { targetRoot, dryRun, plan, message: formatPlan(plan, dryRun) };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -372,5 +410,6 @@ module.exports = {
   validateRelPath,
   formatConflicts,
   formatPlan,
-  mergeProjectAgents
+  mergeProjectAgents,
+  mergeProjectModels
 };
