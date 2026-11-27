@@ -4,19 +4,24 @@
 // The brain's version and changelog stay honest:
 //   - package.json `version` is semver, and CHANGELOG.md's top section is that version;
 //   - with --base <ref>, a change to anything a project receives moves the version
-//     exactly one major, minor, or patch step past the base's.
+//     exactly one major, minor, or patch step past the base's, and the changelog is an
+//     append-only record: untouched without a step, one new section on top with one.
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { parseVersion, nextVersions, readBrainVersion, changelogErrors } = require('./lib/brain-version');
+const { parseVersion, compareVersions, nextVersions, readBrainVersion, parseChangelog, changelogErrors } = require('./lib/brain-version');
 
 function globToRegExp(glob) {
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*\/?/g, '\u0000')
+  // `**/` is zero or more whole directories, `**` anything, `*` anything within one path segment.
+  const escaped = glob.replace(/[.+^${}()|[\]\\?]/g, '\\$&')
+    .replace(/\*\*\//g, '\u0000')
+    .replace(/\*\*/g, '\u0001')
     .replace(/\*/g, '[^/]*')
-    .replace(/\u0000/g, '.*');
-  return new RegExp(`^${escaped}$`);
+    .replace(/\u0000/g, '(?:[^/]+/)*')
+    .replace(/\u0001/g, '.*');
+  // `s`: a path may hold any character, line separators included, and `.` must match them all.
+  return new RegExp(`^${escaped}$`, 's');
 }
 
 // package.json `files` is what npx hands a project, so it is the list of what ships.
@@ -41,11 +46,14 @@ function shippedPackageFields(text) {
 function shippedChanges(root, base) {
   const mergeBase = git(root, ['merge-base', base, 'HEAD']).trim();
   const changed = new Set([
-    ...git(root, ['diff', '--name-only', mergeBase]).split('\n'),
-    ...git(root, ['ls-files', '--others', '--exclude-standard']).split('\n')
+    // --no-renames: a file moved out of what ships must show up under its old path.
+    // -z: git quotes and escapes an unusual path in line output, and a quoted path matches no glob.
+    ...git(root, ['diff', '--name-only', '--no-renames', '-z', mergeBase]).split('\0'),
+    ...git(root, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')
   ].filter(Boolean));
   const headPackage = fs.readFileSync(path.join(root, 'package.json'), 'utf8');
   const isShipped = shippedMatcher(JSON.parse(headPackage).files || []);
+  // CHANGELOG.md ships too, but it has its own rule (appendOnlyErrors): it changes exactly when the version steps.
   const shipped = [...changed].filter(rel => rel !== 'CHANGELOG.md' && rel !== 'package.json' && isShipped(rel));
   if (changed.has('package.json')) {
     let basePackage = null;
@@ -53,6 +61,22 @@ function shippedChanges(root, base) {
     if (basePackage === null || shippedPackageFields(basePackage) !== shippedPackageFields(headPackage)) shipped.push('package.json');
   }
   return shipped.sort();
+}
+
+// The changelog is the release record a project reads its drift from, and it ships.
+// Without a version step it is byte-identical to the base's. With one, everything from
+// the base's first section on is kept verbatim and exactly one section is added above it.
+function appendOnlyErrors(baseText, headText, sameVersion, base) {
+  if (sameVersion) {
+    return baseText === headText ? [] : [`CHANGELOG.md differs from the one on ${base}, but the version did not step; the changelog changes only together with a version step`];
+  }
+  const firstSection = text => { const at = text.search(/^## /m); return at === -1 ? text.length : at; };
+  const released = baseText.slice(firstSection(baseText));
+  if (!headText.endsWith(released)) {
+    return [`CHANGELOG.md: the sections released on ${base} must stay as they are, in place, below the new one; none may be edited, removed, or added among them. If ${base} moved, merge it into this branch`];
+  }
+  const added = parseChangelog(headText.slice(firstSection(headText), headText.length - released.length));
+  return added.length === 1 ? [] : [`CHANGELOG.md: a version step adds exactly one section above those on ${base}; found ${added.length}`];
 }
 
 function validate({ root, base }) {
@@ -70,12 +94,19 @@ function validate({ root, base }) {
     const shipped = shippedChanges(root, base);
     if (!parseVersion(baseVersion)) {
       errors.push(`package.json at ${base} has version ${JSON.stringify(baseVersion)}, not semver X.Y.Z`);
+    } else if (compareVersions(version, baseVersion) < 0) {
+      errors.push(`version ${version} is behind ${baseVersion} on ${base}; merge ${base} into this branch`);
     } else if (version === baseVersion) {
       if (shipped.length) {
         errors.push(`files a project receives changed, but the version is still ${baseVersion} (as on ${base}). Bump package.json to one of ${nextVersions(baseVersion).join(', ')} and add its CHANGELOG.md section. Changed:\n${shipped.map(f => `  ${f}`).join('\n')}`);
       }
     } else if (!nextVersions(baseVersion).includes(version)) {
       errors.push(`version ${version} is not one step past ${baseVersion} on ${base}; expected one of ${nextVersions(baseVersion).join(', ')}`);
+    }
+    let baseChangelog = null;
+    try { baseChangelog = git(root, ['show', `${base}:CHANGELOG.md`]); } catch { /* the base predates the changelog */ }
+    if (baseChangelog !== null && parseVersion(baseVersion) && compareVersions(version, baseVersion) >= 0) {
+      errors.push(...appendOnlyErrors(baseChangelog, fs.readFileSync(changelogPath, 'utf8'), version === baseVersion, base));
     }
     return { version, baseVersion, shipped, errors };
   }
@@ -104,4 +135,4 @@ function main(argv) {
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { validate, shippedMatcher, globToRegExp };
+module.exports = { validate, shippedMatcher, globToRegExp, appendOnlyErrors };

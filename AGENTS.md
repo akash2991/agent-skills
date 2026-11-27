@@ -56,7 +56,7 @@ Every change to something a project receives (anything `package.json` `files` li
 
 A changelog section is `## X.Y.Z - YYYY-MM-DD`, then entries under `### Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`. An entry is `- <ticket> — <what changed, for an agent or a person in a project>`: name the skill, rule id, or command, and for a major say what the project must do. Released sections are not rewritten.
 
-`node scripts/validate-changelog.js --base origin/main` enforces this, and CI runs it on every PR. When `main` moves to the version a branch claimed, merge `main` and step again. After the merge, the merging agent tags the merge commit so a project can pin it: `git tag brain-vX.Y.Z <merge-commit> && git push origin brain-vX.Y.Z`.
+`node scripts/validate-changelog.js --base origin/main` enforces this, and CI runs it on every PR: the step, the section, and that the changelog is append-only: untouched when the version does not step, and exactly one new section above `main`'s, which stay as they are, when it does. When `main` moves to the version a branch claimed, or past the one it is on, merge `main` and step again. After the merge, the merging agent tags the merge commit so a project can pin it: `git tag brain-vX.Y.Z <merge-commit> && git push origin brain-vX.Y.Z`.
 
 ## Mandatory double-pass PR review
 
