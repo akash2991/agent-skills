@@ -29,7 +29,7 @@ function tmpDir(name) {
 
 function sourceFixture() {
   const root = tmpDir('source');
-  for (const entry of ['manifest.json', 'project', 'skills', 'agents', 'references', 'templates', 'runtime', 'docs', 'infra', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
+  for (const entry of ['manifest.json', 'package.json', 'CHANGELOG.md', 'project', 'skills', 'agents', 'references', 'templates', 'runtime', 'docs', 'infra', '.claude', '.gemini', '.pi', '.codex', 'commands']) {
     // Local dependencies and Terraform cache/variables/plans are not source.
     fs.cpSync(path.join(ROOT, entry), path.join(root, entry), { recursive: true, filter: src => !/(^|[\\/])(node_modules|\.terraform|terraform\.tfvars|[^/\\]*\.tfplan)$/.test(src) });
   }
@@ -319,7 +319,7 @@ test('brain files are replaced on first install and subsequent pulls without bac
   assert.equal(fs.readFileSync(path.join(target, rel), 'utf8'), expected);
   assert.deepEqual(fs.readFileSync(path.join(target, '.env.example')), fs.readFileSync(path.join(ROOT, 'project/.env.example')));
   assert.equal(fs.readFileSync(path.join(target, '.env'), 'utf8'), 'PROJECT_PRIVATE=untouched\n');
-  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')).sort(), ['install-state.json', 'observability']);
+  assert.deepEqual(fs.readdirSync(path.join(target, '.agent-brain')).sort(), ['CHANGELOG.md', 'install-state.json', 'observability']);
 });
 
 test('updates and retired file pruning ignore local edits to brain-owned files', () => {

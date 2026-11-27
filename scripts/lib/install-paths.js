@@ -35,13 +35,16 @@ function validateManagedRelPath(rel, label = 'path') {
   if (parts.some(p => p === '' || p === '.' || p === '..')) throw new Error(`invalid ${label}: unsafe relative path: ${rel}`);
   const runtimeName = parts.length === 3 && RUNTIME_FILES.has(parts[2]);
   const runtimeFile = runtimeName && parts[0] === '.agent-brain' && parts[1] === 'observability';
-  if (parts[0] === '.agent-brain' && !runtimeFile) throw new Error(`invalid ${label}: reserved state path: ${rel}`);
+  // The brain's changelog is installed beside the state; a root CHANGELOG.md is the project's own and is never an install path.
+  const changelogFile = rel === '.agent-brain/CHANGELOG.md';
+  const sourceChangelog = rel === 'CHANGELOG.md' && ['source path', 'build path'].includes(label);
+  if (parts[0] === '.agent-brain' && !runtimeFile && !changelogFile) throw new Error(`invalid ${label}: reserved state path: ${rel}`);
   const hasControlOrColon = /[\x00-\x1f\x7f:]/.test(rel);
-  if (hasControlOrColon || parts.some((p, index) => /[. ]$/.test(p) || (/^(\.git|\.hg|\.svn|node_modules|\.agent-brain)$/i.test(p) && !(runtimeFile && index === 0)) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) {
+  if (hasControlOrColon || parts.some((p, index) => /[. ]$/.test(p) || (/^(\.git|\.hg|\.svn|node_modules|\.agent-brain)$/i.test(p) && !((runtimeFile || changelogFile) && index === 0)) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) {
     throw new Error(`invalid ${label}: reserved or unsafe path: ${rel}`);
   }
   const name = '[a-z0-9]+(?:-[a-z0-9]+)*';
-  const allowed = runtimeFile || (['source path', 'build path'].includes(label) && runtimeName && parts[0] === 'runtime' && parts[1] === 'langfuse') || ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md'].includes(rel)
+  const allowed = runtimeFile || changelogFile || sourceChangelog || (['source path', 'build path'].includes(label) && runtimeName && parts[0] === 'runtime' && parts[1] === 'langfuse') || ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json', 'docs/persona-anatomy.md', 'docs/skill-anatomy.md'].includes(rel)
     || new RegExp(`^skills/${name}/.+$`).test(rel)
     || new RegExp(`^agents/${name}\\.md$`).test(rel)
     || /^(references|templates)\/.+/.test(rel)

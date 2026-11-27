@@ -32,7 +32,7 @@ for (let i = 0; i < args.length; i++) {
 try {
   const out = outIdx === -1 ? undefined : path.resolve(args[outIdx + 1]);
   const result = buildBrain({ out });
-  console.log(`built ${result.out}: ${result.skills} skills, ${result.personas} personas`);
+  console.log(`built ${result.out}: brain ${result.version}, ${result.skills} skills, ${result.personas} personas`);
 } catch (err) {
   console.error(err.message);
   process.exit(1);

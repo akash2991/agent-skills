@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { lstatIfPresent, isWithin, canonicalPath, validateManagedRelPath } = require('./install-paths');
+const { readBrainVersion, changelogErrors } = require('./brain-version');
 
 const DEFAULT_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -108,10 +109,17 @@ function buildBrain(options = {}) {
   validateSourceTree(root, 'references');
   validateSourceTree(root, 'templates');
   validateSourceTree(root, 'runtime/langfuse');
-  for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json']) validateManagedRelPath(rel, 'source path');
+  for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json', 'CHANGELOG.md']) validateManagedRelPath(rel, 'source path');
   for (const dir of ['.claude/commands', '.gemini/commands', 'commands', '.pi/prompts', '.codex/prompts']) {
     for (const f of brainCommandFiles(root, dir)) validateManagedRelPath(`${dir}/${f}`, 'source path');
   }
+
+  // A bundle without a version and a changelog that agrees with it cannot report drift.
+  const version = readBrainVersion(root);
+  const changelogPath = path.join(root, 'CHANGELOG.md');
+  if (!fs.existsSync(changelogPath)) throw new Error(`missing ${changelogPath}`);
+  const changelogProblems = changelogErrors(fs.readFileSync(changelogPath, 'utf8'), version);
+  if (changelogProblems.length) throw new Error(changelogProblems.join('\n'));
 
   fs.rmSync(out, { recursive: true, force: true });
 
@@ -136,6 +144,7 @@ function buildBrain(options = {}) {
   copy(path.join(root, 'project', 'SOUL.md'), path.join(out, 'SOUL.md'));
   copy(path.join(root, 'project', '.env.example'), path.join(out, '.env.example'));
   copy(path.join(root, 'project', 'models.json'), path.join(out, 'models.json'));
+  copy(changelogPath, path.join(out, 'CHANGELOG.md'));
   const skillList = skills.map(s => `- \`skills/${s}/SKILL.md\``).join('\n');
   const org = fs.readFileSync(path.join(root, 'project', 'AGENTS.md'), 'utf8')
     .replace(/^<!-- brain:skills.*$/m, skillList);
@@ -146,9 +155,9 @@ function buildBrain(options = {}) {
       copy(path.join(root, dir, f), path.join(out, dir, f));
     }
   }
-  fs.writeFileSync(path.join(out, 'README.md'), `# Brain\n\nBuilt from manifest.json: ${skills.length} skills, ${personas.length} personas.\n\nInstall into a project with:\n\n\`\`\`sh\nnpx --yes --package=github:akash2991/agent-skills#main agent-brain pull\n\`\`\`\n\nThis README describes the generated bundle and is not installed into consumer repositories.\n`);
+  fs.writeFileSync(path.join(out, 'README.md'), `# Brain ${version}\n\nBuilt from manifest.json: ${skills.length} skills, ${personas.length} personas.\n\nInstall into a project with:\n\n\`\`\`sh\nnpx --yes --package=github:akash2991/agent-skills#main agent-brain pull\n\`\`\`\n\nThis README describes the generated bundle and is not installed into consumer repositories.\n`);
 
-  return { out, skills: skills.length, personas: personas.length };
+  return { out, version, skills: skills.length, personas: personas.length };
 }
 
 module.exports = { buildBrain, assertSafeOutput, splitFrontmatter };

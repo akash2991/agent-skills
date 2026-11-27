@@ -6,13 +6,39 @@ From the **consuming repository's root**, run:
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull
 ```
 
-Requires Node.js 22+, npm/npx, and Git. Review the package source before running it. Replace `main` with a reviewed commit SHA or tag to pin a version. Rerun the command to update; the brain itself is never pushed or updated in the background. The one background job it installs is the artifact sync (`documentation` W12): when an agent finishes, it may open a PR with updated artifacts into the branch the agent pushed.
+Requires Node.js 22+, npm/npx, and Git. Review the package source before running it. Replace `main` with a version tag (`#brain-v1.0.0`) or a reviewed commit SHA to pin a version. Rerun the command to update; the brain itself is never pushed or updated in the background. The one background job it installs is the artifact sync (`documentation` W12): when an agent finishes, it may open a PR with updated artifacts into the branch the agent pushed.
 
 Preview without changing files:
 
 ```bash
 npx --yes --package=github:akash2991/agent-skills#main agent-brain pull --dry-run
 ```
+
+## Versions, drift, and the changelog
+
+The brain has a semver version. Major means the project must act after pulling; minor adds something; patch fixes or rewords. Each pull records the version it installed in `.agent-brain/install-state.json` and installs the brain's changelog at `.agent-brain/CHANGELOG.md`. A root `CHANGELOG.md` is the project's own and is never touched.
+
+See how far the project is from the latest brain, without changing anything:
+
+```bash
+npx --yes --package=github:akash2991/agent-skills#main agent-brain status
+```
+
+```text
+installed: 1.2.0
+available: 1.4.1
+behind: a minor update; run agent-brain pull to update
+
+changes since 1.2.0:
+
+1.4.1 - 2026-12-09
+  ### Fixed
+  - FAC-71 — ...
+```
+
+`status` compares the install with the brain the command was run from, so `#main` answers "how far behind the latest" and `#brain-v1.3.0` answers "what would 1.3.0 bring". It also lists brain files edited or deleted since the install, which the next pull replaces. `status --check` exits 1 when the install is absent, behind, or edited, for a scheduled job or a CI step.
+
+`pull` and `pull --dry-run` open with the same comparison (`brain: 1.2.0 → 1.4.1 (minor)`) and the changelog sections in between. Pulling an older version says `(downgrade)` and lists what it removes. An install made before the brain had versions shows as `unversioned`; the next pull gives it one. A brain older than 1.0.0 does not know the installed changelog and refuses to pull over a 1.0.0 or later install; to go back that far, revert the pull in Git.
 
 ## Optional automatic Langfuse tracing (Pi and Claude Code)
 
@@ -43,7 +69,7 @@ Commit or stash your work before pulling. Do not edit installed files or run ano
 - Skill/persona anatomy guides are source-repository authoring documentation and are not installed. Project documents are not generated from templates automatically.
 - `/brain`, `/brain-status`, and `/orchestrator` commands for the supported tools.
 - Commands and the shared portion of `AGENTS.md` point directly to the installed tool directories. Only relative Markdown links to shared root references/templates are rebased; there are no wrappers, symlinks, or shared root `skills/` or `agents/` copies.
-- `.agent-brain/install-state.json`, recording installed files for repeatable updates and removal of retired files. Keep it in Git with the installed content.
+- `.agent-brain/install-state.json`, recording the installed brain version and files for repeatable updates and removal of retired files, and `.agent-brain/CHANGELOG.md`, the brain's changelog. Keep both in Git with the installed content.
 
 Previously managed anatomy guides and the dev-machine files that used to ship with `development-setup` (its Terraform, `cloud.md`, and the cloud scripts) are pruned on update. Unmanaged files, including local Terraform state and variables, are not removed.
 
