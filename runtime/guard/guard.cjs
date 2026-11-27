@@ -270,7 +270,37 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const EXEC_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'time']);
 // Words that run the words after them as a command.
-const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'ionice', 'timeout', 'stdbuf', 'setsid', 'caffeinate', 'find', 'xargs', 'parallel', 'watch', 'eval']);
+// Each maps to its options that take a separate value, so the value is not mistaken for the program it runs.
+const WRAPPERS = new Map([
+  ['sudo', ['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U', '-r', '-t', '--user', '--group', '--host', '--prompt', '--chdir', '--chroot']],
+  ['doas', ['-u', '-C']], ['env', ['-u', '-C', '--unset', '--chdir']], ['command', []], ['builtin', []], ['exec', ['-a']], ['nohup', []],
+  ['nice', ['-n', '--adjustment']], ['ionice', ['-c', '-n', '-p', '--class', '--classdata']], ['timeout', ['-s', '-k', '--signal', '--kill-after']],
+  ['stdbuf', ['-i', '-o', '-e']], ['setsid', []], ['caffeinate', ['-t', '-w']],
+  ['xargs', ['-I', '-n', '-L', '-P', '-s', '-E', '-d', '-a', '-R', '-S', '--max-args', '--max-procs', '--max-lines', '--delimiter', '--arg-file', '--replace']],
+  ['parallel', ['-j', '--jobs']], ['watch', ['-n', '--interval']], ['eval', []],
+]);
+// The index of the program a command runs: its name, or, after wrappers, the first word that is not a wrapper's option,
+// option value or assignment (`sudo -u deploy git`, `timeout 30 git`, `sudo /usr/bin/grep git` runs grep). An unreadable
+// name is passed over like a wrapper without options, since it may be one. -1 when there is none.
+function programIndex(words, head) {
+  let i = head;
+  for (;;) {
+    if (i < 0 || i >= words.length) return -1;
+    const name = base(words[i]);
+    if (name !== null && !WRAPPERS.has(name)) return i;
+    const values = name === null ? [] : WRAPPERS.get(name);
+    let j = i + 1;
+    let duration = name === 'timeout';
+    for (; j < words.length; j++) {
+      const x = words[j];
+      if (/^[-+]/.test(x.text)) { if (!x.unknown && values.includes(x.text)) j++; continue; }
+      if (!x.unknown && ASSIGNMENT.test(x.text)) continue;
+      if (duration && !x.unknown) { duration = false; continue; }
+      break;
+    }
+    i = j;
+  }
+}
 // The index of a simple command's name: after variable assignments and shell keywords (`if git ...; then`).
 const headIndex = words => words.findIndex((w, i) => w.unknown || !(ASSIGNMENT.test(w.text) || (!w.quoted && KEYWORDS.has(w.text))
   || (w.text.startsWith('-') && i > 0 && !words[i - 1].unknown && words[i - 1].text === 'time'))); // `time -p git ...`
@@ -440,9 +470,11 @@ function checkWords(words, src, depth, hidden) {
   // A command whose name the shell only knows at run time (`$X`, `"$@"`) can be any of the guarded commands.
   const head = headIndex(words);
   if (head >= 0 && words[head].unknown && words[head].text === '' && hidden()) return UNSEEN;
-  // `git` and `gh` are in command position at the command's name, or after a wrapper or a name the guard cannot read.
-  // Elsewhere (`npm view git "$FIELD"`) the word may be data, so only a literal guarded command after it is refused.
-  const wrapped = head >= 0 && (words[head].unknown || WRAPPERS.has(base(words[head])));
+  // `git` and `gh` are in command position when they are the program the command runs, or the program of a find
+  // action. Elsewhere (`npm view git "$FIELD"`, `xargs grep -n git`) the word may be data, so only a literal
+  // guarded command after it is refused.
+  const program = programIndex(words, head);
+  const isFind = program >= 0 && base(words[program]) === 'find';
   for (let k = 0; k < words.length; k++) {
     const w = words[k];
     // An argument of a data command is data: `echo git branch -D x` prints, `git branch feature/bash` names a branch.
@@ -502,11 +534,7 @@ function checkWords(words, src, depth, hidden) {
     const tail = words.slice(k + 1);
     // xargs appends words read from stdin, which the guard cannot see.
     if (xargs) tail.push({ text: '', unknown: true, quoted: false });
-    // After a wrapper, the command is the first word that is not the wrapper's own option, number, path or assignment
-    // (`sudo -n git`, `timeout 30 git`, `xargs -I{} git`), or the word after find's -exec. Past another program's name
-    // (`xargs grep -n git`, `timeout 30 npm view git`) the word is that program's data.
-    const position = k === head || (wrapped && k > head && (EXEC_ACTIONS.has(words[k - 1].text)
-      || words.slice(head + 1, k).every(x => x.unknown || /^(?:[-+./~\d]|\{\})/.test(x.text) || ASSIGNMENT.test(x.text) || WRAPPERS.has(base(x)))));
+    const position = k === program || (isFind && k > program && EXEC_ACTIONS.has(words[k - 1].text));
     if (w.unknown || name === 'git') { const r = gitRule(tail, name === 'git' && position); if (r) return r; }
     if (w.unknown || name === 'gh') { const r = ghRule(tail, name === 'gh' && position); if (r) return r; }
     // git's own programs: `git-branch -D x`, `"$(git --exec-path)/git-branch" -D x`.

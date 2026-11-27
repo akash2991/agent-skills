@@ -38,7 +38,7 @@ const BLOCKED = [
   "GIT_CONFIG_COUNT=1",
   "echo \"git branch -D x\" | xargs -L1 sh -c",
   // Round 2: push delete flags in every spelling; git in command position after a keyword or a wrapper.
-  'git push -qd . victim', 'git push --del . victim', 'git push --mir ../other', 'if git $A; then echo; fi', 'time git $A', 'sudo git $A', 'find . -exec git $A \\;', 'find . -exec sh -c \'echo "$1"\' _ {} \\; -exec git $A \\;', 'gh pr merge 5 -sd', 'timeout 5 git $A', 'sudo -n git $A', 'xargs -I{} git $A', 'find . -name x -exec git $A {} +', 'ls | xargs -n1 gh', 'time -p git $A', 'find . -exec sh -c \'echo "$@"\' _ {} + -exec git $A \\;', 'gh pr merge 5 -t$TITLE',
+  'git push -qd . victim', 'git push --del . victim', 'git push --mir ../other', 'if git $A; then echo; fi', 'time git $A', 'sudo git $A', 'find . -exec git $A \\;', 'find . -exec sh -c \'echo "$1"\' _ {} \\; -exec git $A \\;', 'gh pr merge 5 -sd', 'sudo -u deploy git $A', 'sudo -u deploy /usr/bin/git $A', 'env -u X A=1 git $A', 'nice -n 5 git $A', 'timeout -s KILL 5 git $A', 'xargs -I {} git $A', '"$RUNNER" git $A', 'sudo env git $A', 'timeout 5 git $A', 'sudo -n git $A', 'xargs -I{} git $A', 'find . -name x -exec git $A {} +', 'ls | xargs -n1 gh', 'time -p git $A', 'find . -exec sh -c \'echo "$@"\' _ {} + -exec git $A \\;', 'gh pr merge 5 -t$TITLE',
   // Round-1 synthesis: words after an env split string, an unquoted option value that can split, local push destinations.
   'env -S "git branch" -D victim', 'gh pr merge 5 -t $TITLE', 'gh pr merge 5 --body=$B', 'git push --repo=. --delete victim', 'git push --repo . :victim', 'git push repos/local.git :victim',
   'env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0="branch -D" git x v', 'export GIT_CONFIG_PARAMETERS="\'alias.x=branch -D\'"; git x v',
@@ -136,6 +136,7 @@ const ALLOWED = [
   'git push -odeploy ../mirror HEAD', 'gh pr merge 5 --squash -t"Update"', 'find . -exec sh -c \'echo "$1"\' _ git branch -D {} \\;',
   'time -p git status', 'find . -exec sh -c \'echo "$@"\' _ {} + -print',
   'git ls-files | xargs grep -n git', 'git ls-files \'*.md\' | xargs grep -n gh', 'sudo grep git "$F"', 'timeout 30 npm view git "$FIELD"', 'timeout 30 grep -c git "$LOG"',
+  'sudo -u deploy git status', 'sudo /usr/bin/grep git "$F"', 'sudo -u deploy grep git "$F"', 'xargs -n 1 grep git', 'env A=1 node tool.js git "$M"',
   'git push -q . HEAD:refs/heads/new', 'git push -d origin old', 'npm view git "$FIELD"', 'node -e \'console.log(process.argv.slice(1))\' git "$MODE"',
   'bash -c \'printf "%s\\n" "$@"\' _ git branch -D example', 'if git branch --show-current; then eval "$(ssh-agent -s)"; fi', 'gh pr merge 5 --squash -t"$TITLE"',
   // Round-1 synthesis: data is not a command.
