@@ -12,6 +12,8 @@
  *     variants of one model are the same model), plus a synthesis
  *   - an artifact-sync entry, and artifacts as { path, sources, then?, outputs? } (documentation W12); in this
  *     repository every artifact path and output exists
+ *   - each model family runs on one harness: Codex models on pi, Claude
+ *     models on claude (Claude Code), Gemini models on agy (Antigravity)
  *   - each harness's model id shape and the efforts its CLI accepts; an agy id
  *     must end in the entry's effort (gemini-4-hydrogen-high with "high"):
  *     agy refuses --effort for ids without one, and a different one
@@ -30,13 +32,14 @@
 const fs = require('fs');
 const path = require('path');
 
-// Each harness: what an exact model id looks like, and the efforts its CLI accepts
-// (`pi --help` --thinking, `claude --help` --effort, `agy --help` --effort).
-// agy is Antigravity; its ids are the ones `agy models` lists.
+// Each harness runs one model family (the owner's rule: Claude and Gemini models on
+// their native harness, Codex models on pi): what an exact model id looks like, and
+// the efforts its CLI accepts (`pi --help` --thinking, `claude --help` --effort,
+// `agy --help` --effort). agy is Antigravity; its ids are the ones `agy models` lists.
 const HARNESSES = new Map([
-  ['pi', { model: /^[a-z0-9-]+\/[a-z0-9][a-z0-9.-]*$/, efforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }],
-  ['claude', { model: /^claude-[a-z0-9][a-z0-9-]*$/, efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
-  ['agy', { model: /^[a-z][a-z0-9.-]*[a-z0-9]$/, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], effortInId: true }],
+  ['pi', { model: /^openai-codex\/[a-z0-9][a-z0-9.-]*$/, ids: 'openai-codex/<id> (Codex models)', efforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }],
+  ['claude', { model: /^claude-[a-z0-9][a-z0-9-]*$/, ids: 'claude-<id> (Claude models)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
+  ['agy', { model: /^gemini-[a-z0-9.-]*[a-z0-9]$/, ids: 'gemini-<id> (Gemini models)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], effortInId: true }],
 ]);
 const ENTRY_KEYS = ['label', 'harness', 'model', 'effort'];
 // The line that selects each reviewer must point to the config.
@@ -92,13 +95,14 @@ function checkEntry(entry, where, errors) {
     errors.push(`${where}.harness: "${entry.harness}" is not one of ${[...HARNESSES.keys()].join(', ')}`);
     return;
   }
-  if (typeof entry.model === 'string' && !spec.model.test(entry.model)) {
-    errors.push(`${where}.model: "${entry.model}" is not an exact ${entry.harness} model id`);
+  const idOk = typeof entry.model === 'string' && spec.model.test(entry.model);
+  if (typeof entry.model === 'string' && !idOk) {
+    errors.push(`${where}.model: "${entry.model}" is not an exact ${entry.harness} model id; ${entry.harness} runs ${spec.ids}`);
   }
   if (typeof entry.effort === 'string' && !spec.efforts.includes(entry.effort)) {
     errors.push(`${where}.effort: "${entry.effort}" is not one of ${entry.harness}'s ${spec.efforts.join(', ')}`);
   }
-  if (spec.effortInId && typeof entry.model === 'string' && typeof entry.effort === 'string') {
+  if (spec.effortInId && idOk && typeof entry.effort === 'string') {
     const parsed = splitEffort(entry.model, spec);
     if (!parsed || parsed.effort !== entry.effort) {
       errors.push(`${where}.model: "${entry.model}" must be an agy id that ends in its effort "-${entry.effort}", as \`agy models\` lists it`);

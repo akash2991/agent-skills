@@ -77,7 +77,7 @@ test('config shape errors are reported', () => {
     [{ ...GATE, independent: [GATE.independent[0]] }, /exactly two/],
     [{ ...GATE, independent: [...GATE.independent, GATE.synthesis] }, /exactly two/],
     [{ ...GATE, independent: [GATE.independent[0], { ...GATE.independent[1], effort: 'minimal' }] }, /independent\[1\]\.effort: "minimal" is not one of claude's/],
-    [{ ...GATE, synthesis: { ...GATE.synthesis, harness: 'constructor' } }, /harness: "constructor" is not one of pi, claude/],
+    [{ ...GATE, synthesis: { ...GATE.synthesis, harness: 'constructor' } }, /harness: "constructor" is not one of pi, claude, agy$/m],
     [null, /^models\.json: must be an object$/m],
     [{ ...GATE, independent: [GATE.independent[0], GATE.independent[0]] }, /different models/],
     [{ ...GATE, synthesis: { ...GATE.synthesis, harness: 'codex' } }, /harness: "codex"/],
@@ -128,25 +128,40 @@ test('artifacts are checked: shape, paths, and existence in this repository only
 
 const asReviewer = entry => ({ ...PROJECT, 'code-reviewer': entry });
 
-test('Gemini models are declared through agy (Antigravity) or pi', () => {
+test('Gemini models are declared through agy (Antigravity)', () => {
   const hydrogen = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
   assert.deepEqual(validate(sandbox({ project: asReviewer(hydrogen) })), []);
   assert.deepEqual(validate(sandbox({ gate: { ...GATE, independent: [GATE.independent[0], hydrogen] } })), []);
-  const argon = { label: 'Gemini 4 Argon', harness: 'pi', model: 'opencode-go/gemini-4-argon', effort: 'high' };
-  assert.deepEqual(validate(sandbox({ project: asReviewer(argon) })), []);
+  assert.deepEqual(validate(sandbox({ gate: { ...GATE, 'artifact-sync': hydrogen }, project: { ...PROJECT, 'artifact-sync': hydrogen } })), []);
+});
+
+test('each model family runs on one harness: Codex on pi, Claude on claude, Gemini on agy', () => {
+  const errs = entry => validate(sandbox({ project: asReviewer({ label: 'Zz', effort: 'high', ...entry }) })).join('\n');
+  const cases = [
+    ['pi', 'opencode-go/gemini-4-argon', /is not an exact pi model id; pi runs openai-codex\/<id> \(Codex models\)/],
+    ['pi', 'anthropic/claude-opus-5-5', /pi runs openai-codex\/<id>/],
+    ['claude', 'gemini-4-hydrogen-high', /claude runs claude-<id> \(Claude models\)/],
+    ['claude', 'openai-codex/gpt-6.2-sol', /claude runs claude-<id>/],
+    ['agy', 'claude-opus-4-6-thinking', /agy runs gemini-<id> \(Gemini models\)/],
+    ['agy', 'claude-sonnet-4-6-high', /agy runs gemini-<id>/],
+    ['agy', 'gpt-oss-120b-high', /agy runs gemini-<id>/],
+  ];
+  for (const [harness, model, re] of cases) assert.match(errs({ harness, model }), re, `${harness} ${model}`);
+  // The wrong family is one error, not a second one about the effort suffix.
+  assert.equal(validate(sandbox({ project: asReviewer({ label: 'Zz', harness: 'agy', model: 'gpt-oss-120b-medium', effort: 'high' }) })).length, 1);
 });
 
 test('agy entries are checked like the others', () => {
   const base = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
   const errs = entry => validate(sandbox({ project: asReviewer(entry) })).join('\n');
   assert.match(errs({ ...base, effort: 'low' }), /model: "gemini-4-hydrogen-high" must be an agy id that ends in its effort "-low"/);
-  // agy refuses --effort for an id without one, and a bare codename is not an id.
-  for (const model of ['claude-opus-4-6-thinking', 'gemini-4-hydrogen', 'hydrogen']) {
-    assert.match(errs({ ...base, model }), new RegExp(`model: "${model}" must be an agy id that ends in its effort "-high"`), model);
-  }
+  // agy refuses --effort for an id without one.
+  assert.match(errs({ ...base, model: 'gemini-4-hydrogen' }), /model: "gemini-4-hydrogen" must be an agy id that ends in its effort "-high"/);
   assert.deepEqual(validate(sandbox({ project: asReviewer({ ...base, model: 'gemini-3.8-flash-low', effort: 'low' }) })), []);
-  assert.match(errs({ ...base, model: 'Gemini 4 Hydrogen' }), /model: "Gemini 4 Hydrogen" is not an exact agy model id/);
-  assert.match(errs({ ...base, model: 'google/gemini-4-hydrogen-high' }), /not an exact agy model id/);
+  // A label or a bare codename is not an id.
+  for (const model of ['Gemini 4 Hydrogen', 'hydrogen', 'google/gemini-4-hydrogen-high']) {
+    assert.match(errs({ ...base, model }), /is not an exact agy model id/, model);
+  }
   assert.match(errs({ ...base, model: 'gemini-4-hydrogen-xhigh', effort: 'minimal' }), /"minimal" is not one of agy's/);
 });
 
