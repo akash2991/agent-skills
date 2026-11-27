@@ -27,6 +27,18 @@ const writeJson = (file, value) => { fs.mkdirSync(path.dirname(file), { recursiv
 // Each line is one command; every one must be refused.
 const LONG = 'a '.repeat(30000);
 const BLOCKED = [
+  // Round 2 (Opus): a guarded command in a git or gh command's quoted argument, fed to a shell; an option whose value can split.
+  "git for-each-ref --format='git branch -D %(refname:short)' refs/heads/feature | sh",
+  "git branch --merged main --format='git branch -d %(refname:short)' | grep -v main | bash",
+  "eval \"$(git for-each-ref --format='git branch -D %(refname:short)' refs/heads/feature)\"",
+  "bash -c \"$(git for-each-ref --format='git branch -D %(refname:short)' refs/heads/feature)\"",
+  "sh <(git for-each-ref --format='git worktree remove %(refname:short)' refs/heads/feature)",
+  "gh pr list --json number --jq '.[] | \"gh pr merge \\(.number) --squash --delete-branch\"' | sh",
+  "git --git-dir=$X branch",
+  "GIT_CONFIG_COUNT=1",
+  "echo \"git branch -D x\" | xargs -L1 sh -c",
+  // Round 2: push delete flags in every spelling; git in command position after a keyword or a wrapper.
+  'git push -qd . victim', 'git push --del . victim', 'git push --mir ../other', 'if git $A; then echo; fi', 'time git $A', 'sudo git $A', 'find . -exec git $A \;', 'gh pr merge 5 -t$TITLE',
   // Round-1 synthesis: words after an env split string, an unquoted option value that can split, local push destinations.
   'env -S "git branch" -D victim', 'gh pr merge 5 -t $TITLE', 'gh pr merge 5 --body=$B', 'git push --repo=. --delete victim', 'git push --repo . :victim', 'git push repos/local.git :victim',
   'env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0="branch -D" git x v', 'export GIT_CONFIG_PARAMETERS="\'alias.x=branch -D\'"; git x v',
@@ -114,6 +126,15 @@ const BLOCKED = [
 
 // Every one must run.
 const ALLOWED = [
+  // Round 2 (Opus): a quoted value attached to a git or gh option; process substitution as a redirect target.
+  "git --work-tree=\"$WT\" status",
+  "git --git-dir=\"$HOME/.dotfiles\" --work-tree=\"$HOME\" status",
+  "gh --repo=\"$R\" pr view 5",
+  "while read b; do echo \"$b\"; done < <(git branch --list)",
+  "ls | xargs -L1 sh -c",
+  // Round 2: `git` as data in another program's arguments, positional parameters after a -c script, a checked git after a keyword.
+  'git push -q . HEAD:refs/heads/new', 'git push -d origin old', 'npm view git "$FIELD"', 'node -e \'console.log(process.argv.slice(1))\' git "$MODE"',
+  'bash -c \'printf "%s\\n" "$@"\' _ git branch -D example', 'if git branch --show-current; then eval "$(ssh-agent -s)"; fi', 'gh pr merge 5 --squash -t"$TITLE"',
   // Round-1 synthesis: data is not a command.
   'sudo git branch feature/bash', 'echo git branch -D example', 'bash -c \'printf "%s" "$1"\' _ "git branch -D example"', 'rg GIT_CONFIG_COUNT',
   'git update-ref refs/heads/new HEAD 0000000000000000000000000000000000000000', 'git push git@github.com:a/b.git :old', 'env -S "git status" --short',

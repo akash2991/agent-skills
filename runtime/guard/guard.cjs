@@ -96,7 +96,7 @@ class Parser {
         continue;
       }
       if (c === '<' || c === '>') {
-        if (src[this.i + 1] === '(') { this.i += 2; this.list(')'); continue; }
+        if (src[this.i + 1] === '(') { this.i += 2; this.list(')'); redirect = false; continue; }
         if (src.startsWith('<<<', this.i)) { this.i += 3; redirect = true; continue; }
         if (src.startsWith('<<', this.i)) {
           this.i += 2;
@@ -165,6 +165,7 @@ class Parser {
       this.i++;
     }
     if (brace && w.text.length > 1 && /,|\.\./.test(w.text)) { w.unknown = true; w.splits = true; }
+    w.to = this.i;
     return w;
   }
 
@@ -266,6 +267,11 @@ class Parser {
 }
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'time']);
+// Words that run the words after them as a command.
+const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'ionice', 'timeout', 'stdbuf', 'setsid', 'caffeinate', 'find', 'xargs', 'parallel', 'watch', 'eval']);
+// The index of a simple command's name: after variable assignments and shell keywords (`if git ...; then`).
+const headIndex = words => words.findIndex(w => w.unknown || !(ASSIGNMENT.test(w.text) || (!w.quoted && KEYWORDS.has(w.text))));
 const base = w => (w.unknown ? null : w.text.split('/').pop());
 const cluster = (t, letters) => /^-[A-Za-z]+$/.test(t) && [...letters].some(l => t.includes(l));
 const longPrefix = (t, option) => t.length >= 3 && t.startsWith('--') && option.startsWith(t);
@@ -276,6 +282,9 @@ function branchDelete(t) {
 }
 function updateRefDelete(t) {
   return t === '-d' || longPrefix(t, '--stdin') || cluster(t, 'd');
+}
+function pushDelete(t) {
+  return cluster(t, 'd') || longPrefix(t, '--delete') || longPrefix(t, '--prune') || longPrefix(t, '--mirror');
 }
 function ghDelete(t) {
   if (t === '-d' || t === '--delete-branch') return true;
@@ -288,7 +297,7 @@ function gitRule(args, literalGit) {
   let j = 0;
   while (j < args.length) {
     const a = args[j];
-    if (a.unknown || !a.text.startsWith('-')) break;
+    if (!a.text.startsWith('-') || a.splits) break;
     if (a.text === '-c' || a.text === '--config-env') {
       const v = args[j + 1];
       if (v && (v.unknown || /^alias\./i.test(v.text) || mentions(v.text))) return reason('an inline git alias or command (`-c alias.*`, or a `-c` value that names one of these commands) can hide a branch delete');
@@ -329,7 +338,7 @@ function gitRule(args, literalGit) {
     const remote = repoAt < 0 ? rest[k] : (rest[repoAt].text === '--repo' ? rest[repoAt + 1] : { ...rest[repoAt], text: rest[repoAt].text.slice('--repo='.length) });
     // A path: `.`, `./x`, `/x`, `~/x`, `file:`, or a name with a slash and no `host:` or `scheme://` in it.
     const local = remote && (remote.unknown || /^(?:\.|\/|~|file:)/.test(remote.text) || (remote.text.includes('/') && !remote.text.includes(':')));
-    const deletes = w => w !== remote && w !== rest[repoAt] && (w.unknown || ['-d', '--delete', '--prune', '--mirror'].includes(w.text) || /^\+?:/.test(w.text));
+    const deletes = w => w !== remote && w !== rest[repoAt] && (w.unknown || pushDelete(w.text) || /^\+?:/.test(w.text));
     if (local && rest.some(deletes)) {
       return reason('`git push` into a local repository with a delete flag or a `:branch` refspec deletes a local branch')
         + (rest.some(w => w.unknown) ? UNKNOWN_NOTE : '');
@@ -342,7 +351,7 @@ function gitRule(args, literalGit) {
 function ghRule(args, literalGh) {
   let j = 0;
   const skipOptions = () => {
-    while (j < args.length && !args[j].unknown && args[j].text.startsWith('-')) j += GH_VALUE_OPTIONS.has(args[j].text) ? 2 : 1;
+    while (j < args.length && !args[j].splits && args[j].text.startsWith('-')) j += GH_VALUE_OPTIONS.has(args[j].text) ? 2 : 1;
   };
   skipOptions();
   // After a literal `gh`, a subcommand the shell only knows at run time can be `pr merge -d` in one word.
@@ -361,7 +370,8 @@ function ghRule(args, literalGh) {
     // The value of an option that takes one (a title, a body) is never a flag, even when it is unknown.
     // An unquoted expansion can split into the value and another flag, so it is not skipped.
     if (!w.unknown && GH_VALUE_OPTIONS.has(w.text) && rest[k + 1] && !rest[k + 1].splits) { k++; continue; }
-    if (/^--(?:subject|body|body-file|author-email|match-head-commit|repo)=/.test(w.text) && !w.splits) continue;
+    if (/^(?:--(?:subject|body|body-file|author-email|match-head-commit|repo)=|-[tbFAR])/.test(w.text) && w.unknown && !w.splits) continue;
+    if (/^--(?:subject|body|body-file|author-email|match-head-commit|repo)=/.test(w.text) && !w.unknown) continue;
     if (w.unknown || ghDelete(w.text)) {
       return reason('`gh pr merge` with `--delete-branch` deletes the branch whether or not the merge went through')
         + (w.unknown || prUnknown || mergeUnknown ? UNKNOWN_NOTE : '');
@@ -380,9 +390,11 @@ function hiddenMentions(src, commands) {
   let rest = src;
   for (const words of commands) {
     if (words.src !== src) continue;
-    const h = words.findIndex(w => w.unknown || !ASSIGNMENT.test(w.text));
+    const h = headIndex(words);
     if (h < 0 || words[h].unknown || !['git', 'gh'].includes(base(words[h]))) continue;
-    rest = rest.slice(0, words[h].at) + ' '.repeat(words.end - words[h].at) + rest.slice(words.end);
+    // Only the words written bare are left out: a quoted argument can hold a command for a shell to run later
+    // (`git for-each-ref --format='git branch -D %(refname)' | sh`).
+    for (const w of words.slice(h)) if (!w.quoted && !w.unknown) rest = rest.slice(0, w.at) + ' '.repeat(w.to - w.at) + rest.slice(w.to);
   }
   return mentions(rest);
 }
@@ -399,7 +411,7 @@ const GIT_DATA_SUBCOMMANDS = new Set(['branch', 'worktree', 'update-ref', 'check
 
 // The index of the command name when the words after it are only data, else -1.
 function dataCommand(words) {
-  const head = words.findIndex(w => w.unknown || !ASSIGNMENT.test(w.text));
+  const head = headIndex(words);
   if (head < 0) return -1;
   const name = base(words[head]);
   if (name && DATA_COMMANDS.has(name)) return head;
@@ -407,7 +419,7 @@ function dataCommand(words) {
   const h = words.findIndex(w => base(w) === 'git');
   if (h < 0) return -1;
   let j = h + 1;
-  while (j < words.length && !words[j].unknown && words[j].text.startsWith('-')) {
+  while (j < words.length && !words[j].splits && words[j].text.startsWith('-')) {
     j += words[j].text === '-c' || words[j].text === '--config-env' || GIT_VALUE_OPTIONS.has(words[j].text) ? 2 : 1;
   }
   const sub = words[j];
@@ -418,15 +430,18 @@ function checkWords(words, src, depth, hidden) {
   let xargs = false;
   const dataHead = dataCommand(words);
   // A command whose name the shell only knows at run time (`$X`, `"$@"`) can be any of the guarded commands.
-  const head = words.findIndex(w => w.unknown || !ASSIGNMENT.test(w.text));
+  const head = headIndex(words);
   if (head >= 0 && words[head].unknown && words[head].text === '' && hidden()) return UNSEEN;
+  // `git` and `gh` are in command position at the command's name, or after a wrapper or a name the guard cannot read.
+  // Elsewhere (`npm view git "$FIELD"`) the word may be data, so only a literal guarded command after it is refused.
+  const wrapped = head >= 0 && (words[head].unknown || WRAPPERS.has(base(words[head])));
   for (let k = 0; k < words.length; k++) {
     const w = words[k];
     // An argument of a data command is data: `echo git branch -D x` prints, `git branch feature/bash` names a branch.
     if (dataHead >= 0 && k > dataHead) break;
     const name = base(w);
     // git reads config, and so aliases, from these variables when they are set for a command.
-    if (GIT_CONFIG_ENV.test(w.text) && (k < head || ['env', 'export', 'declare', 'typeset', 'local', 'readonly'].includes(base(words[head])))) {
+    if (GIT_CONFIG_ENV.test(w.text) && (head < 0 || k < head || ['env', 'export', 'declare', 'typeset', 'local', 'readonly'].includes(base(words[head])))) {
       return reason('git config set through the environment (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`) can define an alias that hides a branch delete');
     }
     if (name && SHELLS.has(name)) {
@@ -436,11 +451,12 @@ function checkWords(words, src, depth, hidden) {
         // With -c the script is the first operand, wherever it stands (`bash -c -- '...'`, `bash -c -x '...'`,
         // `bash -o pipefail -c '...'`); the words after it are its positional parameters, which are data.
         const at = after.findIndex((x, i) => x.unknown || (!option(x) && !(i > 0 && SHELL_VALUE_OPTIONS.has(after[i - 1].text))));
-        if (at < 0) continue;
-        if (after[at].unknown) { if (hidden()) return UNSEEN; continue; }
+        // No script operand: after xargs it comes from input the guard cannot see.
+        if (at < 0) { if (xargs && hidden()) return UNSEEN; continue; }
+        if (after[at].unknown) { if (hidden()) return UNSEEN; break; }
         const r = analyze(after[at].text, depth + 1);
         if (r) return r;
-        continue;
+        break;
       }
       // Without -c: a literal operand is a script file, which the guard does not read (a known limit). With no
       // operand, or `-s`, or a word it cannot see, the shell reads its commands from somewhere the guard cannot.
@@ -474,8 +490,9 @@ function checkWords(words, src, depth, hidden) {
     const tail = words.slice(k + 1);
     // xargs appends words read from stdin, which the guard cannot see.
     if (xargs) tail.push({ text: '', unknown: true, quoted: false });
-    if (w.unknown || name === 'git') { const r = gitRule(tail, name === 'git'); if (r) return r; }
-    if (w.unknown || name === 'gh') { const r = ghRule(tail, name === 'gh'); if (r) return r; }
+    const position = k === head || wrapped;
+    if (w.unknown || name === 'git') { const r = gitRule(tail, name === 'git' && position); if (r) return r; }
+    if (w.unknown || name === 'gh') { const r = ghRule(tail, name === 'gh' && position); if (r) return r; }
     // git's own programs: `git-branch -D x`, `"$(git --exec-path)/git-branch" -D x`.
     const dashed = /(?:^|\/)git-([a-z][a-z-]*)$/.exec(w.text);
     if (dashed) { const r = gitRule([{ text: dashed[1], unknown: false, quoted: false }, ...tail], true); if (r) return r; }
