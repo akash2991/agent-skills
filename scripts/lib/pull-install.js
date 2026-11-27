@@ -252,9 +252,11 @@ function brainOwnedHash(rel, content) {
   }
   const models = JSON.parse(text);
   if (!models || typeof models !== 'object' || Array.isArray(models)) throw new Error('models.json is not an object');
-  // Only an artifacts array is kept by a pull; anything else in that key is replaced, so it stays in the brain's part.
-  if (Array.isArray(models.artifacts)) delete models.artifacts;
-  return sha256Buffer(Buffer.from(JSON.stringify(models)));
+  // A pull keeps artifacts only when it is a list; missing or anything else, the pull replaces it,
+  // so "is a list" is itself part of what the brain installed.
+  const kept = Array.isArray(models.artifacts);
+  if (kept) delete models.artifacts;
+  return sha256Buffer(Buffer.from(JSON.stringify([kept, models])));
 }
 
 function mergeProjectAgents(incoming, existing) {

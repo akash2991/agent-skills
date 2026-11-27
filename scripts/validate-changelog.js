@@ -72,11 +72,16 @@ function appendOnlyErrors(baseText, headText, sameVersion, base) {
   }
   const firstSection = text => { const at = text.search(/^## /m); return at === -1 ? text.length : at; };
   const released = baseText.slice(firstSection(baseText));
-  if (!headText.endsWith(released)) {
+  // The kept text must also start on its own line, or a released heading is swallowed into the new entry.
+  const at = headText.length - released.length;
+  if (!headText.endsWith(released) || (at > 0 && headText[at - 1] !== '\n')) {
     return [`CHANGELOG.md: the sections released on ${base} must stay as they are, in place, below the new one; none may be edited, removed, or added among them. If ${base} moved, merge it into this branch`];
   }
-  const added = parseChangelog(headText.slice(firstSection(headText), headText.length - released.length));
-  return added.length === 1 ? [] : [`CHANGELOG.md: a version step adds exactly one section above those on ${base}; found ${added.length}`];
+  // Judged on the parsed file as a project's tools read it: the base's releases, in order, under one new heading.
+  const headings = text => parseChangelog(text).map(section => section.heading);
+  const [mine, theirs] = [headings(headText), headings(baseText)];
+  const added = mine.length - theirs.length;
+  return added === 1 && theirs.every((heading, i) => heading === mine[i + 1]) ? [] : [`CHANGELOG.md: a version step adds exactly one section above those on ${base}; found ${added}`];
 }
 
 function validate({ root, base }) {

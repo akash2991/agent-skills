@@ -194,6 +194,9 @@ test('against a base, a shipped change must move the version one step; other cha
   write('package.json', pkg('1.1.0'));
   write('CHANGELOG.md', log(['1.1.0', 'FAC-2 — fix'], ['1.0.1', 'FAC-9 — a release that never was'], ['1.0.0', 'FAC-1 — first']));
   assert.match(errors(), /a version step adds exactly one section above those on main; found 2/);
+  // The released text kept byte for byte, but joined to the new entry's line: its heading would vanish.
+  write('CHANGELOG.md', log(['1.0.0', 'FAC-1 — first']).replace('## ', '## 1.1.0 - 2026-01-03\n\n### Fixed\n- FAC-2 — fix. ## '));
+  assert.match(errors(), kept, 'a released heading swallowed into the new entry');
   write('CHANGELOG.md', log(['1.1.0', 'FAC-2 — fix'], ['1.0.0', 'FAC-1 — first']).replace('Intro.', 'A reworded intro.'));
   assert.equal(errors(), '', 'the preamble may change together with a step');
 
@@ -382,6 +385,7 @@ test('status reports drift and local edits, and changes nothing', () => {
   overwritten('AGENTS.md', file => fs.chmodSync(file, 0o755), 'a changed mode');
   overwritten('models.json', (file, text) => { const m = JSON.parse(text); m['code-reviewer'].model = 'something-else'; fs.writeFileSync(file, `${JSON.stringify(m, null, 2)}\n`); }, 'a brain-owned model changed');
   overwritten('models.json', (file, text) => { const m = JSON.parse(text); m.artifacts = { not: 'a list' }; fs.writeFileSync(file, `${JSON.stringify(m, null, 2)}\n`); }, 'artifacts that are not a list, which a pull replaces');
+  overwritten('models.json', (file, text) => { const m = JSON.parse(text); delete m.artifacts; fs.writeFileSync(file, `${JSON.stringify(m, null, 2)}\n`); }, 'artifacts deleted, which a pull restores');
   overwritten('models.json', file => fs.writeFileSync(file, '{ not json'), 'malformed JSON, which a pull refuses');
 
   // An install whose state has no record of the brain's part cannot tell the two apart, so it does not pass.
