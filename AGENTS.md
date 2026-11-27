@@ -14,6 +14,8 @@ skills/          the flat skill dump (docs/skill-anatomy.md)
 references/      shared checklists and the way-of-working contracts
 templates/       documents a project fills in under docs/: ARCHITECTURE, PRD, HLD, LLD, LEARNINGS, ...
 manifest.json    which skills and personas make up the brain
+package.json     the brain's version (`version`) and the list of what a project receives (`files`)
+CHANGELOG.md     one section per brain version, newest first
 scripts/         validators, the eval runner, and build-brain.js
 infra/           source-only, never installed: dev-machines/ (Terraform, scripts, and policy for the EC2 machines developers work on)
 .claude/commands/ .gemini/commands/ commands/ .pi/prompts/   slash commands: /brain, /brain-status, /orchestrator (plus the upstream set in the first three)
@@ -32,12 +34,29 @@ docs/            anatomies and per-tool setup guides
 | Models and the artifact map are config, never prose | `node scripts/validate-models.js` |
 | Artifacts due for a sync on this branch (`documentation` W12) | `node skills/documentation/scripts/artifact-sync.js due` |
 | Trigger and routing evals | `node scripts/run-evals.js --min-rank1 80` |
+| Brain version and changelog | `node scripts/validate-changelog.js --base origin/main` |
 | Assemble the brain from `manifest.json` | `node scripts/build-brain.js` → `build/` |
 | Flow map (which flows are code, agent, or mixed): edit `docs/flow-map.json`, then | `node scripts/build-flow-map.js` → `docs/flow-map.html` |
 
 ## The interactive flow map is maintained
 
 `docs/flow-map.json` is the source: one entry per flow, each step classified as deterministic, judgment or human, with the script that runs it named when one exists. `docs/flow-map.html` is generated from it by `node scripts/build-flow-map.js` and is the page people read. Whenever a flow changes (a skill's procedure, a rule that becomes or stops being a script, a new script or hook, a step that moves between agent and code), update `docs/flow-map.json` in the same change, rebuild the HTML, and commit both. Never edit the HTML by hand. CI runs `node scripts/build-flow-map.js --check`, so a stale page fails the build. `docs/flow-map.json` is an artifact in `models.json`: when an agent finishes, the artifact sync (`documentation` W12) opens a PR that brings it up to date if the change did not.
+
+## Versioning and changelog
+
+The brain has one version: `version` in `package.json`, semver `X.Y.Z`. It is what a project's `.agent-brain/install-state.json` records and what `agent-brain status` compares, so a project can see how far behind it is and read what changed. `plugin.json` and the `0.6.x` tags are the upstream plugin's version, not the brain's.
+
+Every change to something a project receives (anything `package.json` `files` lists) moves the version one step and adds that version's section to `CHANGELOG.md`, in the same PR. A change to nothing a project receives (docs, evals, validators, `infra/`) needs neither.
+
+| Step | When | Examples |
+|---|---|---|
+| Major | a project must act after pulling, or something it relied on is gone | a skill, persona, or rule removed or renumbered; the installed layout moved; a `pull` flag removed or its meaning changed |
+| Minor | something is added and nothing a project relied on changes | a new skill, persona, rule, command, template, or `agent-brain` option |
+| Patch | the same things, working better | rewording, a fixed script, a corrected reference |
+
+A changelog section is `## X.Y.Z - YYYY-MM-DD`, then entries under `### Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`. An entry is `- <ticket> — <what changed, for an agent or a person in a project>`: name the skill, rule id, or command, and for a major say what the project must do. Released sections are not rewritten.
+
+`node scripts/validate-changelog.js --base origin/main` enforces this, and CI runs it on every PR: the step, the section, and that the changelog is append-only: untouched when the version does not step, and exactly one new section above `main`'s, which stay as they are, when it does. When `main` moves to the version a branch claimed, or past the one it is on, merge `main` and step again. After the merge, the merging agent tags the merge commit so a project can pin it: `git tag brain-vX.Y.Z <merge-commit> && git push origin brain-vX.Y.Z`.
 
 ## Mandatory double-pass PR review
 

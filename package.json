@@ -1,6 +1,6 @@
 {
   "name": "agent-brain",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "engines": {
     "node": ">=22"
@@ -11,6 +11,7 @@
   },
   "files": [
     "manifest.json",
+    "CHANGELOG.md",
     "project/AGENTS.md",
     "project/SOUL.md",
     "project/.env.example",
@@ -41,6 +42,7 @@
     "scripts/agent-brain.js",
     "scripts/build-brain.js",
     "scripts/lib/build-brain.js",
+    "scripts/lib/brain-version.js",
     "scripts/lib/pull-install.js",
     "scripts/lib/install-paths.js",
     "scripts/lib/persona-tools.js",

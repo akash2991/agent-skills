@@ -8,10 +8,12 @@ const { buildBrain } = require('./build-brain');
 const { lstatIfPresent, isWithin, canonicalPath, validateManagedRelPath } = require('./install-paths');
 const { nativePersona } = require('./persona-tools');
 const { planArtifactSyncSettings, applyArtifactSyncSettings } = require('./artifact-sync-settings');
+const { parseVersion, readBrainVersion, sectionsBetween, formatSections, describeDrift } = require('./brain-version');
 
 const STATE_DIR = '.agent-brain';
 const STATE_PATH = '.agent-brain/install-state.json';
 const STATE_SCHEMA = 1;
+const CHANGELOG_PATH = '.agent-brain/CHANGELOG.md';
 const HASH_RE = /^[a-f0-9]{64}$/;
 const VALID_MODES = new Set(['0644', '0755']);
 
@@ -63,7 +65,7 @@ function readState(targetRoot) {
   checkStateLocation(targetRoot);
   const stateAbs = path.join(targetRoot, STATE_PATH);
   const st = lstatIfPresent(stateAbs);
-  if (!st) return { files: new Map(), present: false };
+  if (!st) return { files: new Map(), present: false, version: null };
   checkPathComponents(targetRoot, STATE_PATH);
   if (!st.isFile()) throw new Error(`state file is not a regular file: ${stateAbs}`);
   let parsed;
@@ -82,14 +84,21 @@ function readState(targetRoot) {
     if (files.has(rel)) throw new Error(`invalid ${STATE_PATH}: duplicate path ${rel}`);
     if (typeof entry.sha256 !== 'string' || !HASH_RE.test(entry.sha256)) throw new Error(`invalid ${STATE_PATH}: malformed hash for ${rel}`);
     if (!VALID_MODES.has(entry.mode)) throw new Error(`invalid ${STATE_PATH}: malformed mode for ${rel}`);
-    files.set(rel, { sha256: entry.sha256, mode: entry.mode });
+    if (entry.owned !== undefined && (typeof entry.owned !== 'string' || !HASH_RE.test(entry.owned))) throw new Error(`invalid ${STATE_PATH}: malformed owned hash for ${rel}`);
+    files.set(rel, { sha256: entry.sha256, mode: entry.mode, ...(entry.owned ? { owned: entry.owned } : {}) });
   }
-  return { files, present: true };
+  // Installs made before the brain was versioned carry no `brain`; that is not an error.
+  let version = null;
+  if (parsed.brain !== undefined) {
+    version = parsed.brain && parsed.brain.version;
+    if (!parseVersion(version)) throw new Error(`invalid ${STATE_PATH}: brain.version is not semver X.Y.Z`);
+  }
+  return { files, present: true, version };
 }
 
-function writeStateAtomic(targetRoot, files) {
-  const entries = [...files.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([rel, info]) => ({ path: rel, sha256: info.sha256, mode: info.mode }));
-  const state = { schema: STATE_SCHEMA, files: entries };
+function writeStateAtomic(targetRoot, files, version) {
+  const entries = [...files.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([rel, info]) => ({ path: rel, sha256: info.sha256, mode: info.mode, ...(info.owned ? { owned: info.owned } : {}) }));
+  const state = { schema: STATE_SCHEMA, brain: { version }, files: entries };
   const content = `${JSON.stringify(state, null, 2)}\n`;
   checkStateLocation(targetRoot);
   const dir = path.join(targetRoot, STATE_DIR);
@@ -98,6 +107,22 @@ function writeStateAtomic(targetRoot, files) {
   const tmp = path.join(dir, `.install-state.json.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   fs.writeFileSync(tmp, content, { mode: 0o644 });
   fs.renameSync(tmp, finalPath);
+}
+
+// What going back from the installed version to `toVersion` takes away, read from the
+// installed changelog. Only a copy that still matches its recorded hash is evidence;
+// an edited or missing one is reported as such, never quoted.
+function downgradeRange(targetRoot, state, toVersion) {
+  const recorded = state.files.get(CHANGELOG_PATH);
+  let current = null;
+  try {
+    checkPathComponents(targetRoot, CHANGELOG_PATH);
+    if (lstatIfPresent(path.join(targetRoot, CHANGELOG_PATH))) current = fileInfo(path.join(targetRoot, CHANGELOG_PATH));
+  } catch { /* not a regular file: unverified */ }
+  if (!recorded || !current || current.sha256 !== recorded.sha256) {
+    return { sections: [], note: `cannot list what this downgrade removes: ${CHANGELOG_PATH} is missing or was edited since the install` };
+  }
+  return { sections: sectionsBetween(current.content.toString('utf8'), toVersion, state.version), note: null };
 }
 
 function walkFiles(root) {
@@ -158,6 +183,11 @@ function collectBuildFiles(buildRoot) {
     if (relative === 'README.md') continue;
     validateRelPath(relative, 'build path');
     const info = { ...fileInfo(abs), abs };
+    // A project's root CHANGELOG.md is its own; the brain's sits with the install state.
+    if (relative === 'CHANGELOG.md') {
+      add(CHANGELOG_PATH, info);
+      continue;
+    }
     if (relative.startsWith('runtime/langfuse/')) {
       add(`.agent-brain/observability/${relative.slice('runtime/langfuse/'.length)}`, info);
       continue;
@@ -205,15 +235,36 @@ function assertNoSourceTargetOverlap(sourceRoot, targetRoot) {
 
 // Only this section belongs to the consuming project. All other instructions
 // come from the brain. Refuse an ambiguous document rather than guessing.
-function mergeProjectAgents(incoming, existing) {
-  function section(text) {
-    const headings = [...text.matchAll(/^## This project[ \t]*\r?$/gm)];
-    if (headings.length !== 1) throw new Error('AGENTS.md must contain exactly one "## This project" heading');
-    const start = headings[0].index;
-    const remainder = text.slice(start + headings[0][0].length);
-    const next = remainder.search(/^## /m);
-    return { start, end: next === -1 ? text.length : start + headings[0][0].length + next };
+function projectSection(text) {
+  const headings = [...text.matchAll(/^## This project[ \t]*\r?$/gm)];
+  if (headings.length !== 1) throw new Error('AGENTS.md must contain exactly one "## This project" heading');
+  const start = headings[0].index;
+  const remainder = text.slice(start + headings[0][0].length);
+  const next = remainder.search(/^## /m);
+  return { start, end: next === -1 ? text.length : start + headings[0][0].length + next };
+}
+
+// The part of a merged file that is the brain's, by the same boundaries the merge uses:
+// AGENTS.md without its "## This project" section, models.json without its artifacts list.
+// Its hash is recorded at install, so status can tell a project's own edit from one a pull overwrites.
+const PROJECT_PARTS = { 'AGENTS.md': 'its "## This project" section', 'models.json': 'its artifacts' };
+function brainOwnedHash(rel, content) {
+  const text = content.toString('utf8');
+  if (rel === 'AGENTS.md') {
+    const own = projectSection(text);
+    return sha256Buffer(Buffer.from(`${text.slice(0, own.start)}\0${text.slice(own.end)}`));
   }
+  const models = JSON.parse(text);
+  if (!models || typeof models !== 'object' || Array.isArray(models)) throw new Error('models.json is not an object');
+  // A pull keeps artifacts only when it is a list; missing or anything else, the pull replaces it,
+  // so "is a list" is itself part of what the brain installed.
+  const kept = Array.isArray(models.artifacts);
+  if (kept) delete models.artifacts;
+  return sha256Buffer(Buffer.from(JSON.stringify([kept, models])));
+}
+
+function mergeProjectAgents(incoming, existing) {
+  const section = projectSection;
   const source = section(incoming);
   const project = section(existing);
   return incoming.slice(0, source.start) + existing.slice(project.start, project.end) + incoming.slice(source.end);
@@ -287,6 +338,7 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
         continue;
       }
     }
+    if (PROJECT_PARTS[rel]) nextState.get(rel).owned = brainOwnedHash(rel, desiredInfo.content);
     if (!sameInfo(existing, desiredInfo)) writes.push(rel);
     else if (!state.files.has(rel)) adopts.push(rel);
     else unchanged.push(rel);
@@ -310,7 +362,13 @@ function planInstall(sourceRoot, targetRoot, buildRoot) {
     }
   }
 
-  return { desired, nextState, conflicts, writes, adopts, prunes, unchanged };
+  const version = readBrainVersion(sourceRoot);
+  const drift = describeDrift(state.version, version);
+  // What an update brings, or what a downgrade takes away. A first or unversioned install has no baseline to compare.
+  const changelog = desired.get(CHANGELOG_PATH).content.toString('utf8');
+  const changes = drift.kind === 'downgrade' ? [] : state.version ? sectionsBetween(changelog, state.version, version) : [];
+  const dropped = drift.kind === 'downgrade' ? downgradeRange(targetRoot, state, version) : { sections: [], note: null };
+  return { desired, nextState, conflicts, writes, adopts, prunes, unchanged, version, installedVersion: state.version, drift, changes, dropped };
 }
 
 function chmodFromMode(abs, mode) {
@@ -347,11 +405,15 @@ function applyPlan(targetRoot, plan) {
     checkPathComponents(targetRoot, rel);
     chmodFromMode(path.join(targetRoot, rel), plan.desired.get(rel).mode);
   }
-  writeStateAtomic(targetRoot, plan.nextState);
+  writeStateAtomic(targetRoot, plan.nextState, plan.version);
 }
 
 function formatPlan(plan, dryRun) {
-  const lines = [];
+  const lines = [plan.drift.line];
+  if (plan.changes.length) lines.push(`changes since ${plan.installedVersion}:\n\n${formatSections(plan.changes)}\n`);
+  if (plan.dropped.sections.length) lines.push(`this downgrade removes:\n\n${formatSections(plan.dropped.sections)}\n`);
+  if (plan.dropped.note) lines.push(plan.dropped.note);
+  if (plan.drift.kind === 'unversioned') lines.push(`changelog: ${CHANGELOG_PATH}`);
   lines.push(`${dryRun ? 'would install' : 'installed'} ${plan.nextState.size} managed file(s)`);
   if (plan.writes.length) lines.push(`write/update:\n${plan.writes.map(p => `  ${p}`).join('\n')}`);
   if (plan.adopts.length) lines.push(`adopt identical:\n${plan.adopts.map(p => `  ${p}`).join('\n')}`);
@@ -401,8 +463,63 @@ function pullInstall(options = {}) {
   }
 }
 
+// Read-only: what is installed, how far it is from the brain this command came from, and what was edited since.
+function installStatus(options = {}) {
+  const sourceRoot = canonicalPath(options.sourceRoot || path.resolve(__dirname, '..', '..'));
+  const targetRoot = canonicalPath(options.target || process.cwd());
+  assertExistingTarget(targetRoot);
+  const available = readBrainVersion(sourceRoot);
+  const state = readState(targetRoot);
+  if (!state.present) {
+    return { targetRoot, installed: null, available, behind: false, modified: [], merged: [], missing: [], message: `brain: not installed in ${targetRoot}\navailable: ${available}\nrun: agent-brain pull` };
+  }
+  const modified = [];
+  const merged = [];
+  const missing = [];
+  for (const [rel, recorded] of state.files) {
+    const abs = path.join(targetRoot, rel);
+    let current = null;
+    try {
+      checkPathComponents(targetRoot, rel);
+      if (lstatIfPresent(abs)) current = fileInfo(abs);
+    } catch {
+      modified.push(rel);
+      continue;
+    }
+    if (!current) missing.push(rel);
+    else if (!sameInfo(current, recorded)) {
+      // A merged file passes only when the brain's part and the mode are exactly as installed.
+      let ownOnly = false;
+      if (PROJECT_PARTS[rel] && recorded.owned && current.mode === recorded.mode) {
+        try { ownOnly = brainOwnedHash(rel, current.content) === recorded.owned; } catch { /* a pull would refuse or replace it */ }
+      }
+      (ownOnly ? merged : modified).push(rel);
+    }
+  }
+  const drift = describeDrift(state.version, available);
+  const behind = ['unversioned', 'major', 'minor', 'patch'].includes(drift.kind);
+  const changes = behind && state.version ? sectionsBetween(fs.readFileSync(path.join(sourceRoot, 'CHANGELOG.md'), 'utf8'), state.version, available) : [];
+  const lines = [
+    `installed: ${state.version || 'unversioned (installed before the brain had versions)'}`,
+    `available: ${available}`
+  ];
+  if (drift.kind === 'same') lines.push('up to date');
+  else if (drift.kind === 'downgrade') lines.push(`the install is newer than the brain this command came from; a pull would downgrade it`);
+  else lines.push(`behind: ${drift.kind === 'unversioned' ? 'by an unknown amount' : `a ${drift.kind} update`}; run agent-brain pull to update`);
+  const dropped = drift.kind === 'downgrade' ? downgradeRange(targetRoot, state, available) : { sections: [], note: null };
+  if (dropped.sections.length) lines.push(`\nthe downgrade would remove:\n\n${formatSections(dropped.sections)}`);
+  if (dropped.note) lines.push(dropped.note);
+  if (changes.length) lines.push(`\nchanges since ${state.version}:\n\n${formatSections(changes)}`);
+  if (modified.length) lines.push(`\nedited since install (a pull replaces these):\n${modified.map(p => `  ${p}`).join('\n')}`);
+  if (merged.length) lines.push(`\nthe project's own part changed since install (a pull keeps it):\n${merged.map(p => `  ${p}: ${PROJECT_PARTS[p]}`).join('\n')}`);
+  if (missing.length) lines.push(`\nmissing since install (a pull restores these):\n${missing.map(p => `  ${p}`).join('\n')}`);
+  return { targetRoot, installed: state.version, available, drift, behind, changes, dropped, modified, merged, missing, message: lines.join('\n') };
+}
+
 module.exports = {
   STATE_PATH,
+  CHANGELOG_PATH,
+  installStatus,
   pullInstall,
   planInstall,
   collectBuildFiles,

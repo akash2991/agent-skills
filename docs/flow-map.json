@@ -981,6 +981,12 @@
           ""
         ],
         [
+          "A shipped change moves the brain version one step and has its changelog section",
+          "det",
+          "scripts/validate-changelog.js",
+          ""
+        ],
+        [
           "Trigger and routing evals",
           "det",
           "scripts/run-evals.js",
@@ -998,8 +1004,26 @@
       "id": "brain-build",
       "name": "Build and install the brain",
       "area": "Brain upkeep",
-      "summary": "manifest.json to build/ to a project.",
+      "summary": "manifest.json to build/ to a project, with a version and a changelog.",
       "steps": [
+        [
+          "Decide which skills and personas the brain contains",
+          "human",
+          null,
+          ""
+        ],
+        [
+          "Choose the version step (major, minor, patch) and write the changelog entry",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Check the version step and the changelog",
+          "det",
+          "scripts/validate-changelog.js",
+          ""
+        ],
         [
           "Assemble build/ from the manifest",
           "det",
@@ -1007,15 +1031,21 @@
           ""
         ],
         [
-          "Pull the brain into a repository and register the branch guard in .claude/settings.json and .pi/settings.json",
+          "Tag the merge commit brain-vX.Y.Z",
+          "judgment",
+          null,
+          ""
+        ],
+        [
+          "Report a project's installed version, its drift, and its local edits",
           "det",
           "scripts/agent-brain.js",
           ""
         ],
         [
-          "Decide which skills and personas the brain contains",
-          "human",
-          null,
+          "Pull the brain into a repository, recording the version and printing the changes, and register the branch guard in .claude/settings.json and .pi/settings.json",
+          "det",
+          "scripts/agent-brain.js",
           ""
         ]
       ]
