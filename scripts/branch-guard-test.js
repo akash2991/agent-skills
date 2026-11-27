@@ -222,7 +222,10 @@ test('agent-brain pull ships the guard and registers it in both harnesses, keepi
   const claude = readJson(path.join(target, '.claude/settings.json'));
   assert.deepEqual(claude.permissions, { allow: ['Bash(ls:*)'] });
   assert.deepEqual(claude.hooks.PreToolUse.map(e => e.matcher), ['Edit', CLAUDE_GUARD_MATCHER]);
-  assert.deepEqual(readJson(path.join(target, '.pi/settings.json')).extensions, ['mine.ts', PI_GUARD_EXTENSION]);
+  // The pull also registers the artifact sync (documentation W12); the project's own entry stays first and the guard is there once.
+  const extensions = readJson(path.join(target, '.pi/settings.json')).extensions;
+  assert.equal(extensions[0], 'mine.ts');
+  assert.deepEqual(extensions.filter(e => e === PI_GUARD_EXTENSION), [PI_GUARD_EXTENSION]);
   // The registered command, run the way Claude runs it, refuses from the installed copy.
   const run = spawnSync('sh', ['-c', CLAUDE_GUARD_COMMAND], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git branch -D x' } }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: target } });
   assert.equal(run.status, 0, run.stderr);
