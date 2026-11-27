@@ -1,6 +1,7 @@
 {
   "extensions": [
     "../runtime/langfuse/pi.js",
+    "../runtime/guard/pi.cjs",
     "../skills/documentation/scripts/artifact-sync-pi.js"
   ]
 }

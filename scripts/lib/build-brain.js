@@ -109,6 +109,7 @@ function buildBrain(options = {}) {
   validateSourceTree(root, 'references');
   validateSourceTree(root, 'templates');
   validateSourceTree(root, 'runtime/langfuse');
+  validateSourceTree(root, 'runtime/guard');
   for (const rel of ['AGENTS.md', 'SOUL.md', '.env.example', 'models.json', 'CHANGELOG.md']) validateManagedRelPath(rel, 'source path');
   for (const dir of ['.claude/commands', '.gemini/commands', 'commands', '.pi/prompts', '.codex/prompts']) {
     for (const f of brainCommandFiles(root, dir)) validateManagedRelPath(`${dir}/${f}`, 'source path');
@@ -140,7 +141,7 @@ function buildBrain(options = {}) {
     throw err;
   }
 
-  for (const f of ['references', 'templates', 'runtime/langfuse']) copy(path.join(root, f), path.join(out, f));
+  for (const f of ['references', 'templates', 'runtime/langfuse', 'runtime/guard']) copy(path.join(root, f), path.join(out, f));
   copy(path.join(root, 'project', 'SOUL.md'), path.join(out, 'SOUL.md'));
   copy(path.join(root, 'project', '.env.example'), path.join(out, '.env.example'));
   copy(path.join(root, 'project', 'models.json'), path.join(out, 'models.json'));

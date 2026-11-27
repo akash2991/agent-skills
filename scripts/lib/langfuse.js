@@ -6,6 +6,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { METADATA_CAPTURE_POLICY, FULL_CAPTURE_POLICY } = require('../../runtime/langfuse/bootstrap.js');
+const { readSettings, atomicJSON } = require('./native-settings');
 
 const RUNTIME_PATH = '.agent-brain/observability';
 const LEGACY_PI_PACKAGE = 'npm:@langfuse/pi-observability-plugin@0.1.2';
@@ -18,21 +19,6 @@ const OLD_PI = /^npm:@langfuse\/pi-observability-plugin(?:@|$)/;
 const OLD_CLAUDE = /^langfuse-observability@/;
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const sourceOf = entry => typeof entry === 'string' ? entry : entry?.source;
-
-function readSettings(file, missingValue = {}) {
-  try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unsafe native settings');
-    let value;
-    try { value = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); }
-    catch { throw new Error('Native settings must contain valid JSON (contents omitted)'); }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Native settings must be an object');
-    return value;
-  } catch (error) {
-    if (error.code === 'ENOENT') return missingValue;
-    throw error;
-  }
-}
 
 function checkNativeSettings(target, options = {}) {
   for (const rel of ['.pi', '.claude', '.agent-brain']) {
@@ -118,19 +104,6 @@ function privateDir(dir) {
   const stat = fs.lstatSync(dir);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (process.getuid && stat.uid !== process.getuid()) || (process.platform !== 'win32' && stat.mode & 0o077)) throw new Error('Unsafe private tracing cache');
   return dir;
-}
-
-function atomicJSON(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  let mode = 0o644;
-  try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Unsafe native settings path');
-    mode = stat.mode & 0o777;
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const temp = `${file}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode, flag: 'wx' });
-  fs.renameSync(temp, file);
 }
 
 function prepareCache(target, settings, run, options) {

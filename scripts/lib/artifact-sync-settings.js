@@ -1,6 +1,7 @@
 'use strict';
 
-// The one settings change a default `agent-brain pull` makes (docs/harness-layout.md): it registers the artifact
+// One of the two settings changes a default `agent-brain pull` makes (docs/harness-layout.md; the other is the branch
+// guard, scripts/lib/guard-install.js): it registers the artifact
 // sync (documentation W12) as a Claude Code Stop and SubagentStop hook and as a Pi extension. Only these entries are
 // added or replaced; every other key, hook, and extension in the project's settings is left as it was.
 
