@@ -132,7 +132,20 @@ test('Gemini models are declared through agy (Antigravity)', () => {
   const hydrogen = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
   assert.deepEqual(validate(sandbox({ project: asReviewer(hydrogen) })), []);
   assert.deepEqual(validate(sandbox({ gate: { ...GATE, independent: [GATE.independent[0], hydrogen] } })), []);
-  assert.deepEqual(validate(sandbox({ gate: { ...GATE, 'artifact-sync': hydrogen }, project: { ...PROJECT, 'artifact-sync': hydrogen } })), []);
+  assert.deepEqual(validate(sandbox({ gate: { ...GATE, synthesis: hydrogen } })), []);
+});
+
+test('the artifact sync runs only on a harness its runner can start', () => {
+  const hydrogen = { label: 'Gemini 4 Hydrogen', harness: 'agy', model: 'gemini-4-hydrogen-high', effort: 'high' };
+  assert.deepEqual(validate(sandbox({ gate: { ...GATE, 'artifact-sync': hydrogen } })),
+    ['models.json.artifact-sync.harness: "agy" cannot run the artifact sync; its runner starts claude, pi']);
+  assert.deepEqual(validate(sandbox({ project: { ...PROJECT, 'artifact-sync': hydrogen } })),
+    ['project/models.json.artifact-sync.harness: "agy" cannot run the artifact sync; its runner starts claude, pi']);
+  // Every harness the runner starts is one the config accepts.
+  const sync = harness => ({ ...GATE.independent.find(e => e.harness === harness), effort: 'medium' });
+  for (const h of Object.keys(require('../skills/documentation/scripts/artifact-sync').HARNESSES)) {
+    assert.deepEqual(validate(sandbox({ gate: { ...GATE, 'artifact-sync': sync(h) } })), [], h);
+  }
 });
 
 test('each model family runs on one harness: Codex on pi, Claude on claude, Gemini on agy', () => {

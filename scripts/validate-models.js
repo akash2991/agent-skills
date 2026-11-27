@@ -10,7 +10,8 @@
  *   - both files parse and have the expected shape
  *   - exactly two independent reviewers on different models (agy effort
  *     variants of one model are the same model), plus a synthesis
- *   - an artifact-sync entry, and artifacts as { path, sources, then?, outputs? } (documentation W12); in this
+ *   - an artifact-sync entry on a harness the sync runner can start (artifact-sync.js: claude, pi; not agy),
+ *     and artifacts as { path, sources, then?, outputs? } (documentation W12); in this
  *     repository every artifact path and output exists
  *   - each model family runs on one harness: Codex models on pi, Claude
  *     models on claude (Claude Code), Gemini models on agy (Antigravity)
@@ -41,6 +42,8 @@ const HARNESSES = new Map([
   ['claude', { model: /^claude-[a-z0-9][a-z0-9-]*$/, ids: 'claude-<id> (Claude models)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }],
   ['agy', { model: /^gemini-[a-z0-9.-]*[a-z0-9]$/, ids: 'gemini-<id> (Gemini models)', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], effortInId: true }],
 ]);
+// The artifact sync launches its own agent, so its entry is limited to the harnesses its runner can start.
+const SYNC_HARNESSES = Object.keys(require('../skills/documentation/scripts/artifact-sync').HARNESSES);
 const ENTRY_KEYS = ['label', 'harness', 'model', 'effort'];
 // The line that selects each reviewer must point to the config.
 const SELECTION = {
@@ -110,6 +113,13 @@ function checkEntry(entry, where, errors) {
   }
 }
 
+function checkSync(entry, where, errors) {
+  checkEntry(entry, where, errors);
+  if (isObject(entry) && HARNESSES.has(entry.harness) && !SYNC_HARNESSES.includes(entry.harness)) {
+    errors.push(`${where}.harness: "${entry.harness}" cannot run the artifact sync; its runner starts ${SYNC_HARNESSES.join(', ')}`);
+  }
+}
+
 // FAILED when the file cannot be read or parsed (already reported); otherwise the parsed value, null included.
 function readJson(file, rel, errors) {
   let text;
@@ -168,7 +178,7 @@ function checkGate(cfg, errors, root) {
   const models = independent.map(modelKey);
   if (new Set(models).size !== models.length) errors.push(`${rel}.independent: the reviewers must use different models`);
   checkEntry(cfg.synthesis, `${rel}.synthesis`, errors);
-  checkEntry(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
+  checkSync(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
   checkArtifacts(cfg.artifacts, rel, errors, root);
   return [...independent, cfg.synthesis, cfg['artifact-sync']];
 }
@@ -180,7 +190,7 @@ function checkProject(cfg, errors) {
   const extra = Object.keys(cfg).filter(k => !['code-reviewer', 'artifact-sync', 'artifacts'].includes(k));
   if (extra.length) errors.push(`${rel}: unknown field(s) ${extra.join(', ')}`);
   checkEntry(cfg['code-reviewer'], `${rel}.code-reviewer`, errors);
-  checkEntry(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
+  checkSync(cfg['artifact-sync'], `${rel}.artifact-sync`, errors);
   checkArtifacts(cfg.artifacts, rel, errors);
   return [cfg['code-reviewer'], cfg['artifact-sync']];
 }
